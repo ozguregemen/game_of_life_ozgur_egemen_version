@@ -67,6 +67,9 @@ class ApplicationSmokeTests(unittest.TestCase):
     def test_immigration_dummy_video_driver_startup(self) -> None:
         self.run_smoke_test("immigration")
 
+    def test_brians_brain_dummy_video_driver_startup(self) -> None:
+        self.run_smoke_test("brians_brain")
+
 
 class ImmigrationIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -102,6 +105,7 @@ class ImmigrationIntegrationTests(unittest.TestCase):
 
         life.toggle_simulation_mode()
         life.toggle_simulation_mode()
+        life.toggle_simulation_mode()
 
         self.assertEqual(life.simulation_mode, "immigration")
         self.assertEqual(life.grid[2][2], 4)
@@ -120,6 +124,45 @@ class ImmigrationIntegrationTests(unittest.TestCase):
         self.assertTrue(
             all(
                 life.immigration_grid[row][col] == life.SPECIES_B
+                for row in (2, 3)
+                for col in (2, 3)
+            )
+        )
+
+
+class BriansBrainIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.simulation_mode = "brians_brain"
+        life.simulation_active = False
+        life.brain_grid = life.make_brain_grid(life.ROWS, life.COLS)
+        life.brain_history.clear()
+        life.brain_generation = 0
+
+    def tearDown(self) -> None:
+        life.simulation_mode = "life"
+        life.simulation_active = False
+
+    def test_generation_uses_separate_brain_history(self) -> None:
+        life.brain_grid[5][4:6] = [life.FIRING, life.FIRING]
+
+        self.assertTrue(life.apply_generation())
+
+        self.assertEqual(life.brain_generation, 1)
+        self.assertEqual(len(life.brain_history), 1)
+        self.assertEqual(life.brain_grid[5][4], life.DYING)
+
+    def test_pattern_places_firing_cells(self) -> None:
+        life.selected_pattern = {
+            "name": "Block",
+            "pattern": [[1, 1], [1, 1]],
+        }
+
+        life.place_selected_pattern(2, 2)
+
+        self.assertEqual(len(life.brain_history), 1)
+        self.assertTrue(
+            all(
+                life.brain_grid[row][col] == life.FIRING
                 for row in (2, 3)
                 for col in (2, 3)
             )

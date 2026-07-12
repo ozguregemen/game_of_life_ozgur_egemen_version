@@ -11,6 +11,15 @@ os.environ["SDL_VIDEO_CENTERED"] = "1"
 
 import pygame
 
+from brians_brain import (
+    DYING,
+    FIRING,
+    BrainGrid,
+    apply_brain_rules,
+    brain_stats,
+    make_brain_grid,
+    randomize_brain_grid,
+)
 from immigration import (
     SPECIES_A,
     SPECIES_B,
@@ -82,10 +91,15 @@ immigration_generation = 0
 active_species = SPECIES_A
 immigration_rng = random.Random()
 
+brain_grid: BrainGrid = make_brain_grid(ROWS, COLS)
+brain_history: list[tuple[BrainGrid, int]] = []
+brain_generation = 0
+brain_rng = random.Random()
+
+SIMULATION_MODES = ("life", "immigration", "brians_brain")
+requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
 simulation_mode = (
-    "immigration"
-    if os.environ.get("LIFE_START_MODE") == "immigration"
-    else "life"
+    requested_start_mode if requested_start_mode in SIMULATION_MODES else "life"
 )
 current_rule = "conway"
 current_theme = "classic"
@@ -170,6 +184,12 @@ def mark_stats_dirty() -> None:
 
 
 def save_history() -> None:
+    if simulation_mode == "brians_brain":
+        if len(brain_history) >= HISTORY_LIMIT:
+            brain_history.pop(0)
+        brain_history.append((deepcopy(brain_grid), brain_generation))
+        return
+
     if simulation_mode == "immigration":
         if len(immigration_history) >= HISTORY_LIMIT:
             immigration_history.pop(0)
@@ -188,6 +208,16 @@ def save_history() -> None:
 def step_back() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
+    global brain_grid, brain_generation
+    if simulation_mode == "brians_brain":
+        if not brain_history:
+            set_status("No earlier Brian's Brain generation is available.")
+            return
+        brain_grid, brain_generation = brain_history.pop()
+        simulation_active = False
+        set_status(f"Returned to Brian's Brain generation {brain_generation}.")
+        return
+
     if simulation_mode == "immigration":
         if not immigration_history:
             set_status("No earlier Immigration generation is available.")
@@ -273,6 +303,16 @@ def set_cell(row: int, col: int, value: int) -> bool:
 def draw_cell(row: int, col: int) -> None:
     """Apply the active brush and save one history entry per changed stroke."""
     global drawing_history_pending
+    if simulation_mode == "brians_brain":
+        target_value = FIRING if drawing_value else 0
+        if brain_grid[row][col] == target_value:
+            return
+        if drawing_history_pending:
+            save_history()
+            drawing_history_pending = False
+        brain_grid[row][col] = target_value
+        return
+
     if simulation_mode == "immigration":
         target_value = active_species if drawing_value else 0
         if species_of(immigration_grid[row][col]) == target_value:
@@ -312,21 +352,31 @@ def place_selected_pattern(row: int, col: int) -> None:
         set_status("Pattern does not fit inside the grid.")
         return
 
-    target_grid = immigration_grid if simulation_mode == "immigration" else grid
-    target_value = active_species if simulation_mode == "immigration" else 1
-    additions = [
-        (row + delta_row, col + delta_col)
-        for delta_row, pattern_row in enumerate(data)
-        for delta_col, value in enumerate(pattern_row)
-        if value
-        and species_of(target_grid[row + delta_row][col + delta_col])
-        != target_value
-    ]
+    additions: list[tuple[int, int]] = []
+    for delta_row, pattern_row in enumerate(data):
+        for delta_col, value in enumerate(pattern_row):
+            if not value:
+                continue
+            target_row = row + delta_row
+            target_col = col + delta_col
+            if simulation_mode == "immigration":
+                changed = (
+                    species_of(immigration_grid[target_row][target_col])
+                    != active_species
+                )
+            elif simulation_mode == "brians_brain":
+                changed = brain_grid[target_row][target_col] != FIRING
+            else:
+                changed = grid[target_row][target_col] <= 0
+            if changed:
+                additions.append((target_row, target_col))
     if additions:
         save_history()
         for target_row, target_col in additions:
             if simulation_mode == "immigration":
                 immigration_grid[target_row][target_col] = active_species
+            elif simulation_mode == "brians_brain":
+                brain_grid[target_row][target_col] = FIRING
             else:
                 set_cell(target_row, target_col, 1)
 
@@ -345,6 +395,15 @@ def place_selected_pattern(row: int, col: int) -> None:
 def clear_grid() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
+    global brain_grid, brain_generation
+    if simulation_mode == "brians_brain":
+        save_history()
+        brain_grid = make_brain_grid(ROWS, COLS)
+        brain_generation = 0
+        simulation_active = False
+        set_status("Brian's Brain grid cleared.")
+        return
+
     if simulation_mode == "immigration":
         save_history()
         immigration_grid = make_immigration_grid(ROWS, COLS)
@@ -367,6 +426,20 @@ def clear_grid() -> None:
 def randomize_grid(density: float = 0.20) -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
+    global brain_grid, brain_generation
+    if simulation_mode == "brians_brain":
+        save_history()
+        brain_grid = randomize_brain_grid(
+            ROWS,
+            COLS,
+            density=0.18,
+            rng=brain_rng,
+        )
+        brain_generation = 0
+        simulation_active = False
+        set_status("Random Brian's Brain state created.")
+        return
+
     if simulation_mode == "immigration":
         save_history()
         immigration_grid = randomize_immigration_grid(
@@ -406,8 +479,12 @@ def cycle_theme() -> None:
 
 def cycle_rule() -> None:
     global current_rule, show_rule_overlay_until
-    if simulation_mode == "immigration":
-        set_status("Immigration Game uses Conway B3/S23 for both species.")
+    if simulation_mode != "life":
+        if simulation_mode == "immigration":
+            message = "Immigration Game uses Conway B3/S23 for both species."
+        else:
+            message = "Brian's Brain uses the fixed 2-neighbor firing rule."
+        set_status(message)
         return
     rules = list(RULES)
     current_rule = rules[(rules.index(current_rule) + 1) % len(rules)]
@@ -416,10 +493,11 @@ def cycle_rule() -> None:
 
 
 def toggle_simulation_mode() -> None:
-    """Switch between Life-like rules and the Immigration Game."""
+    """Cycle through the available cellular automata modes."""
     global simulation_mode, simulation_active, single_step_requested
     global selected_pattern, pattern_menu_active, drawing
-    simulation_mode = "immigration" if simulation_mode == "life" else "life"
+    current_index = SIMULATION_MODES.index(simulation_mode)
+    simulation_mode = SIMULATION_MODES[(current_index + 1) % len(SIMULATION_MODES)]
     simulation_active = False
     single_step_requested = False
     selected_pattern = None
@@ -428,6 +506,8 @@ def toggle_simulation_mode() -> None:
     cell_transition.transitions.clear()
     if simulation_mode == "immigration":
         set_status("Immigration Game: T changes the active species.", 4.0)
+    elif simulation_mode == "brians_brain":
+        set_status("Brian's Brain: firing cells leave a one-step dying trail.", 4.0)
     else:
         set_status("Life-like cellular automata mode.", 3.0)
 
@@ -527,7 +607,12 @@ def get_pattern_name() -> str | None:
 
 
 def save_current_pattern() -> None:
-    source = immigration_grid if simulation_mode == "immigration" else grid
+    if simulation_mode == "immigration":
+        source = immigration_grid
+    elif simulation_mode == "brians_brain":
+        source = brain_grid
+    else:
+        source = grid
     cropped = crop_live_pattern(source)
     if not cropped:
         set_status("There are no live cells to save.")
@@ -601,8 +686,24 @@ def apply_immigration_generation() -> bool:
     return True
 
 
+def apply_brain_generation() -> bool:
+    """Advance Brian's Brain by one generation."""
+    global brain_grid, brain_generation, simulation_active
+    if not any(cell for row in brain_grid for cell in row):
+        simulation_active = False
+        set_status("Brian's Brain stopped: no active cells.")
+        return False
+
+    save_history()
+    brain_grid = apply_brain_rules(brain_grid)
+    brain_generation += 1
+    return True
+
+
 def apply_generation() -> bool:
     """Advance the selected simulation mode."""
+    if simulation_mode == "brians_brain":
+        return apply_brain_generation()
     if simulation_mode == "immigration":
         return apply_immigration_generation()
     return apply_life_generation()
@@ -816,6 +917,13 @@ def immigration_species_color(value: int) -> tuple[int, int, int]:
     return tuple(int(channel * brightness) for channel in base)
 
 
+def brain_state_color(value: int) -> tuple[int, int, int]:
+    """Return the conventional bright/dim colors for Brian's Brain."""
+    if value == FIRING:
+        return (80, 235, 255)
+    return (75, 55, 155)
+
+
 def draw_immigration_grid() -> None:
     """Render both Immigration species while preserving encoded ages."""
     viewport = grid_viewport()
@@ -877,6 +985,59 @@ def draw_immigration_grid() -> None:
     screen.set_clip(old_clip)
 
 
+def draw_brain_grid() -> None:
+    """Render firing cells and their one-generation dying trail."""
+    viewport = grid_viewport()
+    origin_x, origin_y = grid_origin()
+    theme = THEMES[current_theme]
+    old_clip = screen.get_clip()
+    screen.set_clip(viewport)
+
+    for row in range(ROWS):
+        y = origin_y + row * CELL_SIZE
+        if y + CELL_SIZE < viewport.top or y > viewport.bottom:
+            continue
+        for col in range(COLS):
+            x = origin_x + col * CELL_SIZE
+            if x + CELL_SIZE < viewport.left or x > viewport.right:
+                continue
+            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+            value = brain_grid[row][col]
+            if value:
+                pygame.draw.rect(screen, brain_state_color(value), rect)
+            if show_grid and CELL_SIZE >= 6:
+                pygame.draw.rect(screen, theme["grid"], rect, 1)
+
+    if show_quadrants:
+        center_x = origin_x + COLS * CELL_SIZE // 2
+        center_y = origin_y + ROWS * CELL_SIZE // 2
+        pygame.draw.line(
+            screen,
+            theme["text"],
+            (center_x, origin_y),
+            (center_x, origin_y + ROWS * CELL_SIZE),
+            2,
+        )
+        pygame.draw.line(
+            screen,
+            theme["text"],
+            (origin_x, center_y),
+            (origin_x + COLS * CELL_SIZE, center_y),
+            2,
+        )
+
+    if show_coordinates and CELL_SIZE >= 10:
+        for col in range(0, COLS, 5):
+            label = tiny_font.render(str(col), True, theme["text"])
+            screen.blit(label, (origin_x + col * CELL_SIZE + 2, origin_y + 2))
+        for row in range(0, ROWS, 5):
+            label = tiny_font.render(str(row), True, theme["text"])
+            screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
+
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
 def draw_pattern_preview() -> None:
     if selected_pattern is None:
         return
@@ -890,11 +1051,12 @@ def draw_pattern_preview() -> None:
     data = transformed_pattern_data(selected_pattern)
     fits = pattern_fits(data, start_row, start_col)
     if fits:
-        base_color = (
-            immigration_species_color(active_species)
-            if simulation_mode == "immigration"
-            else get_enhanced_age_color(1, current_theme)
-        )
+        if simulation_mode == "immigration":
+            base_color = immigration_species_color(active_species)
+        elif simulation_mode == "brians_brain":
+            base_color = brain_state_color(FIRING)
+        else:
+            base_color = get_enhanced_age_color(1, current_theme)
         if hasattr(base_color, "r"):
             base_color = (base_color.r, base_color.g, base_color.b)
         preview_color = tuple(base_color) + (125,)
@@ -933,7 +1095,12 @@ def draw_info_bar() -> None:
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    if simulation_mode == "immigration":
+    if simulation_mode == "brians_brain":
+        text = (
+            f"{state}   Mode: Brian's Brain   Speed: {speed} gen/s   "
+            f"Generation: {brain_generation}   Rule: exactly 2 firing neighbors"
+        )
+    elif simulation_mode == "immigration":
         species_label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
         text = (
             f"{state}   Mode: Immigration Game   Speed: {speed} gen/s   "
@@ -953,6 +1120,22 @@ def draw_stats() -> None:
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
+
+    if simulation_mode == "brians_brain":
+        stats = brain_stats(brain_grid)
+        first_line = (
+            f"Active: {stats['active']}   Firing: {stats['firing']}   "
+            f"Dying: {stats['dying']}   Off: {stats['off']}   "
+            f"Density: {stats['density']:.2f}%   History: "
+            f"{len(brain_history)}/{HISTORY_LIMIT}"
+        )
+        second_line = (
+            "Off + exactly 2 firing neighbors → Firing   ·   "
+            "Firing → Dying   ·   Dying → Off"
+        )
+        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
+        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
+        return
 
     if simulation_mode == "immigration":
         stats = immigration_stats(immigration_grid)
@@ -1000,7 +1183,7 @@ def draw_stats() -> None:
 
 
 def draw_rule_overlay() -> None:
-    if simulation_mode == "immigration" or time.time() >= show_rule_overlay_until:
+    if simulation_mode != "life" or time.time() >= show_rule_overlay_until:
         return
 
     overlay_width = 390
@@ -1109,7 +1292,9 @@ def draw_status() -> None:
 
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    if simulation_mode == "immigration":
+    if simulation_mode == "brians_brain":
+        draw_brain_grid()
+    elif simulation_mode == "immigration":
         draw_immigration_grid()
     else:
         draw_grid()
