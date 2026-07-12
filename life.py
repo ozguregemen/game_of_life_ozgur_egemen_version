@@ -11,6 +11,17 @@ os.environ["SDL_VIDEO_CENTERED"] = "1"
 
 import pygame
 
+from immigration import (
+    SPECIES_A,
+    SPECIES_B,
+    ImmigrationGrid,
+    apply_immigration_rules,
+    cell_age,
+    immigration_stats,
+    make_immigration_grid,
+    randomize_immigration_grid,
+    species_of,
+)
 from patterns import get_all_patterns, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
 from themes import THEMES, Menu
@@ -65,6 +76,17 @@ trail_grid = make_grid()
 activity_grid = make_float_grid()
 grid_history: list[tuple[list[list[int]], list[list[int]], list[list[float]], int]] = []
 
+immigration_grid: ImmigrationGrid = make_immigration_grid(ROWS, COLS)
+immigration_history: list[tuple[ImmigrationGrid, int]] = []
+immigration_generation = 0
+active_species = SPECIES_A
+immigration_rng = random.Random()
+
+simulation_mode = (
+    "immigration"
+    if os.environ.get("LIFE_START_MODE") == "immigration"
+    else "life"
+)
 current_rule = "conway"
 current_theme = "classic"
 simulation_active = False
@@ -148,6 +170,14 @@ def mark_stats_dirty() -> None:
 
 
 def save_history() -> None:
+    if simulation_mode == "immigration":
+        if len(immigration_history) >= HISTORY_LIMIT:
+            immigration_history.pop(0)
+        immigration_history.append(
+            (deepcopy(immigration_grid), immigration_generation)
+        )
+        return
+
     if len(grid_history) >= HISTORY_LIMIT:
         grid_history.pop(0)
     grid_history.append(
@@ -157,6 +187,16 @@ def save_history() -> None:
 
 def step_back() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
+    global immigration_grid, immigration_generation
+    if simulation_mode == "immigration":
+        if not immigration_history:
+            set_status("No earlier Immigration generation is available.")
+            return
+        immigration_grid, immigration_generation = immigration_history.pop()
+        simulation_active = False
+        set_status(f"Returned to Immigration generation {immigration_generation}.")
+        return
+
     if not grid_history:
         set_status("No earlier generation is available.")
         return
@@ -173,7 +213,7 @@ def crop_live_pattern(source: list[list[int]]) -> list[list[int]]:
         (row, col)
         for row in range(ROWS)
         for col in range(COLS)
-        if source[row][col] > 0
+        if source[row][col] != 0
     ]
     if not live_positions:
         return []
@@ -185,7 +225,7 @@ def crop_live_pattern(source: list[list[int]]) -> list[list[int]]:
 
     return [
         [
-            1 if source[row][col] > 0 else 0
+            1 if source[row][col] != 0 else 0
             for col in range(min_col, max_col + 1)
         ]
         for row in range(min_row, max_row + 1)
@@ -233,6 +273,16 @@ def set_cell(row: int, col: int, value: int) -> bool:
 def draw_cell(row: int, col: int) -> None:
     """Apply the active brush and save one history entry per changed stroke."""
     global drawing_history_pending
+    if simulation_mode == "immigration":
+        target_value = active_species if drawing_value else 0
+        if species_of(immigration_grid[row][col]) == target_value:
+            return
+        if drawing_history_pending:
+            save_history()
+            drawing_history_pending = False
+        immigration_grid[row][col] = target_value
+        return
+
     if grid[row][col] == drawing_value:
         return
     if drawing_history_pending:
@@ -262,16 +312,23 @@ def place_selected_pattern(row: int, col: int) -> None:
         set_status("Pattern does not fit inside the grid.")
         return
 
+    target_grid = immigration_grid if simulation_mode == "immigration" else grid
+    target_value = active_species if simulation_mode == "immigration" else 1
     additions = [
         (row + delta_row, col + delta_col)
         for delta_row, pattern_row in enumerate(data)
         for delta_col, value in enumerate(pattern_row)
-        if value and grid[row + delta_row][col + delta_col] <= 0
+        if value
+        and species_of(target_grid[row + delta_row][col + delta_col])
+        != target_value
     ]
     if additions:
         save_history()
         for target_row, target_col in additions:
-            set_cell(target_row, target_col, 1)
+            if simulation_mode == "immigration":
+                immigration_grid[target_row][target_col] = active_species
+            else:
+                set_cell(target_row, target_col, 1)
 
     selected_pattern = None
     if additions:
@@ -287,6 +344,15 @@ def place_selected_pattern(row: int, col: int) -> None:
 
 def clear_grid() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
+    global immigration_grid, immigration_generation
+    if simulation_mode == "immigration":
+        save_history()
+        immigration_grid = make_immigration_grid(ROWS, COLS)
+        immigration_generation = 0
+        simulation_active = False
+        set_status("Immigration grid cleared.")
+        return
+
     save_history()
     grid = make_grid()
     trail_grid = make_grid()
@@ -300,6 +366,20 @@ def clear_grid() -> None:
 
 def randomize_grid(density: float = 0.20) -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
+    global immigration_grid, immigration_generation
+    if simulation_mode == "immigration":
+        save_history()
+        immigration_grid = randomize_immigration_grid(
+            ROWS,
+            COLS,
+            density=density,
+            rng=immigration_rng,
+        )
+        immigration_generation = 0
+        simulation_active = False
+        set_status("Random two-species Immigration population created.")
+        return
+
     save_history()
     grid = [
         [1 if random.random() < density else 0 for _ in range(COLS)]
@@ -326,10 +406,41 @@ def cycle_theme() -> None:
 
 def cycle_rule() -> None:
     global current_rule, show_rule_overlay_until
+    if simulation_mode == "immigration":
+        set_status("Immigration Game uses Conway B3/S23 for both species.")
+        return
     rules = list(RULES)
     current_rule = rules[(rules.index(current_rule) + 1) % len(rules)]
     show_rule_overlay_until = time.time() + 2.5
     mark_stats_dirty()
+
+
+def toggle_simulation_mode() -> None:
+    """Switch between Life-like rules and the Immigration Game."""
+    global simulation_mode, simulation_active, single_step_requested
+    global selected_pattern, pattern_menu_active, drawing
+    simulation_mode = "immigration" if simulation_mode == "life" else "life"
+    simulation_active = False
+    single_step_requested = False
+    selected_pattern = None
+    pattern_menu_active = False
+    drawing = False
+    cell_transition.transitions.clear()
+    if simulation_mode == "immigration":
+        set_status("Immigration Game: T changes the active species.", 4.0)
+    else:
+        set_status("Life-like cellular automata mode.", 3.0)
+
+
+def toggle_active_species() -> None:
+    """Choose which Immigration species the drawing brush places."""
+    global active_species
+    if simulation_mode != "immigration":
+        set_status("Species selection is available in Immigration mode.")
+        return
+    active_species = SPECIES_B if active_species == SPECIES_A else SPECIES_A
+    label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
+    set_status(f"Active species: {label}")
 
 
 def zoom(factor: float) -> None:
@@ -416,7 +527,8 @@ def get_pattern_name() -> str | None:
 
 
 def save_current_pattern() -> None:
-    cropped = crop_live_pattern(grid)
+    source = immigration_grid if simulation_mode == "immigration" else grid
+    cropped = crop_live_pattern(source)
     if not cropped:
         set_status("There are no live cells to save.")
         return
@@ -440,7 +552,7 @@ def save_current_pattern() -> None:
 # ---------------------------------------------------------------------------
 
 
-def apply_generation() -> bool:
+def apply_life_generation() -> bool:
     global grid, trail_grid, activity_grid, generation, simulation_active
 
     if not any(cell > 0 for row in grid for cell in row):
@@ -473,6 +585,27 @@ def apply_generation() -> bool:
     generation += 1
     mark_stats_dirty()
     return True
+
+
+def apply_immigration_generation() -> bool:
+    """Advance the two-species Immigration Game by one generation."""
+    global immigration_grid, immigration_generation, simulation_active
+    if not any(cell for row in immigration_grid for cell in row):
+        simulation_active = False
+        set_status("Immigration stopped: no live cells.")
+        return False
+
+    save_history()
+    immigration_grid = apply_immigration_rules(immigration_grid)
+    immigration_generation += 1
+    return True
+
+
+def apply_generation() -> bool:
+    """Advance the selected simulation mode."""
+    if simulation_mode == "immigration":
+        return apply_immigration_generation()
+    return apply_life_generation()
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +805,78 @@ def draw_grid() -> None:
     screen.set_clip(old_clip)
 
 
+def immigration_species_color(value: int) -> tuple[int, int, int]:
+    """Return a theme-aware color for an Immigration cell."""
+    age = cell_age(value)
+    brightness = min(1.0, 0.62 + age * 0.025)
+    if species_of(value) == SPECIES_A:
+        base = (40, 180, 255)
+    else:
+        base = (255, 135, 35)
+    return tuple(int(channel * brightness) for channel in base)
+
+
+def draw_immigration_grid() -> None:
+    """Render both Immigration species while preserving encoded ages."""
+    viewport = grid_viewport()
+    origin_x, origin_y = grid_origin()
+    theme = THEMES[current_theme]
+    old_clip = screen.get_clip()
+    screen.set_clip(viewport)
+
+    for row in range(ROWS):
+        y = origin_y + row * CELL_SIZE
+        if y + CELL_SIZE < viewport.top or y > viewport.bottom:
+            continue
+        for col in range(COLS):
+            x = origin_x + col * CELL_SIZE
+            if x + CELL_SIZE < viewport.left or x > viewport.right:
+                continue
+            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+            value = immigration_grid[row][col]
+            if value:
+                color = immigration_species_color(value)
+                pygame.draw.rect(screen, color, rect)
+                if show_age_numbers and CELL_SIZE >= 14:
+                    age_text = tiny_font.render(
+                        str(cell_age(value)),
+                        True,
+                        BLACK if sum(color) > 400 else (255, 255, 255),
+                    )
+                    screen.blit(age_text, age_text.get_rect(center=rect.center))
+            if show_grid and CELL_SIZE >= 6:
+                pygame.draw.rect(screen, theme["grid"], rect, 1)
+
+    if show_quadrants:
+        center_x = origin_x + COLS * CELL_SIZE // 2
+        center_y = origin_y + ROWS * CELL_SIZE // 2
+        pygame.draw.line(
+            screen,
+            theme["text"],
+            (center_x, origin_y),
+            (center_x, origin_y + ROWS * CELL_SIZE),
+            2,
+        )
+        pygame.draw.line(
+            screen,
+            theme["text"],
+            (origin_x, center_y),
+            (origin_x + COLS * CELL_SIZE, center_y),
+            2,
+        )
+
+    if show_coordinates and CELL_SIZE >= 10:
+        for col in range(0, COLS, 5):
+            label = tiny_font.render(str(col), True, theme["text"])
+            screen.blit(label, (origin_x + col * CELL_SIZE + 2, origin_y + 2))
+        for row in range(0, ROWS, 5):
+            label = tiny_font.render(str(row), True, theme["text"])
+            screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
+
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
 def draw_pattern_preview() -> None:
     if selected_pattern is None:
         return
@@ -685,7 +890,11 @@ def draw_pattern_preview() -> None:
     data = transformed_pattern_data(selected_pattern)
     fits = pattern_fits(data, start_row, start_col)
     if fits:
-        base_color = get_enhanced_age_color(1, current_theme)
+        base_color = (
+            immigration_species_color(active_species)
+            if simulation_mode == "immigration"
+            else get_enhanced_age_color(1, current_theme)
+        )
         if hasattr(base_color, "r"):
             base_color = (base_color.r, base_color.g, base_color.b)
         preview_color = tuple(base_color) + (125,)
@@ -724,20 +933,44 @@ def draw_info_bar() -> None:
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    text = (
-        f"{state}   Speed: {speed} gen/s   Generation: {generation}   "
-        f"Rule: {RULES[current_rule]['name']}"
-    )
+    if simulation_mode == "immigration":
+        species_label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
+        text = (
+            f"{state}   Mode: Immigration Game   Speed: {speed} gen/s   "
+            f"Generation: {immigration_generation}   Brush: {species_label}"
+        )
+    else:
+        text = (
+            f"{state}   Mode: Life-like   Speed: {speed} gen/s   "
+            f"Generation: {generation}   Rule: {RULES[current_rule]['name']}"
+        )
     rendered = small_font.render(text, True, theme["text"])
     screen.blit(rendered, (10, 11))
 
 
 def draw_stats() -> None:
     theme = THEMES[current_theme]
-    stats = calculate_stats()
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
+
+    if simulation_mode == "immigration":
+        stats = immigration_stats(immigration_grid)
+        first_line = (
+            f"Population: {stats['population']}   Species A: {stats['species_a']}   "
+            f"Species B: {stats['species_b']}   Density: {stats['density']:.2f}%   "
+            f"History: {len(immigration_history)}/{HISTORY_LIMIT}"
+        )
+        second_line = (
+            f"A share: {stats['balance']:.1f}%   B share: "
+            f"{100.0 - stats['balance']:.1f}%   Average age: {stats['average_age']:.1f}   "
+            "Birth species follows the majority of its three parents."
+        )
+        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
+        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
+        return
+
+    stats = calculate_stats()
 
     first_line = (
         f"Alive: {stats['alive']}   Dead: {stats['dead']}   "
@@ -767,7 +1000,7 @@ def draw_stats() -> None:
 
 
 def draw_rule_overlay() -> None:
-    if time.time() >= show_rule_overlay_until:
+    if simulation_mode == "immigration" or time.time() >= show_rule_overlay_until:
         return
 
     overlay_width = 390
@@ -876,7 +1109,10 @@ def draw_status() -> None:
 
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    draw_grid()
+    if simulation_mode == "immigration":
+        draw_immigration_grid()
+    else:
+        draw_grid()
     draw_info_bar()
     draw_stats()
     main_menu.draw(screen, tiny_font)
@@ -898,6 +1134,8 @@ def setup_menu() -> Menu:
         WINDOW_HEIGHT - INFO_BAR_HEIGHT,
         current_theme,
     )
+    menu.add_button("Change Mode", toggle_simulation_mode)
+    menu.add_button("Change Species", toggle_active_species)
     menu.add_button("Clear Grid", clear_grid)
     menu.add_button("Randomize", randomize_grid)
     menu.add_button("Step Back", step_back)
@@ -989,6 +1227,10 @@ def handle_keydown(event: pygame.event.Event) -> None:
 
     if event.key == pygame.K_SPACE:
         simulation_active = not simulation_active
+    elif event.key == pygame.K_m:
+        toggle_simulation_mode()
+    elif event.key == pygame.K_t:
+        toggle_active_species()
     elif event.key == pygame.K_n:
         if simulation_active:
             set_status("Pause the simulation before stepping with N.")
@@ -1097,7 +1339,7 @@ def handle_event(event: pygame.event.Event) -> bool:
 
 main_menu = setup_menu()
 center_view()
-set_status("Space: run/pause · N: step · Left/Right mouse: draw/erase", 5.0)
+set_status("M: mode · T: species · Space: run/pause · Mouse: draw/erase", 5.0)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""
