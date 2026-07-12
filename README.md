@@ -18,6 +18,8 @@ satırı yine `import pygame` olarak kalır.
 ## Ana özellikler
 
 - Conway, HighLife, Day & Night ve Seeds kuralları
+- Conway grid'inden bağımsız EcoLife yapay yaşam modu
+- Yenilenen besin alanı, enerji metabolizması, üreme ve kalıtsal mutasyon
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
@@ -38,6 +40,7 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
+| M | Cellular Automata / EcoLife modunu değiştir |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
@@ -71,6 +74,7 @@ satırı yine `import pygame` olarak kalır.
 ## Dosyalar
 
 - `life.py`: Güncel 2D uygulama
+- `ecolife.py`: Enerji, besin, üreme ve mutasyon tabanlı EcoLife çekirdeği
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -85,4 +89,19 @@ python -m unittest discover -s tests
 ```
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
-pattern yerleştirmeyi ve SDL dummy video driver ile uygulama başlangıcını kapsar.
+pattern yerleştirmeyi, EcoLife kurallarını ve her iki modun SDL dummy video
+driver ile başlangıcını kapsar.
+
+## EcoLife
+
+EcoLife, klasik hücresel otomata grid'inden ayrı bir yapay yaşam deneyidir.
+Organizmalar bulundukları hücredeki besini enerjiye dönüştürür, her nesilde
+metabolizma maliyeti öder ve enerjileri kalıtsal üreme eşiklerini geçtiğinde boş
+bir komşu hücreye yavru bırakır. Yavrunun üreme eşiği küçük bir mutasyonla
+ebeveynden aktarılır. Besin zamanla yenilenir; enerji tükenen veya maksimum yaşa
+ulaşan organizmalar ölür.
+
+EcoLife modunda sol tık organizma ekler, sağ tık organizmayı siler. `Randomize`
+yeni bir popülasyon ve heterojen besin alanı oluşturur. Alt istatistik çubuğu
+nüfus, enerji, besin, doğum/ölüm, ortalama üreme eşiği ve soy derinliğini gösterir.
+Mod değiştirildiğinde Conway ve EcoLife durumları ayrı ayrı korunur.
