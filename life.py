@@ -11,18 +11,6 @@ os.environ["SDL_VIDEO_CENTERED"] = "1"
 
 import pygame
 
-from ecolife import (
-    EcoConfig,
-    EcoGrid,
-    EcoStepReport,
-    FoodGrid,
-    ecosystem_stats,
-    make_eco_grid,
-    make_food_grid,
-    randomize_ecosystem,
-    seed_cell,
-    step_ecosystem,
-)
 from patterns import get_all_patterns, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
 from themes import THEMES, Menu
@@ -77,17 +65,6 @@ trail_grid = make_grid()
 activity_grid = make_float_grid()
 grid_history: list[tuple[list[list[int]], list[list[int]], list[list[float]], int]] = []
 
-eco_config = EcoConfig()
-eco_grid: EcoGrid = make_eco_grid(ROWS, COLS)
-eco_food: FoodGrid = make_food_grid(ROWS, COLS, eco_config)
-eco_history: list[tuple[EcoGrid, FoodGrid, int, EcoStepReport]] = []
-eco_generation = 0
-eco_last_report = EcoStepReport()
-eco_rng = random.Random()
-
-simulation_mode = (
-    "ecolife" if os.environ.get("LIFE_START_MODE") == "ecolife" else "life"
-)
 current_rule = "conway"
 current_theme = "classic"
 simulation_active = False
@@ -171,19 +148,6 @@ def mark_stats_dirty() -> None:
 
 
 def save_history() -> None:
-    if simulation_mode == "ecolife":
-        if len(eco_history) >= HISTORY_LIMIT:
-            eco_history.pop(0)
-        eco_history.append(
-            (
-                deepcopy(eco_grid),
-                deepcopy(eco_food),
-                eco_generation,
-                eco_last_report,
-            )
-        )
-        return
-
     if len(grid_history) >= HISTORY_LIMIT:
         grid_history.pop(0)
     grid_history.append(
@@ -193,16 +157,6 @@ def save_history() -> None:
 
 def step_back() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
-    global eco_grid, eco_food, eco_generation, eco_last_report
-    if simulation_mode == "ecolife":
-        if not eco_history:
-            set_status("No earlier EcoLife generation is available.")
-            return
-        eco_grid, eco_food, eco_generation, eco_last_report = eco_history.pop()
-        simulation_active = False
-        set_status(f"Returned to EcoLife generation {eco_generation}.")
-        return
-
     if not grid_history:
         set_status("No earlier generation is available.")
         return
@@ -279,20 +233,6 @@ def set_cell(row: int, col: int, value: int) -> bool:
 def draw_cell(row: int, col: int) -> None:
     """Apply the active brush and save one history entry per changed stroke."""
     global drawing_history_pending
-    if simulation_mode == "ecolife":
-        current_alive = eco_grid[row][col] is not None
-        target_alive = drawing_value > 0
-        if current_alive == target_alive:
-            return
-        if drawing_history_pending:
-            save_history()
-            drawing_history_pending = False
-        if target_alive:
-            seed_cell(eco_grid, row, col, eco_config)
-        else:
-            eco_grid[row][col] = None
-        return
-
     if grid[row][col] == drawing_value:
         return
     if drawing_history_pending:
@@ -347,17 +287,6 @@ def place_selected_pattern(row: int, col: int) -> None:
 
 def clear_grid() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
-    global eco_grid, eco_food, eco_generation, eco_last_report
-    if simulation_mode == "ecolife":
-        save_history()
-        eco_grid = make_eco_grid(ROWS, COLS)
-        eco_food = make_food_grid(ROWS, COLS, eco_config)
-        eco_generation = 0
-        eco_last_report = EcoStepReport()
-        simulation_active = False
-        set_status("EcoLife ecosystem cleared.")
-        return
-
     save_history()
     grid = make_grid()
     trail_grid = make_grid()
@@ -371,22 +300,6 @@ def clear_grid() -> None:
 
 def randomize_grid(density: float = 0.20) -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
-    global eco_grid, eco_food, eco_generation, eco_last_report
-    if simulation_mode == "ecolife":
-        save_history()
-        eco_grid, eco_food = randomize_ecosystem(
-            ROWS,
-            COLS,
-            eco_config,
-            density=0.12,
-            rng=eco_rng,
-        )
-        eco_generation = 0
-        eco_last_report = EcoStepReport()
-        simulation_active = False
-        set_status("Random EcoLife ecosystem created.")
-        return
-
     save_history()
     grid = [
         [1 if random.random() < density else 0 for _ in range(COLS)]
@@ -413,9 +326,6 @@ def cycle_theme() -> None:
 
 def cycle_rule() -> None:
     global current_rule, show_rule_overlay_until
-    if simulation_mode == "ecolife":
-        set_status("EcoLife uses energy and resource rules.")
-        return
     rules = list(RULES)
     current_rule = rules[(rules.index(current_rule) + 1) % len(rules)]
     show_rule_overlay_until = time.time() + 2.5
@@ -435,9 +345,6 @@ def zoom(factor: float) -> None:
 
 def activate_pattern_menu() -> None:
     global pattern_menu_active, pattern_scroll
-    if simulation_mode == "ecolife":
-        set_status("Saved patterns are available in Conway mode.")
-        return
     pattern_menu_active = True
     pattern_scroll = 0
 
@@ -509,9 +416,6 @@ def get_pattern_name() -> str | None:
 
 
 def save_current_pattern() -> None:
-    if simulation_mode == "ecolife":
-        set_status("Switch to Conway mode to save cell patterns.")
-        return
     cropped = crop_live_pattern(grid)
     if not cropped:
         set_status("There are no live cells to save.")
@@ -536,7 +440,7 @@ def save_current_pattern() -> None:
 # ---------------------------------------------------------------------------
 
 
-def apply_life_generation() -> bool:
+def apply_generation() -> bool:
     global grid, trail_grid, activity_grid, generation, simulation_active
 
     if not any(cell > 0 for row in grid for cell in row):
@@ -568,51 +472,7 @@ def apply_life_generation() -> bool:
     grid = new_grid
     generation += 1
     mark_stats_dirty()
-
-
-def toggle_simulation_mode() -> None:
-    """Switch between classic cellular automata and EcoLife."""
-    global simulation_mode, simulation_active, selected_pattern
-    global pattern_menu_active, single_step_requested, drawing
-    simulation_mode = "ecolife" if simulation_mode == "life" else "life"
-    simulation_active = False
-    single_step_requested = False
-    selected_pattern = None
-    pattern_menu_active = False
-    drawing = False
-    cell_transition.transitions.clear()
-    if simulation_mode == "ecolife":
-        set_status("EcoLife: energy, food, reproduction and mutation.", 4.0)
-    else:
-        set_status("Conway cellular automata mode.", 3.0)
     return True
-
-
-def apply_eco_generation() -> bool:
-    """Advance the energy-and-resource simulation by one generation."""
-    global eco_grid, eco_food, eco_generation, eco_last_report
-    global simulation_active
-    if not any(cell is not None for row in eco_grid for cell in row):
-        simulation_active = False
-        set_status("EcoLife stopped: no organisms remain.")
-        return False
-
-    save_history()
-    eco_grid, eco_food, eco_last_report = step_ecosystem(
-        eco_grid,
-        eco_food,
-        eco_config,
-        rng=eco_rng,
-    )
-    eco_generation += 1
-    return True
-
-
-def apply_generation() -> bool:
-    """Advance whichever simulation mode is currently selected."""
-    if simulation_mode == "ecolife":
-        return apply_eco_generation()
-    return apply_life_generation()
 
 
 # ---------------------------------------------------------------------------
@@ -812,90 +672,6 @@ def draw_grid() -> None:
     screen.set_clip(old_clip)
 
 
-def draw_ecolife_grid() -> None:
-    """Render food as terrain and organisms by energy and inherited trait."""
-    viewport = grid_viewport()
-    origin_x, origin_y = grid_origin()
-    theme = THEMES[current_theme]
-    old_clip = screen.get_clip()
-    screen.set_clip(viewport)
-
-    threshold_range = max(
-        0.001,
-        eco_config.maximum_reproduction_threshold
-        - eco_config.minimum_reproduction_threshold,
-    )
-    for row in range(ROWS):
-        y = origin_y + row * CELL_SIZE
-        if y + CELL_SIZE < viewport.top or y > viewport.bottom:
-            continue
-        for col in range(COLS):
-            x = origin_x + col * CELL_SIZE
-            if x + CELL_SIZE < viewport.left or x > viewport.right:
-                continue
-            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
-            food_ratio = min(1.0, eco_food[row][col] / eco_config.food_capacity)
-            food_color = blend_color(
-                theme["background"],
-                (42, 105, 48),
-                0.18 + food_ratio * 0.62,
-            )
-            pygame.draw.rect(screen, food_color, rect)
-
-            cell = eco_grid[row][col]
-            if cell is not None:
-                energy_ratio = min(1.0, cell.energy / eco_config.maximum_energy)
-                trait_ratio = (
-                    cell.reproduction_threshold
-                    - eco_config.minimum_reproduction_threshold
-                ) / threshold_range
-                organism_color = (
-                    int(245 - trait_ratio * 105),
-                    int(105 + energy_ratio * 145),
-                    int(55 + trait_ratio * 185),
-                )
-                inset = 1 if CELL_SIZE < 10 else 2
-                pygame.draw.rect(screen, organism_color, rect.inflate(-inset, -inset))
-                if show_age_numbers and CELL_SIZE >= 14:
-                    energy_text = tiny_font.render(
-                        str(max(0, round(cell.energy))),
-                        True,
-                        BLACK if sum(organism_color) > 400 else (255, 255, 255),
-                    )
-                    screen.blit(energy_text, energy_text.get_rect(center=rect.center))
-
-            if show_grid and CELL_SIZE >= 6:
-                pygame.draw.rect(screen, theme["grid"], rect, 1)
-
-    if show_quadrants:
-        center_x = origin_x + COLS * CELL_SIZE // 2
-        center_y = origin_y + ROWS * CELL_SIZE // 2
-        pygame.draw.line(
-            screen,
-            theme["text"],
-            (center_x, origin_y),
-            (center_x, origin_y + ROWS * CELL_SIZE),
-            2,
-        )
-        pygame.draw.line(
-            screen,
-            theme["text"],
-            (origin_x, center_y),
-            (origin_x + COLS * CELL_SIZE, center_y),
-            2,
-        )
-
-    if show_coordinates and CELL_SIZE >= 10:
-        for col in range(0, COLS, 5):
-            label = tiny_font.render(str(col), True, theme["text"])
-            screen.blit(label, (origin_x + col * CELL_SIZE + 2, origin_y + 2))
-        for row in range(0, ROWS, 5):
-            label = tiny_font.render(str(row), True, theme["text"])
-            screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
-
-    screen.set_clip(old_clip)
-
-
 def draw_pattern_preview() -> None:
     if selected_pattern is None:
         return
@@ -948,43 +724,20 @@ def draw_info_bar() -> None:
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    if simulation_mode == "ecolife":
-        text = (
-            f"{state}   Mode: EcoLife   Speed: {speed} gen/s   "
-            f"Generation: {eco_generation}"
-        )
-    else:
-        text = (
-            f"{state}   Mode: Cellular Automata   Speed: {speed} gen/s   "
-            f"Generation: {generation}   Rule: {RULES[current_rule]['name']}"
-        )
+    text = (
+        f"{state}   Speed: {speed} gen/s   Generation: {generation}   "
+        f"Rule: {RULES[current_rule]['name']}"
+    )
     rendered = small_font.render(text, True, theme["text"])
     screen.blit(rendered, (10, 11))
 
 
 def draw_stats() -> None:
     theme = THEMES[current_theme]
+    stats = calculate_stats()
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
-
-    if simulation_mode == "ecolife":
-        stats = ecosystem_stats(eco_grid, eco_food)
-        first_line = (
-            f"Population: {stats['population']}   Avg energy: "
-            f"{stats['average_energy']:.2f}   Avg food: {stats['average_food']:.2f}   "
-            f"History: {len(eco_history)}/{HISTORY_LIMIT}"
-        )
-        second_line = (
-            f"Births: {eco_last_report.births}   Deaths: {eco_last_report.deaths}   "
-            f"Avg age: {stats['average_age']:.1f}   Reproduction trait: "
-            f"{stats['average_threshold']:.2f}   Lineage: {stats['max_lineage']}"
-        )
-        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
-        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
-        return
-
-    stats = calculate_stats()
 
     first_line = (
         f"Alive: {stats['alive']}   Dead: {stats['dead']}   "
@@ -1014,7 +767,7 @@ def draw_stats() -> None:
 
 
 def draw_rule_overlay() -> None:
-    if simulation_mode == "ecolife" or time.time() >= show_rule_overlay_until:
+    if time.time() >= show_rule_overlay_until:
         return
 
     overlay_width = 390
@@ -1058,7 +811,7 @@ def pattern_menu_geometry() -> tuple[int, int, int, int]:
 
 
 def draw_pattern_menu() -> None:
-    if simulation_mode == "ecolife" or not pattern_menu_active:
+    if not pattern_menu_active:
         return
 
     patterns = list(get_all_patterns().items())
@@ -1123,10 +876,7 @@ def draw_status() -> None:
 
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    if simulation_mode == "ecolife":
-        draw_ecolife_grid()
-    else:
-        draw_grid()
+    draw_grid()
     draw_info_bar()
     draw_stats()
     main_menu.draw(screen, tiny_font)
@@ -1148,7 +898,6 @@ def setup_menu() -> Menu:
         WINDOW_HEIGHT - INFO_BAR_HEIGHT,
         current_theme,
     )
-    menu.add_button("Change Mode", toggle_simulation_mode)
     menu.add_button("Clear Grid", clear_grid)
     menu.add_button("Randomize", randomize_grid)
     menu.add_button("Step Back", step_back)
@@ -1240,8 +989,6 @@ def handle_keydown(event: pygame.event.Event) -> None:
 
     if event.key == pygame.K_SPACE:
         simulation_active = not simulation_active
-    elif event.key == pygame.K_m:
-        toggle_simulation_mode()
     elif event.key == pygame.K_n:
         if simulation_active:
             set_status("Pause the simulation before stepping with N.")
@@ -1272,8 +1019,6 @@ def handle_keydown(event: pygame.event.Event) -> None:
     elif event.key == pygame.K_RIGHTBRACKET:
         zoom(1.20)
     elif pygame.K_1 <= event.key <= pygame.K_9:
-        if simulation_mode == "ecolife":
-            return
         patterns = list(get_all_patterns().values())
         index = event.key - pygame.K_1
         if index < len(patterns):
@@ -1352,7 +1097,7 @@ def handle_event(event: pygame.event.Event) -> bool:
 
 main_menu = setup_menu()
 center_view()
-set_status("M: mode · Space: run/pause · N: step · Mouse: draw/erase", 5.0)
+set_status("Space: run/pause · N: step · Left/Right mouse: draw/erase", 5.0)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""

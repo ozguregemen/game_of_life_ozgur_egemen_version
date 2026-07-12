@@ -12,7 +12,6 @@ import life
 
 class PatternPlacementTests(unittest.TestCase):
     def setUp(self) -> None:
-        life.simulation_mode = "life"
         life.grid = life.make_grid()
         life.trail_grid = life.make_grid()
         life.activity_grid = life.make_float_grid()
@@ -40,14 +39,13 @@ class PatternPlacementTests(unittest.TestCase):
 
 
 class ApplicationSmokeTests(unittest.TestCase):
-    def run_smoke_test(self, mode: str) -> None:
+    def test_dummy_video_driver_startup(self) -> None:
         environment = os.environ.copy()
         environment.update(
             {
                 "SDL_VIDEODRIVER": "dummy",
                 "SDL_AUDIODRIVER": "dummy",
                 "LIFE_SMOKE_TEST": "1",
-                "LIFE_START_MODE": mode,
             }
         )
         result = subprocess.run(
@@ -60,65 +58,6 @@ class ApplicationSmokeTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
-
-    def test_dummy_video_driver_startup(self) -> None:
-        self.run_smoke_test("life")
-
-    def test_ecolife_dummy_video_driver_startup(self) -> None:
-        self.run_smoke_test("ecolife")
-
-
-class EcoLifeIntegrationTests(unittest.TestCase):
-    def setUp(self) -> None:
-        life.simulation_mode = "ecolife"
-        life.simulation_active = False
-        life.eco_grid = life.make_eco_grid(life.ROWS, life.COLS)
-        life.eco_food = life.make_food_grid(life.ROWS, life.COLS, life.eco_config)
-        life.eco_history.clear()
-        life.grid_history.clear()
-        life.eco_generation = 0
-        life.eco_last_report = life.EcoStepReport()
-
-    def tearDown(self) -> None:
-        life.simulation_mode = "life"
-        life.simulation_active = False
-
-    def test_ecolife_generation_uses_separate_history(self) -> None:
-        life.seed_cell(
-            life.eco_grid,
-            10,
-            10,
-            life.eco_config,
-            energy=life.eco_config.maximum_energy,
-        )
-
-        self.assertTrue(life.apply_generation())
-
-        self.assertEqual(life.eco_generation, 1)
-        self.assertEqual(len(life.eco_history), 1)
-        self.assertEqual(life.grid_history, [])
-
-    def test_clearing_ecolife_does_not_modify_conway_grid(self) -> None:
-        life.grid = life.make_grid()
-        life.grid[0][0] = 4
-        life.seed_cell(life.eco_grid, 1, 1, life.eco_config)
-
-        life.clear_grid()
-
-        self.assertEqual(life.grid[0][0], 4)
-        self.assertFalse(any(cell for row in life.eco_grid for cell in row))
-
-    def test_mode_switch_preserves_both_simulations(self) -> None:
-        life.grid = life.make_grid()
-        life.grid[2][2] = 3
-        life.seed_cell(life.eco_grid, 3, 3, life.eco_config, energy=9.0)
-
-        life.toggle_simulation_mode()
-        life.toggle_simulation_mode()
-
-        self.assertEqual(life.simulation_mode, "ecolife")
-        self.assertEqual(life.grid[2][2], 3)
-        self.assertEqual(life.eco_grid[3][3].energy, 9.0)
 
 
 if __name__ == "__main__":
