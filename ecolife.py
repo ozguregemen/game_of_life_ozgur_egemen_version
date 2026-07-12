@@ -41,6 +41,16 @@ class EcoConfig:
             raise ValueError("Regeneration and mutation cannot be negative.")
         if self.minimum_reproduction_threshold > self.maximum_reproduction_threshold:
             raise ValueError("Reproduction threshold bounds are invalid.")
+        if not (
+            self.minimum_reproduction_threshold
+            <= self.default_reproduction_threshold
+            <= self.maximum_reproduction_threshold
+        ):
+            raise ValueError("Default reproduction threshold is outside its bounds.")
+        if self.initial_energy > self.maximum_energy:
+            raise ValueError("Initial energy cannot exceed maximum energy.")
+        if self.reproduction_cost > self.maximum_energy:
+            raise ValueError("Reproduction cost cannot exceed maximum energy.")
 
 
 @dataclass
