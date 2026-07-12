@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import random
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any
 
@@ -86,7 +87,7 @@ pattern_scroll = 0
 
 drawing = False
 drawing_value = 1
-stroke_history_saved = False
+drawing_history_pending = False
 
 view_offset_x = 0
 view_offset_y = 0
@@ -95,8 +96,12 @@ show_rule_overlay_until = 0.0
 status_message = ""
 status_message_until = 0.0
 
-pattern_cache: dict[str, int] = {}
-pattern_cache_generation = -1
+recognized_pattern_cache: dict[str, int] = {}
+pattern_scan_generation = -1
+pattern_scan_revision = -1
+pattern_scan_future: Future[dict[str, int]] | None = None
+pattern_scan_executor = ThreadPoolExecutor(max_workers=1)
+grid_revision = 0
 stats_dirty = True
 
 cell_transition = CellTransition(duration=0.18)
@@ -137,8 +142,9 @@ def set_status(message: str, duration: float = 2.0) -> None:
 
 
 def mark_stats_dirty() -> None:
-    global stats_dirty
+    global stats_dirty, grid_revision
     stats_dirty = True
+    grid_revision += 1
 
 
 def save_history() -> None:
@@ -211,15 +217,38 @@ def mouse_to_grid(position: tuple[int, int]) -> tuple[int, int] | None:
     return None
 
 
-def set_cell(row: int, col: int, value: int) -> None:
+def set_cell(row: int, col: int, value: int) -> bool:
+    """Set a cell and return whether the grid changed."""
     old_value = grid[row][col]
     if old_value == value:
-        return
+        return False
 
     grid[row][col] = value
     if (old_value > 0) != (value > 0):
         cell_transition.start_transition(row, col, old_value, value)
     mark_stats_dirty()
+    return True
+
+
+def draw_cell(row: int, col: int) -> None:
+    """Apply the active brush and save one history entry per changed stroke."""
+    global drawing_history_pending
+    if grid[row][col] == drawing_value:
+        return
+    if drawing_history_pending:
+        save_history()
+        drawing_history_pending = False
+    set_cell(row, col, drawing_value)
+
+
+def pattern_fits(data: list[list[int]], row: int, col: int) -> bool:
+    """Return whether the complete rectangular pattern fits on the grid."""
+    return bool(data) and (
+        row >= 0
+        and col >= 0
+        and row + len(data) <= ROWS
+        and col + len(data[0]) <= COLS
+    )
 
 
 def place_selected_pattern(row: int, col: int) -> None:
@@ -228,24 +257,27 @@ def place_selected_pattern(row: int, col: int) -> None:
         return
 
     data = transformed_pattern_data(selected_pattern)
-    save_history()
+    if not pattern_fits(data, row, col):
+        selected_pattern = None
+        set_status("Pattern does not fit inside the grid.")
+        return
 
-    changed = False
-    for delta_row, pattern_row in enumerate(data):
-        for delta_col, value in enumerate(pattern_row):
-            target_row = row + delta_row
-            target_col = col + delta_col
-            if not (0 <= target_row < ROWS and 0 <= target_col < COLS):
-                continue
-            if value and grid[target_row][target_col] <= 0:
-                set_cell(target_row, target_col, 1)
-                changed = True
+    additions = [
+        (row + delta_row, col + delta_col)
+        for delta_row, pattern_row in enumerate(data)
+        for delta_col, value in enumerate(pattern_row)
+        if value and grid[row + delta_row][col + delta_col] <= 0
+    ]
+    if additions:
+        save_history()
+        for target_row, target_col in additions:
+            set_cell(target_row, target_col, 1)
 
     selected_pattern = None
-    if changed:
+    if additions:
         set_status("Pattern placed.")
     else:
-        set_status("Pattern did not fit or added no new cells.")
+        set_status("Pattern added no new cells.")
 
 
 # ---------------------------------------------------------------------------
@@ -448,8 +480,18 @@ def apply_generation() -> bool:
 # ---------------------------------------------------------------------------
 
 
+def count_recognized_patterns(source: list[list[int]]) -> dict[str, int]:
+    """Count known isolated patterns in a grid snapshot."""
+    counts: dict[str, int] = {}
+    for match in find_patterns(source):
+        name = match["pattern"]["name"]
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def calculate_stats() -> dict[str, Any]:
-    global pattern_cache, pattern_cache_generation, stats_dirty
+    global recognized_pattern_cache, pattern_scan_generation
+    global pattern_scan_revision, pattern_scan_future, stats_dirty
 
     alive_cells = sum(
         1 for row in grid for cell in row if cell > 0
@@ -457,25 +499,36 @@ def calculate_stats() -> dict[str, Any]:
     total_cells = ROWS * COLS
     density = 100.0 * alive_cells / total_cells if total_cells else 0.0
 
-    should_scan = stats_dirty and (
+    if pattern_scan_future is not None and pattern_scan_future.done():
+        try:
+            scanned_counts = pattern_scan_future.result()
+        except Exception as exc:  # Defensive: statistics must never stop the UI.
+            set_status(f"Pattern scan failed: {exc}", 4.0)
+        else:
+            if pattern_scan_revision == grid_revision:
+                recognized_pattern_cache = scanned_counts
+                stats_dirty = False
+        pattern_scan_future = None
+
+    should_scan = stats_dirty and pattern_scan_future is None and (
         not simulation_active
         or generation % 5 == 0
-        or pattern_cache_generation < 0
+        or pattern_scan_generation < 0
     )
     if should_scan:
-        counts: dict[str, int] = {}
-        for match in find_patterns(grid):
-            name = match["pattern"]["name"]
-            counts[name] = counts.get(name, 0) + 1
-        pattern_cache = counts
-        pattern_cache_generation = generation
-        stats_dirty = False
+        snapshot = [row[:] for row in grid]
+        pattern_scan_revision = grid_revision
+        pattern_scan_generation = generation
+        pattern_scan_future = pattern_scan_executor.submit(
+            count_recognized_patterns,
+            snapshot,
+        )
 
     return {
         "alive": alive_cells,
         "dead": total_cells - alive_cells,
         "density": density,
-        "patterns": pattern_cache,
+        "patterns": recognized_pattern_cache,
     }
 
 
@@ -513,6 +566,8 @@ def draw_grid() -> None:
 
     old_clip = screen.get_clip()
     screen.set_clip(viewport)
+    visible_rects: list[pygame.Rect] = []
+    effects_overlay = pygame.Surface(viewport.size, pygame.SRCALPHA)
 
     for row in range(ROWS):
         y = origin_y + row * CELL_SIZE
@@ -525,6 +580,7 @@ def draw_grid() -> None:
                 continue
 
             rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+            visible_rects.append(rect)
             age = grid[row][col]
             transition = cell_transition.get_state(row, col)
 
@@ -565,17 +621,23 @@ def draw_grid() -> None:
             if show_heatmap:
                 heat_color = get_heatmap_color(activity_grid[row][col])
                 if heat_color[3] > 0:
-                    overlay = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
-                    overlay.fill(heat_color)
-                    screen.blit(overlay, rect.topleft)
+                    pygame.draw.rect(
+                        effects_overlay,
+                        heat_color,
+                        rect.move(-viewport.x, -viewport.y),
+                    )
 
             if trail_grid[row][col] > 0 and age <= 0:
-                overlay = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
-                overlay.fill(get_trail_color(trail_grid[row][col]))
-                screen.blit(overlay, rect.topleft)
+                pygame.draw.rect(
+                    effects_overlay,
+                    get_trail_color(trail_grid[row][col]),
+                    rect.move(-viewport.x, -viewport.y),
+                )
 
-            if show_grid and CELL_SIZE >= 6:
-                pygame.draw.rect(screen, theme["grid"], rect, 1)
+    screen.blit(effects_overlay, viewport.topleft)
+    if show_grid and CELL_SIZE >= 6:
+        for rect in visible_rects:
+            pygame.draw.rect(screen, theme["grid"], rect, 1)
 
     if show_quadrants:
         center_x = origin_x + COLS * CELL_SIZE // 2
@@ -621,26 +683,39 @@ def draw_pattern_preview() -> None:
     start_row, start_col = position
     origin_x, origin_y = grid_origin()
     data = transformed_pattern_data(selected_pattern)
-    base_color = get_enhanced_age_color(1, current_theme)
-    if hasattr(base_color, "r"):
-        base_color = (base_color.r, base_color.g, base_color.b)
+    fits = pattern_fits(data, start_row, start_col)
+    if fits:
+        base_color = get_enhanced_age_color(1, current_theme)
+        if hasattr(base_color, "r"):
+            base_color = (base_color.r, base_color.g, base_color.b)
+        preview_color = tuple(base_color) + (125,)
+    else:
+        preview_color = (255, 45, 45, 155)
+
+    preview = pygame.Surface(
+        (len(data[0]) * CELL_SIZE, len(data) * CELL_SIZE),
+        pygame.SRCALPHA,
+    )
 
     for delta_row, pattern_row in enumerate(data):
         for delta_col, value in enumerate(pattern_row):
             if not value:
                 continue
-
-            row = start_row + delta_row
-            col = start_col + delta_col
-            if not (0 <= row < ROWS and 0 <= col < COLS):
-                continue
-
-            overlay = pygame.Surface((CELL_SIZE, CELL_SIZE), pygame.SRCALPHA)
-            overlay.fill(tuple(base_color) + (125,))
-            screen.blit(
-                overlay,
-                (origin_x + col * CELL_SIZE, origin_y + row * CELL_SIZE),
+            pygame.draw.rect(
+                preview,
+                preview_color,
+                pygame.Rect(
+                    delta_col * CELL_SIZE,
+                    delta_row * CELL_SIZE,
+                    CELL_SIZE,
+                    CELL_SIZE,
+                ),
             )
+
+    screen.blit(
+        preview,
+        (origin_x + start_col * CELL_SIZE, origin_y + start_row * CELL_SIZE),
+    )
 
 
 def draw_info_bar() -> None:
@@ -679,6 +754,13 @@ def draw_stats() -> None:
         )
     else:
         patterns_text = "Recognized isolated patterns: none"
+
+    available_width = max(20, width - 20)
+    if tiny_font.size(patterns_text)[0] > available_width:
+        ellipsis = "..."
+        while patterns_text and tiny_font.size(patterns_text + ellipsis)[0] > available_width:
+            patterns_text = patterns_text[:-1]
+        patterns_text = patterns_text.rstrip(" ,:") + ellipsis
 
     rendered = tiny_font.render(patterns_text, True, theme["text"])
     screen.blit(rendered, (10, y + 38))
@@ -908,7 +990,10 @@ def handle_keydown(event: pygame.event.Event) -> None:
     if event.key == pygame.K_SPACE:
         simulation_active = not simulation_active
     elif event.key == pygame.K_n:
-        single_step_requested = True
+        if simulation_active:
+            set_status("Pause the simulation before stepping with N.")
+        else:
+            single_step_requested = True
     elif event.key == pygame.K_UP:
         speed = min(60, speed + 1)
     elif event.key == pygame.K_DOWN:
@@ -941,7 +1026,7 @@ def handle_keydown(event: pygame.event.Event) -> None:
 
 
 def handle_event(event: pygame.event.Event) -> bool:
-    global drawing, drawing_value, stroke_history_saved
+    global drawing, drawing_value, drawing_history_pending
     global view_offset_x, view_offset_y
 
     if event.type == pygame.QUIT:
@@ -976,31 +1061,27 @@ def handle_event(event: pygame.event.Event) -> bool:
             if position is not None:
                 drawing = True
                 drawing_value = 1
-                stroke_history_saved = False
-                save_history()
-                stroke_history_saved = True
-                set_cell(*position, drawing_value)
+                drawing_history_pending = True
+                draw_cell(*position)
         elif event.button == 3:
             position = mouse_to_grid(event.pos)
             if position is not None:
                 drawing = True
                 drawing_value = 0
-                stroke_history_saved = False
-                save_history()
-                stroke_history_saved = True
-                set_cell(*position, drawing_value)
+                drawing_history_pending = True
+                draw_cell(*position)
         return True
 
     if event.type == pygame.MOUSEBUTTONUP:
         drawing = False
-        stroke_history_saved = False
+        drawing_history_pending = False
         return True
 
     if event.type == pygame.MOUSEMOTION:
         if drawing:
             position = mouse_to_grid(event.pos)
             if position is not None:
-                set_cell(*position, drawing_value)
+                draw_cell(*position)
         elif event.buttons[1]:
             view_offset_x += event.rel[0]
             view_offset_y += event.rel[1]
@@ -1018,42 +1099,53 @@ main_menu = setup_menu()
 center_view()
 set_status("Space: run/pause · N: step · Left/Right mouse: draw/erase", 5.0)
 
-running = True
-simulation_accumulator = 0.0
+def run() -> None:
+    """Run the interactive application until the window is closed."""
+    global single_step_requested
+    running = True
+    simulation_accumulator = 0.0
+    smoke_test = os.environ.get("LIFE_SMOKE_TEST") == "1"
 
-try:
-    while running:
-        delta_time = clock.tick(60) / 1000.0
-        cell_transition.update(delta_time)
+    try:
+        while running:
+            delta_time = clock.tick(60) / 1000.0
+            cell_transition.update(delta_time)
 
-        for current_event in pygame.event.get():
-            running = handle_event(current_event)
+            for current_event in pygame.event.get():
+                running = handle_event(current_event)
+                if not running:
+                    break
+
             if not running:
                 break
 
-        if not running:
-            break
+            if simulation_active:
+                simulation_accumulator += delta_time
+                interval = 1.0 / max(1, speed)
+                steps_this_frame = 0
 
-        if simulation_active:
-            simulation_accumulator += delta_time
-            interval = 1.0 / max(1, speed)
-            steps_this_frame = 0
+                while simulation_accumulator >= interval and steps_this_frame < 5:
+                    apply_generation()
+                    simulation_accumulator -= interval
+                    steps_this_frame += 1
+                    if not simulation_active:
+                        break
+            else:
+                simulation_accumulator = 0.0
 
-            while simulation_accumulator >= interval and steps_this_frame < 5:
+            if single_step_requested:
                 apply_generation()
-                simulation_accumulator -= interval
-                steps_this_frame += 1
-                if not simulation_active:
-                    break
-        else:
-            simulation_accumulator = 0.0
+                single_step_requested = False
 
-        if single_step_requested:
-            apply_generation()
-            single_step_requested = False
+            draw_scene()
+            pygame.display.flip()
+            if smoke_test:
+                running = False
 
-        draw_scene()
-        pygame.display.flip()
+    finally:
+        pattern_scan_executor.shutdown(wait=True, cancel_futures=True)
+        pygame.quit()
 
-finally:
-    pygame.quit()
+
+if __name__ == "__main__":
+    run()

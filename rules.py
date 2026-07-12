@@ -165,9 +165,21 @@ def _rotate_90(pattern: tuple[tuple[int, ...], ...]) -> tuple[tuple[int, ...], .
     return tuple(tuple(row) for row in zip(*pattern[::-1]))
 
 
-def _unique_variants(pattern: Sequence[Sequence[int]]) -> list[tuple[tuple[int, ...], ...]]:
+_VARIANT_CACHE: dict[
+    tuple[tuple[int, ...], ...],
+    tuple[tuple[tuple[int, ...], ...], ...],
+] = {}
+
+
+def _unique_variants(
+    pattern: Sequence[Sequence[int]],
+) -> tuple[tuple[tuple[int, ...], ...], ...]:
     """Return unique rotations and mirror variants of a pattern."""
     original = _normalise_pattern(pattern)
+    cached = _VARIANT_CACHE.get(original)
+    if cached is not None:
+        return cached
+
     variants: set[tuple[tuple[int, ...], ...]] = set()
     current = original
 
@@ -176,7 +188,9 @@ def _unique_variants(pattern: Sequence[Sequence[int]]) -> list[tuple[tuple[int, 
         variants.add(tuple(tuple(reversed(row)) for row in current))
         current = _rotate_90(current)
 
-    return list(variants)
+    result = tuple(variants)
+    _VARIANT_CACHE[original] = result
+    return result
 
 
 def _matches_at(

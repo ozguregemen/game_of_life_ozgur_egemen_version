@@ -38,7 +38,7 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
-| N | Tek nesil ilerlet |
+| N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
 | H | Heatmap aç/kapat |
@@ -83,3 +83,6 @@ satırı yine `import pygame` olarak kalır.
 ```powershell
 python -m unittest discover -s tests
 ```
+
+Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
+pattern yerleştirmeyi ve SDL dummy video driver ile uygulama başlangıcını kapsar.
