@@ -18,6 +18,7 @@ satırı yine `import pygame` olarak kalır.
 ## Ana özellikler
 
 - Conway, HighLife, Day & Night ve Seeds kuralları
+- İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
@@ -38,6 +39,8 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
+| M | Life-like / Immigration Game modunu değiştir |
+| T | Immigration modunda aktif türü değiştir |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
@@ -71,6 +74,7 @@ satırı yine `import pygame` olarak kalır.
 ## Dosyalar
 
 - `life.py`: Güncel 2D uygulama
+- `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -85,4 +89,16 @@ python -m unittest discover -s tests
 ```
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
-pattern yerleştirmeyi ve SDL dummy video driver ile uygulama başlangıcını kapsar.
+pattern yerleştirmeyi, Immigration kurallarını ve iki modun SDL dummy video
+driver ile başlangıcını kapsar.
+
+## Immigration Game
+
+Immigration Game, Conway'in `B3/S23` doğum ve hayatta kalma kurallarını iki türe
+uygular. Hayatta kalan hücre türünü korur. Ölü bir hücrenin tam üç canlı komşusu
+varsa doğar ve bu üç ebeveyn arasındaki çoğunluk türünü alır.
+
+Tür A mavi, Tür B turuncu çizilir. Sol tık aktif türü yerleştirir, sağ tık hücreyi
+siler ve `T` aktif türü değiştirir. Randomize iki türü yaklaşık eşit dağıtır.
+Life-like ve Immigration grid'leri ile geri alma geçmişleri ayrı tutulur; mod
+değiştirmek diğer simülasyonun durumunu bozmaz.
