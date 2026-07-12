@@ -19,6 +19,7 @@ satırı yine `import pygame` olarak kalır.
 
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
+- Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
@@ -39,7 +40,7 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
-| M | Life-like / Immigration Game modunu değiştir |
+| M | Life-like / Immigration / Brian's Brain modları arasında geç |
 | T | Immigration modunda aktif türü değiştir |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
@@ -75,6 +76,7 @@ satırı yine `import pygame` olarak kalır.
 
 - `life.py`: Güncel 2D uygulama
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
+- `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -89,8 +91,8 @@ python -m unittest discover -s tests
 ```
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
-pattern yerleştirmeyi, Immigration kurallarını ve iki modun SDL dummy video
-driver ile başlangıcını kapsar.
+pattern yerleştirmeyi, Immigration ve Brian's Brain kurallarını ve üç modun SDL
+dummy video driver ile başlangıcını kapsar.
 
 ## Immigration Game
 
@@ -102,3 +104,15 @@ Tür A mavi, Tür B turuncu çizilir. Sol tık aktif türü yerleştirir, sağ t
 siler ve `T` aktif türü değiştirir. Randomize iki türü yaklaşık eşit dağıtır.
 Life-like ve Immigration grid'leri ile geri alma geçmişleri ayrı tutulur; mod
 değiştirmek diğer simülasyonun durumunu bozmaz.
+
+## Brian's Brain
+
+Brian's Brain üç hücre durumu kullanır: kapalı, ateşlenen ve ölmekte olan. Kapalı
+bir hücre yalnızca tam iki ateşlenen komşusu varsa ateşlenir. Ateşlenen hücre bir
+sonraki nesilde ölmekte olan duruma, ardından kapalı duruma geçer. Ölmekte olan
+hücreler doğum hesabında komşu sayılmaz.
+
+Ateşlenen hücreler açık camgöbeği, ölmekte olan hücreler koyu mor çizilir. Sol
+tık ateşlenen hücre yerleştirir, sağ tık siler. Hazır patternler ateşlenen
+hücrelerden oluşan başlangıç durumları olarak kullanılabilir. Brian's Brain de
+kendi grid, generation ve geri alma geçmişini korur.
