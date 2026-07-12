@@ -6,6 +6,7 @@ from ecolife import (
     ecosystem_stats,
     make_eco_grid,
     make_food_grid,
+    randomize_ecosystem,
     seed_cell,
     step_ecosystem,
 )
@@ -89,6 +90,15 @@ class EcoLifeTests(unittest.TestCase):
         self.assertEqual(stats["population"], 2)
         self.assertEqual(stats["average_energy"], 6.0)
         self.assertEqual(stats["average_food"], self.config.food_capacity * 0.5)
+
+    def test_default_ecosystem_remains_viable_long_term(self) -> None:
+        rng = random.Random(42)
+        grid, food = randomize_ecosystem(12, 12, self.config, rng=rng)
+
+        for _ in range(180):
+            grid, food, _ = step_ecosystem(grid, food, self.config, rng=rng)
+
+        self.assertGreater(ecosystem_stats(grid, food)["population"], 0)
 
 
 if __name__ == "__main__":

@@ -12,11 +12,11 @@ class EcoConfig:
     """Tunable environmental and organism parameters for EcoLife."""
 
     food_capacity: float = 10.0
-    food_regeneration: float = 0.18
+    food_regeneration: float = 0.42
     food_consumption: float = 2.0
     initial_energy: float = 6.0
     maximum_energy: float = 20.0
-    metabolism_cost: float = 0.55
+    metabolism_cost: float = 0.38
     reproduction_cost: float = 4.0
     default_reproduction_threshold: float = 11.0
     minimum_reproduction_threshold: float = 7.0
