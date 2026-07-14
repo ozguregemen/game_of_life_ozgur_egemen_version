@@ -41,7 +41,7 @@ class PatternPlacementTests(unittest.TestCase):
 
 
 class ApplicationSmokeTests(unittest.TestCase):
-    def run_smoke_test(self, mode: str) -> None:
+    def run_smoke_test(self, mode: str, dimension: str = "2d") -> None:
         environment = os.environ.copy()
         environment.update(
             {
@@ -49,6 +49,7 @@ class ApplicationSmokeTests(unittest.TestCase):
                 "SDL_AUDIODRIVER": "dummy",
                 "LIFE_SMOKE_TEST": "1",
                 "LIFE_START_MODE": mode,
+                "LIFE_START_DIMENSION": dimension,
             }
         )
         result = subprocess.run(
@@ -79,6 +80,132 @@ class ApplicationSmokeTests(unittest.TestCase):
 
     def test_cyclic_automaton_dummy_video_driver_startup(self) -> None:
         self.run_smoke_test("cyclic_automaton")
+
+    def test_elementary_ca_dummy_video_driver_startup(self) -> None:
+        self.run_smoke_test("life", "1d")
+
+
+class DimensionUITests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.set_simulation_mode("life")
+        life.dimension_menu_active = False
+        life.mode_menu_active = False
+        life.pattern_menu_active = False
+        life.eca_rule = life.ECA_DEFAULT_RULE
+        life.eca_boundary = life.BOUNDARY_FIXED
+        life.eca_rows = [life.single_eca_seed(life.ECA_WIDTH)]
+        life.eca_generation = 0
+        life.eca_undo_history.clear()
+
+    def tearDown(self) -> None:
+        life.dimension_menu_active = False
+        life.rendered_grid_cache.clear()
+        life.mode_stats_cache.clear()
+        life.set_simulation_mode("life")
+
+    @staticmethod
+    def menu_labels() -> list[str]:
+        return [data["button"].text for data in life.main_menu.buttons]
+
+    def test_d_opens_dimension_chooser_without_switching(self) -> None:
+        life.handle_keydown(
+            life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_d)
+        )
+        self.assertTrue(life.dimension_menu_active)
+        self.assertEqual(life.active_dimension, "2d")
+
+    def test_number_key_selects_1d_workspace(self) -> None:
+        life.activate_dimension_menu()
+        event = life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_1)
+        self.assertTrue(life.handle_dimension_menu_event(event))
+        self.assertEqual(life.active_dimension, "1d")
+        self.assertFalse(life.dimension_menu_active)
+
+    def test_3d_card_is_visible_but_cannot_be_activated(self) -> None:
+        life.activate_dimension_menu()
+        event = life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_3)
+        self.assertTrue(life.handle_dimension_menu_event(event))
+        self.assertEqual(life.active_dimension, "2d")
+        self.assertFalse(life.dimension_menu_active)
+        self.assertIn("planned", life.status_message.lower())
+
+    def test_dimension_cards_fit_without_overlap(self) -> None:
+        modal, cards = life.dimension_menu_geometry()
+        self.assertEqual(len(cards), len(life.DIMENSION_DEFINITIONS))
+        for _, card in cards:
+            self.assertTrue(modal.contains(card))
+        for index, (_, card) in enumerate(cards):
+            self.assertFalse(
+                any(card.colliderect(other) for _, other in cards[index + 1 :])
+            )
+
+    def test_1d_sidebar_contains_only_relevant_controls(self) -> None:
+        life.set_active_dimension("1d")
+        labels = self.menu_labels()
+        self.assertIn("Select Dimension (D)", labels)
+        self.assertTrue(any(label.startswith("Preset Rule:") for label in labels))
+        self.assertTrue(any(label.startswith("Boundary:") for label in labels))
+        self.assertNotIn("Select Mode (M)", labels)
+        self.assertNotIn("Show Patterns", labels)
+
+    def test_switching_dimensions_preserves_2d_grid(self) -> None:
+        life.grid = life.make_grid()
+        life.grid[4][5] = 1
+        life.set_active_dimension("1d")
+        life.set_active_dimension("2d")
+        self.assertEqual(life.grid[4][5], 1)
+
+    def test_m_does_not_open_2d_mode_chooser_from_1d(self) -> None:
+        life.set_active_dimension("1d")
+        life.activate_mode_menu()
+        self.assertFalse(life.mode_menu_active)
+        self.assertIn("2D workspace", life.status_message)
+
+    def test_elementary_generation_dispatch_and_step_back(self) -> None:
+        life.set_active_dimension("1d")
+        seed = life.eca_rows[-1]
+        self.assertTrue(life.apply_generation())
+        self.assertEqual(life.eca_generation, 1)
+        self.assertNotEqual(life.eca_rows[-1], seed)
+        self.assertEqual(len(life.eca_undo_history), 1)
+
+        life.step_back()
+        self.assertEqual(life.eca_generation, 0)
+        self.assertEqual(life.eca_rows, [seed])
+
+    def test_one_eca_brush_stroke_creates_one_undo_snapshot(self) -> None:
+        life.set_active_dimension("1d")
+        life.eca_rows = [tuple(0 for _ in range(life.ECA_WIDTH))]
+        life.drawing_value = 1
+        life.drawing_history_pending = True
+        life.draw_eca_cell(4)
+        life.draw_eca_cell(5)
+        self.assertEqual(life.eca_rows[-1][4:6], (1, 1))
+        self.assertEqual(len(life.eca_undo_history), 1)
+
+    def test_elementary_render_reuses_cached_viewport(self) -> None:
+        life.set_active_dimension("1d")
+        life.rendered_grid_cache.clear()
+        life.reset_render_cache_metrics()
+        life.invalidate_render_cache(life.ECA_RENDER_KEY)
+        life.draw_active_grid()
+        life.draw_active_grid()
+        self.assertEqual(life.render_cache_misses, 1)
+        self.assertEqual(life.render_cache_hits, 1)
+
+    def test_1d_context_menu_fits_minimum_window_height(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(760, 560)
+            life.set_active_dimension("1d")
+            self.assertTrue(
+                all(
+                    data["button"].rect.bottom <= life.main_menu.rect.bottom
+                    for data in life.main_menu.buttons
+                )
+            )
+        finally:
+            life.update_window_size(*original_size)
 
 
 class ContextualModeUITests(unittest.TestCase):
