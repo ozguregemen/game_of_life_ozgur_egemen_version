@@ -93,6 +93,7 @@ satırı yine `import pygame` olarak kalır.
 - `visuals.py`: Animasyon ve görsel yardımcılar
 - `life3d.py`: Deneysel 3D slice sürümü
 - `life2d_backup.py`: Eski 2D sürüm yedeği
+- `benchmarks/render_benchmark.py`: Mod bazında tekrar çalıştırılabilir render ölçümü
 
 ## Test
 
@@ -105,6 +106,17 @@ pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
 depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Automaton
 kurallarını; mod registry ve bağlamsal menü davranışını; altı modun SDL dummy video driver ile
 başlangıcını kapsar.
+
+## Render performansı
+
+Grid viewport'u, ilgili modun hücreleri veya görsel ayarları değişene kadar bellekte
+cache'lenir. Pattern önizlemesi, durum mesajları ve menüler cache dışında çizildiği
+için etkileşimli kalır. Life geçiş animasyonları devam ederken cache kullanılmaz;
+`60 gen/s` çalışan ve her frame değişen simülasyonda gereksiz viewport kopyası
+alınmaz. Mod istatistikleri de yalnızca ilgili grid değiştiğinde yeniden hesaplanır.
+
+Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
+[`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.
 
 ## Bağlamsal arayüz
 
