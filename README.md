@@ -37,6 +37,8 @@ satırı yine `import pygame` olarak kalır.
 - Classic, Neon ve Pastel temaları
 - Zoom, pan, koordinat ve quadrant görünümü
 - Yeniden boyutlandırıldığında simülasyonu koruyan sabit mantıksal grid
+- Tüm boyutları, modları ve kamera konumlarını içeren sürümlü JSON oturumları
+- Rule, boundary ve seed'i yeniden kullanılabilir yapan 1D deney profilleri
 
 ## Kontroller
 
@@ -47,6 +49,9 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
+| P | Session & Experiment Manager panelini aç / kapat |
+| Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
+| Ctrl + O | `Last Session` oturumunu yükle |
 | D | 1D / 2D / 3D boyut seçme panelini aç / kapat |
 | M | 2D çalışma alanında açıklamalı mod seçme panelini aç / kapat |
 | E | 1D çalışma alanında 0–255 rule kataloğunu aç / kapat |
@@ -99,6 +104,8 @@ satırı yine `import pygame` olarak kalır.
 - `mode_patterns.py`: Life dışındaki modların hazır pattern ve başlangıç durumları
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
+- `session_storage.py`: Sürümlü oturum/profile şeması, doğrulama ve güvenli JSON depolama
+- `session_ui.py`: Oturum kataloğu, 1D profil menüsü ve modal input/render akışı
 - `themes.py`: Temalar ve menü bileşenleri
 - `visuals.py`: Animasyon ve görsel yardımcılar
 - `life3d.py`: Deneysel 3D slice sürümü
@@ -130,7 +137,32 @@ pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
 depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Automaton
 kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod registry ve
 bağlamsal menü davranışını; workspace registry/controller/renderer sözleşmesini;
-altı 2D mod ile 1D alanın SDL dummy video driver ile başlangıcını kapsar.
+oturum/profile güvenliğini ve tam-state round-trip davranışını; altı 2D mod ile 1D
+alanın SDL dummy video driver ile başlangıcını kapsar.
+
+## Tam oturum kaydetme ve yükleme
+
+Sağ menüdeki `Session & Profiles` düğmesi veya `P`, oturum yöneticisini açar.
+`Quick Save` / `Ctrl+S`, mevcut durumu `sessions/last_session.json` dosyasına
+kontrollü olarak yazar; `Quick Load` / `Ctrl+O` aynı kurtarma noktasını yükler.
+İsimlendirilmiş oturumlar ayrıca kaydedilebilir ve yöneticideki katalogdan seçilebilir.
+
+Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünüm
+seçenekleri, 1D/2D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
+generation değerleri, Life rule'u, moda özel fırçalar ve 1D Elementary CA'nın rule,
+boundary, seed, tam diyagram ve generation durumunu içerir. Yükleme simülasyonu
+güvenli biçimde duraklatır ve undo geçmişlerini temizler. Dosya tamamen doğrulanmadan
+canlı uygulama state'i değiştirilmez.
+
+1D çalışma alanında oturum yöneticisi ayrıca `Save 1D Experiment Profile` ve
+`Browse 1D Experiment Profiles` seçeneklerini gösterir. Bir profil mevcut rule,
+boundary, background ve güncel satırı yeniden kullanılabilir seed olarak saklar.
+Profil yüklendiğinde deney generation `0` noktasından yeniden başlatılır.
+
+Oturum ve profil dosyaları UTF-8 JSON kullanır, sürüm numarası taşır, güvenli dosya
+adlarına dönüştürülür ve geçici dosya üzerinden atomik olarak yazılır. Bozuk JSON,
+uyumsuz sürüm, geçersiz hücre durumu veya farklı grid boyutu kontrollü hata üretir;
+`sessions/` kullanıcı verisi olduğu için Git tarafından izlenmez.
 
 ## Render performansı
 

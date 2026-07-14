@@ -19,6 +19,9 @@ htmlcov/
 .idea/
 .vscode/
 
+# User-created sessions and experiment profiles
+/sessions/
+
 # OS metadata
 .DS_Store
 Thumbs.db
