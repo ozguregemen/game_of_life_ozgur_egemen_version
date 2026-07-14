@@ -17,6 +17,9 @@ satırı yine `import pygame` olarak kalır.
 
 ## Ana özellikler
 
+- 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
+- 0–255 arasındaki tüm Wolfram elementary cellular automata kuralları için 1D çalışma alanı
+- 3D için bozuk veya yarım bir moda geçmeden yol haritasını gösteren planlı alan
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
@@ -44,7 +47,8 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
-| M | Açıklamalı mod seçme panelini aç / kapat |
+| D | 1D / 2D / 3D boyut seçme panelini aç / kapat |
+| M | 2D çalışma alanında açıklamalı mod seçme panelini aç / kapat |
 | T | Immigration türünü, Wireworld fırçasını veya Cyclic renk fırçasını değiştir; Langton karıncasını döndür |
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
@@ -79,7 +83,9 @@ satırı yine `import pygame` olarak kalır.
 
 ## Dosyalar
 
-- `life.py`: Güncel 2D uygulama
+- `life.py`: Boyut seçici, 1D çalışma alanı ve güncel 2D uygulama
+- `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
+- `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
@@ -104,7 +110,8 @@ python -m unittest discover -s tests
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
 pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
 depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Automaton
-kurallarını; mod registry ve bağlamsal menü davranışını; altı modun SDL dummy video driver ile
+kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod registry ve
+bağlamsal menü davranışını; altı 2D mod ile 1D alanın SDL dummy video driver ile
 başlangıcını kapsar.
 
 ## Render performansı
@@ -117,6 +124,28 @@ alınmaz. Mod istatistikleri de yalnızca ilgili grid değiştiğinde yeniden he
 
 Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
 [`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.
+
+## Boyut seçimi ve 1D Elementary CA
+
+`D` tuşu veya sağ menüdeki `Select Dimension` düğmesi üç üst seviye çalışma alanını
+gösterir. `1D`, Wolfram elementary cellular automata alanını; `2D`, mevcut altı modu
+açar. `3D` kartı şimdilik `PLANNED` durumundadır: kullanıcıya projenin yönünü gösterir
+fakat seçildiğinde çalışan alanı değiştirmez. 1D ve 2D durumları arasında geçiş yapmak
+gridleri ve geçmişleri sıfırlamaz.
+
+Elementary CA, iki hücre durumu ve sol/merkez/sağ üçlüsünden oluşan sekiz olası
+komşuluk kullanır. 0–255 kural numarası, `111` ile `000` arasındaki bu komşulukların
+sekiz çıktısını kodlar. Örneğin Rule 30, `00011110` ikili çıktısına sahiptir. Bu
+numaralandırma [Wolfram Elementary Cellular Automaton açıklaması](https://mathworld.wolfram.com/ElementaryCellularAutomaton.html)
+ve [Wolfram Language CellularAutomaton dokümantasyonu](https://reference.wolfram.com/language/ref/CellularAutomaton.html)
+ile aynı sırayı kullanır.
+
+1D alanında üstte sabit bir güncel-satır editörü, altta ise nesillerin aşağı doğru
+aktığı space-time diyagramı bulunur. Sol/sağ tıkla güncel satır açılıp kapatılabilir.
+Sağ panelde bütün kurallar arasında `−1` / `+1` ile gezilebilir; 30, 54, 90, 110 ve
+184 için hızlı preset döngüsü vardır. `Fixed Zero` sınırı grid dışını 0 kabul eder;
+`Wrap` sınırı satırın iki ucunu komşu yapar. Sınır veya kural değiştiğinde eski ve yeni
+kurallar aynı diyagramda karışmasın diye mevcut son satırdan yeni bir diyagram başlar.
 
 ## Bağlamsal arayüz
 
