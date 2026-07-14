@@ -21,6 +21,7 @@ satırı yine `import pygame` olarak kalır.
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
 - Basit dönüş kurallarından karmaşık izler üreten Langton's Ant modu
+- İletken hatlar üzerinde elektron sinyalleri çalıştıran Wireworld modu
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
@@ -41,8 +42,8 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
-| M | Life-like / Immigration / Brian's Brain / Langton modları arasında geç |
-| T | Immigration türünü değiştir / Langton karıncasını döndür |
+| M | Life-like / Immigration / Brian's Brain / Langton / Wireworld modları arasında geç |
+| T | Immigration türünü değiştir / Langton karıncasını döndür / Wireworld fırçasını değiştir |
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
@@ -80,6 +81,7 @@ satırı yine `import pygame` olarak kalır.
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
+- `wireworld.py`: Dört durumlu Wireworld kural ve istatistik çekirdeği
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -94,8 +96,8 @@ python -m unittest discover -s tests
 ```
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
-pattern yerleştirmeyi, Immigration, Brian's Brain ve Langton's Ant kurallarını ve
-dört modun SDL dummy video driver ile başlangıcını kapsar.
+pattern yerleştirmeyi; Immigration, Brian's Brain, Langton's Ant ve Wireworld
+kurallarını; beş modun SDL dummy video driver ile başlangıcını kapsar.
 
 ## Immigration Game
 
@@ -131,3 +133,17 @@ Sol tık siyah, sağ tık beyaz hücre çizer. `T` karıncayı bulunduğu yerde 
 yönünde döndürür; `Shift + Sol tık` karıncayı yeni bir hücreye taşır. `Clear Grid`
 beyaz bir tahta ve kuzeye bakan merkez karıncası oluşturur. Mevcut grid politikası
 wrap kullanmadığı için karınca sınırdan çıkarsa simülasyon kontrollü biçimde durur.
+
+## Wireworld
+
+Wireworld dört hücre durumu kullanır: boş, elektron başı, elektron kuyruğu ve
+iletken. Boş hücreler boş kalır. Elektron başı bir sonraki nesilde kuyruğa, kuyruk
+ise iletkene dönüşür. Bir iletken, sekiz komşusu arasında tam bir veya iki elektron
+başı varsa yeni elektron başına dönüşür; aksi halde iletken kalır.
+
+Boş alan siyah, iletken sarı, elektron başı mavi ve elektron kuyruğu kırmızı
+çizilir. Sol tık seçili durumu yerleştirir, sağ tık hücreyi siler. `T`, iletken,
+elektron başı ve elektron kuyruğu fırçaları arasında geçer. Hazır patternler
+Wireworld'de iletken hat olarak yerleştirilir. Bir devreyi çalıştırmak için iletken
+hat üzerine en az bir elektron başı; yönlü bir başlangıç için başın arkasına bir
+elektron kuyruğu çizilebilir.
