@@ -1,2 +1,5 @@
 pygame-ce
 numpy
+Pillow
+imageio
+imageio-ffmpeg

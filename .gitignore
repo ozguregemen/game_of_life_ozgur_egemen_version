@@ -22,6 +22,9 @@ htmlcov/
 # User-created sessions and experiment profiles
 /sessions/
 
+# Generated diagrams, animations, videos, metrics, and experiment bundles
+/exports/
+
 # OS metadata
 .DS_Store
 Thumbs.db
