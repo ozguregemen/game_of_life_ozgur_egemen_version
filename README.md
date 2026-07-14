@@ -22,6 +22,7 @@ satırı yine `import pygame` olarak kalır.
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
 - Basit dönüş kurallarından karmaşık izler üreten Langton's Ant modu
 - İletken hatlar üzerinde elektron sinyalleri çalıştıran Wireworld modu
+- Açıklamalı mod seçme paneli ve moda göre değişen bağlamsal sağ menü
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
@@ -42,7 +43,7 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
-| M | Life-like / Immigration / Brian's Brain / Langton / Wireworld modları arasında geç |
+| M | Açıklamalı mod seçme panelini aç / kapat |
 | T | Immigration türünü değiştir / Langton karıncasını döndür / Wireworld fırçasını değiştir |
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
@@ -82,6 +83,7 @@ satırı yine `import pygame` olarak kalır.
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
 - `wireworld.py`: Dört durumlu Wireworld kural ve istatistik çekirdeği
+- `mode_registry.py`: Mod adları, açıklamaları, renkleri ve bağlamsal kontrol tanımları
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -97,7 +99,22 @@ python -m unittest discover -s tests
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
 pattern yerleştirmeyi; Immigration, Brian's Brain, Langton's Ant ve Wireworld
-kurallarını; beş modun SDL dummy video driver ile başlangıcını kapsar.
+kurallarını; mod registry ve bağlamsal menü davranışını; beş modun SDL dummy
+video driver ile başlangıcını kapsar.
+
+## Bağlamsal arayüz
+
+`M` tuşu veya sağ menüdeki `Select Mode` düğmesi, beş simülasyonu açıklamalı
+kartlar halinde gösterir. Kartlar fareyle ya da `1`–`5` tuşlarıyla seçilebilir.
+Bir mod seçildiğinde çalışan simülasyon duraklatılır; diğer modların grid ve geri
+alma geçmişleri korunur.
+
+Sağ menünün ilk bölümü seçilen moda göre yeniden kurulur. Life-like modunda kural,
+heatmap ve yaş kontrolleri; Immigration'da iki tür fırçası; Langton's Ant'te dönüş
+kontrolü; Wireworld'de renkli iletken, elektron başı ve elektron kuyruğu fırçaları
+gösterilir. Seçili tür veya fırça renkli çerçeveyle belirtilir. Ortak temizleme,
+randomize, geri alma, pattern, tema ve görünüm kontrolleri her modda erişilebilir
+kalır.
 
 ## Immigration Game
 
