@@ -42,15 +42,7 @@ from elementary_ca import (
     BOUNDARY_WRAP,
     DEFAULT_RULE as ECA_DEFAULT_RULE,
     DEFAULT_WIDTH as ECA_WIDTH,
-    RULE_PRESETS as ECA_RULE_PRESETS,
-    ElementaryRow,
-    next_background as next_eca_background,
-    random_seed as random_eca_seed,
-    row_stats as eca_row_stats,
-    rule_bits as eca_rule_bits,
     single_cell_seed as single_eca_seed,
-    step_elementary,
-    validate_rule as validate_eca_rule,
 )
 from immigration import (
     SPECIES_A,
@@ -98,6 +90,20 @@ from wireworld import (
     randomize_wireworld_grid,
     wireworld_stats,
 )
+from workspaces.base import WorkspaceBundle, WorkspaceRegistry
+from workspaces.elementary_1d import (
+    ECA_RENDER_KEY,
+    ElementaryWorkspaceController,
+    ElementaryWorkspaceRenderer,
+    ElementaryWorkspaceServices,
+    ElementaryWorkspaceState,
+)
+from workspaces.two_dimensional import (
+    TwoDimensionalControllerCallbacks,
+    TwoDimensionalRendererCallbacks,
+    TwoDimensionalWorkspaceController,
+    TwoDimensionalWorkspaceRenderer,
+)
 
 # ---------------------------------------------------------------------------
 # Application configuration
@@ -119,11 +125,6 @@ MAX_CELL_SIZE = 40
 HISTORY_LIMIT = 50
 TRAIL_MAX = 10
 PATTERN_ROW_HEIGHT = 30
-ECA_EDITOR_HEIGHT = 44
-ECA_DIAGRAM_LIMIT = 512
-ECA_MIN_CELL_SIZE = 2
-ECA_MAX_CELL_SIZE = 16
-ECA_RENDER_KEY = "elementary_ca"
 
 BLACK = (0, 0, 0)
 CYCLIC_PALETTE = (
@@ -195,20 +196,6 @@ cyclic_brush = 1
 cyclic_threshold = CYCLIC_DEFAULT_THRESHOLD
 cyclic_rng = random.Random()
 
-eca_rule = ECA_DEFAULT_RULE
-eca_boundary = BOUNDARY_INFINITE
-eca_background = 0
-eca_rule_change_reset = True
-eca_rows: list[ElementaryRow] = [single_eca_seed(ECA_WIDTH)]
-eca_generation = 0
-eca_undo_history: list[
-    tuple[list[ElementaryRow], int, int, str, int]
-] = []
-eca_rng = random.Random()
-eca_cell_size = 6
-eca_view_offset_x = 0
-eca_view_offset_y = 0
-
 SIMULATION_MODES = MODE_KEYS
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
 simulation_mode = (
@@ -242,8 +229,6 @@ pattern_menu_active = False
 pattern_scroll = 0
 mode_menu_active = False
 dimension_menu_active = False
-eca_rule_menu_active = False
-eca_rule_menu_input = ""
 
 drawing = False
 drawing_value = 1
@@ -296,60 +281,34 @@ def grid_origin() -> tuple[int, int]:
 
 
 def eca_diagram_viewport() -> pygame.Rect:
-    """Return the scrollable part of the 1D space-time workspace."""
-    viewport = grid_viewport()
-    return pygame.Rect(
-        viewport.x,
-        viewport.y + ECA_EDITOR_HEIGHT,
-        viewport.width,
-        max(1, viewport.height - ECA_EDITOR_HEIGHT),
-    )
+    """Compatibility wrapper for the extracted 1D workspace geometry."""
+    return elementary_controller.diagram_viewport()
 
 
 def eca_grid_origin() -> tuple[int, int]:
-    """Return the top-left origin of the scrollable ECA diagram."""
-    viewport = eca_diagram_viewport()
-    return (
-        viewport.x + eca_view_offset_x,
-        viewport.y + GRID_TOP_MARGIN + eca_view_offset_y,
-    )
+    return elementary_controller.grid_origin()
 
 
 def eca_editor_rect() -> pygame.Rect:
-    """Return the fixed row editor rectangle above the ECA diagram."""
-    viewport = grid_viewport()
-    width = len(eca_rows[-1]) * eca_cell_size
-    x = viewport.x + eca_view_offset_x
-    return pygame.Rect(x, viewport.y + 25, width, eca_cell_size)
+    return elementary_controller.editor_rect()
 
 
 def follow_eca_latest() -> None:
-    """Keep the newest ECA generation visible as the diagram grows."""
-    global eca_view_offset_y
-    viewport = eca_diagram_viewport()
-    diagram_height = len(eca_rows) * eca_cell_size
-    eca_view_offset_y = min(
-        0,
-        viewport.height - GRID_TOP_MARGIN - diagram_height,
-    )
+    elementary_controller.follow_latest()
 
 
-def center_view() -> None:
+def _center_2d_view() -> None:
     global view_offset_x, view_offset_y
-    global eca_view_offset_x, eca_view_offset_y
-    if active_dimension == "1d":
-        viewport = eca_diagram_viewport()
-        diagram_width = len(eca_rows[-1]) * eca_cell_size
-        eca_view_offset_x = (viewport.width - diagram_width) // 2
-        eca_view_offset_y = 0
-        follow_eca_latest()
-        return
-
     viewport = grid_viewport()
     grid_width = COLS * CELL_SIZE
     grid_height = ROWS * CELL_SIZE
     view_offset_x = (viewport.width - grid_width) // 2
     view_offset_y = (viewport.height - GRID_TOP_MARGIN - grid_height) // 2
+
+
+def center_view() -> None:
+    """Center the active dimension through its workspace controller."""
+    active_workspace().controller.center_view()
 
 
 def set_status(message: str, duration: float = 2.0) -> None:
@@ -395,21 +354,7 @@ def mark_stats_dirty() -> None:
     invalidate_render_cache("life")
 
 
-def save_history() -> None:
-    if active_dimension == "1d":
-        if len(eca_undo_history) >= HISTORY_LIMIT:
-            eca_undo_history.pop(0)
-        eca_undo_history.append(
-            (
-                list(eca_rows),
-                eca_generation,
-                eca_rule,
-                eca_boundary,
-                eca_background,
-            )
-        )
-        return
-
+def _save_2d_history() -> None:
     if simulation_mode == "cyclic_automaton":
         if len(cyclic_history) >= HISTORY_LIMIT:
             cyclic_history.pop(0)
@@ -451,32 +396,18 @@ def save_history() -> None:
     )
 
 
-def step_back() -> None:
+def save_history() -> None:
+    """Save history through the active workspace controller."""
+    active_workspace().controller.save_history()
+
+
+def _step_back_2d() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation
     global cyclic_grid, cyclic_generation
-    global eca_rows, eca_generation, eca_rule, eca_boundary, eca_background
-    if active_dimension == "1d":
-        if not eca_undo_history:
-            set_status("No earlier elementary CA state is available.")
-            return
-        (
-            eca_rows,
-            eca_generation,
-            eca_rule,
-            eca_boundary,
-            eca_background,
-        ) = eca_undo_history.pop()
-        simulation_active = False
-        follow_eca_latest()
-        invalidate_render_cache(ECA_RENDER_KEY)
-        rebuild_context_menu()
-        set_status(f"Returned to elementary generation {eca_generation}.")
-        return
-
     if simulation_mode == "cyclic_automaton":
         if not cyclic_history:
             set_status("No earlier Cyclic Automaton generation is available.")
@@ -536,6 +467,11 @@ def step_back() -> None:
     cell_transition.transitions.clear()
     mark_stats_dirty()
     set_status(f"Returned to generation {generation}.")
+
+
+def step_back() -> None:
+    """Undo through the active workspace controller."""
+    active_workspace().controller.step_back()
 
 
 def normalize_pattern_cell(value: int, mode: str) -> int:
@@ -638,31 +574,15 @@ def mouse_to_grid(position: tuple[int, int]) -> tuple[int, int] | None:
 
 
 def mouse_to_eca_column(position: tuple[int, int]) -> int | None:
-    """Map a pointer in the fixed 1D row editor to a cell column."""
-    editor = eca_editor_rect()
-    if not editor.collidepoint(position):
-        return None
-    column = (position[0] - editor.x) // eca_cell_size
-    if 0 <= column < len(eca_rows[-1]):
-        return int(column)
-    return None
+    return elementary_controller.mouse_to_column(position)
 
 
 def draw_eca_cell(column: int) -> None:
-    """Apply the current mouse value to the editable latest ECA row."""
-    global drawing_history_pending, eca_rows, simulation_active
-    target_value = 1 if drawing_value else 0
-    current = eca_rows[-1]
-    if current[column] == target_value:
-        return
-    if drawing_history_pending:
-        save_history()
-        drawing_history_pending = False
-    edited = list(current)
-    edited[column] = target_value
-    eca_rows[-1] = tuple(edited)
-    simulation_active = False
-    invalidate_render_cache(ECA_RENDER_KEY)
+    global drawing_history_pending
+    elementary_controller.state.drawing_value = drawing_value
+    elementary_controller.state.stroke_history_pending = drawing_history_pending
+    elementary_controller.draw_cell(column)
+    drawing_history_pending = elementary_controller.state.stroke_history_pending
 
 
 def set_cell(row: int, col: int, value: int) -> bool:
@@ -859,17 +779,13 @@ def place_selected_pattern(row: int, col: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def clear_grid() -> None:
+def _clear_2d_grid() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation
     global cyclic_grid, cyclic_generation
-    if active_dimension == "1d":
-        reset_eca_seed(tuple(0 for _ in range(ECA_WIDTH)), "Elementary diagram cleared.")
-        return
-
     if simulation_mode == "cyclic_automaton":
         save_history()
         cyclic_grid = make_cyclic_grid(ROWS, COLS)
@@ -928,20 +844,18 @@ def clear_grid() -> None:
     set_status("Grid cleared.")
 
 
-def randomize_grid(density: float = 0.20) -> None:
+def clear_grid() -> None:
+    """Clear through the active workspace controller."""
+    active_workspace().controller.clear()
+
+
+def _randomize_2d_grid(density: float = 0.20) -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation
     global cyclic_grid, cyclic_generation
-    if active_dimension == "1d":
-        reset_eca_seed(
-            random_eca_seed(ECA_WIDTH, density=density, rng=eca_rng),
-            f"Random elementary seed created at {density:.0%} density.",
-        )
-        return
-
     if simulation_mode == "cyclic_automaton":
         save_history()
         cyclic_grid = randomize_cyclic_grid(
@@ -1029,6 +943,11 @@ def randomize_grid(density: float = 0.20) -> None:
     set_status(f"Random grid created at {density:.0%} density.")
 
 
+def randomize_grid(density: float = 0.20) -> None:
+    """Randomize through the active workspace controller."""
+    active_workspace().controller.randomize(density)
+
+
 def cycle_theme() -> None:
     global current_theme
     themes = list(THEMES)
@@ -1066,13 +985,14 @@ def set_active_dimension(dimension: str) -> bool:
     """Switch workspaces while keeping every dimension's simulation state."""
     global active_dimension, simulation_active, single_step_requested
     global selected_pattern, pattern_menu_active, mode_menu_active
-    global dimension_menu_active, eca_rule_menu_active, drawing
+    global dimension_menu_active, drawing
     definition = get_dimension_definition(dimension)
     if not definition.available:
         dimension_menu_active = False
         set_status(f"{definition.name}: {definition.status_hint}", 4.0)
         return False
 
+    active_workspace().controller.deactivate()
     active_dimension = dimension
     simulation_active = False
     single_step_requested = False
@@ -1080,12 +1000,11 @@ def set_active_dimension(dimension: str) -> bool:
     pattern_menu_active = False
     mode_menu_active = False
     dimension_menu_active = False
-    eca_rule_menu_active = False
     drawing = False
     cell_transition.transitions.clear()
     if "main_menu" in globals():
+        active_workspace().controller.activate()
         rebuild_context_menu()
-        center_view()
     set_status(f"{definition.name}: {definition.status_hint}", 4.0)
     return True
 
@@ -1093,145 +1012,60 @@ def set_active_dimension(dimension: str) -> bool:
 def activate_dimension_menu() -> None:
     """Open the top-level dimension chooser and pause the workspace."""
     global dimension_menu_active, mode_menu_active, pattern_menu_active
-    global simulation_active, eca_rule_menu_active
+    global simulation_active
     dimension_menu_active = True
     mode_menu_active = False
     pattern_menu_active = False
-    eca_rule_menu_active = False
+    if "workspace_registry" in globals():
+        active_workspace().controller.deactivate()
     simulation_active = False
 
 
 def eca_boundary_label(boundary: str | None = None) -> str:
-    """Return a concise user-facing label for one ECA edge policy."""
-    value = eca_boundary if boundary is None else boundary
-    return {
-        BOUNDARY_INFINITE: "Infinite Background",
-        BOUNDARY_FIXED: "Fixed Zero",
-        BOUNDARY_WRAP: "Wrap",
-    }[value]
+    value = elementary_controller.state.boundary if boundary is None else boundary
+    return elementary_controller.boundary_label(value)
 
 
 def set_eca_rule(rule: int) -> None:
-    """Select an ECA rule using the configured comparison behavior."""
-    global eca_rule, eca_rows, eca_generation, simulation_active
-    global eca_boundary, eca_background
-    if active_dimension != "1d":
-        return
-    validated_rule = validate_eca_rule(rule)
-    if validated_rule == eca_rule:
-        set_status(f"Elementary rule {eca_rule} is already selected.")
-        return
-    save_history()
-    eca_rule = validated_rule
-    if eca_rule_change_reset:
-        eca_rows = [single_eca_seed(ECA_WIDTH)]
-        eca_boundary = BOUNDARY_INFINITE
-        eca_background = 0
-        restart_label = "canonical single-cell seed and infinite background"
-    else:
-        eca_rows = [eca_rows[-1]]
-        if eca_boundary != BOUNDARY_INFINITE:
-            eca_background = 0
-        restart_label = "the current row"
-    eca_generation = 0
-    simulation_active = False
-    center_view()
-    invalidate_render_cache(ECA_RENDER_KEY)
-    rebuild_context_menu()
-    set_status(
-        f"Rule {eca_rule} selected; restarted from {restart_label}.",
-        4.0,
-    )
+    elementary_controller.set_rule(rule)
 
 
 def adjust_eca_rule(delta: int) -> None:
-    """Move through all 256 Wolfram rules with wraparound."""
-    if active_dimension != "1d":
-        return
-    set_eca_rule((eca_rule + delta) % 256)
+    elementary_controller.adjust_rule(delta)
 
 
 def cycle_eca_rule_preset() -> None:
-    """Cycle through a compact set of well-known elementary rules."""
-    if active_dimension != "1d":
-        return
-    for preset in ECA_RULE_PRESETS:
-        if preset > eca_rule:
-            set_eca_rule(preset)
-            return
-    set_eca_rule(ECA_RULE_PRESETS[0])
+    elementary_controller.cycle_featured_rule()
 
 
 def next_featured_eca_rule() -> int:
-    """Return the next highlighted rule after the current rule."""
-    for preset in ECA_RULE_PRESETS:
-        if preset > eca_rule:
-            return preset
-    return ECA_RULE_PRESETS[0]
+    return elementary_controller.next_featured_rule()
 
 
 def toggle_eca_rule_change_reset() -> None:
-    """Choose whether rule changes reset to the canonical catalogue seed."""
-    global eca_rule_change_reset
-    if active_dimension != "1d":
-        return
-    eca_rule_change_reset = not eca_rule_change_reset
-    rebuild_context_menu()
-    label = "Canonical Reset" if eca_rule_change_reset else "Keep Current Row"
-    set_status(f"Rule-change behavior: {label}.")
+    elementary_controller.toggle_rule_change_reset()
 
 
 def toggle_eca_boundary() -> None:
-    """Cycle infinite-background, fixed-zero, and wraparound boundaries."""
-    global eca_boundary, eca_background, eca_rows, eca_generation
-    global simulation_active
-    if active_dimension != "1d":
-        return
-    save_history()
-    boundaries = (BOUNDARY_INFINITE, BOUNDARY_FIXED, BOUNDARY_WRAP)
-    current_index = boundaries.index(eca_boundary)
-    eca_boundary = boundaries[(current_index + 1) % len(boundaries)]
-    eca_background = 0
-    eca_rows = [eca_rows[-1]]
-    eca_generation = 0
-    simulation_active = False
-    center_view()
-    invalidate_render_cache(ECA_RENDER_KEY)
-    rebuild_context_menu()
-    set_status(
-        f"Elementary boundary: {eca_boundary_label()}; diagram restarted."
-    )
+    elementary_controller.toggle_boundary()
 
 
-def reset_eca_seed(seed: ElementaryRow, message: str) -> None:
-    """Replace the ECA diagram with one editable seed row."""
-    global eca_rows, eca_generation, eca_background, simulation_active
-    if active_dimension != "1d":
-        return
-    if eca_rows == [seed] and eca_generation == 0 and eca_background == 0:
-        set_status(message)
-        return
-    save_history()
-    eca_rows = [seed]
-    eca_generation = 0
-    eca_background = 0
-    simulation_active = False
-    center_view()
-    invalidate_render_cache(ECA_RENDER_KEY)
-    set_status(message)
+def reset_eca_seed(seed: tuple[int, ...], message: str) -> None:
+    elementary_controller.reset_seed(seed, message)
 
 
 def use_single_eca_seed() -> None:
-    """Reset the 1D workspace to a centered single live cell."""
-    reset_eca_seed(single_eca_seed(ECA_WIDTH), "Centered single-cell seed created.")
+    elementary_controller.use_single_seed()
 
 
 def set_simulation_mode(mode: str) -> None:
     """Select a registered mode and reset transient interface state."""
     global active_dimension, simulation_mode, simulation_active
-    global single_step_requested, dimension_menu_active, eca_rule_menu_active
+    global single_step_requested, dimension_menu_active
     global selected_pattern, pattern_menu_active, mode_menu_active, drawing
     definition = get_mode_definition(mode)
+    if "workspace_registry" in globals():
+        active_workspace().controller.deactivate()
     active_dimension = "2d"
     simulation_mode = mode
     simulation_active = False
@@ -1240,10 +1074,10 @@ def set_simulation_mode(mode: str) -> None:
     pattern_menu_active = False
     mode_menu_active = False
     dimension_menu_active = False
-    eca_rule_menu_active = False
     drawing = False
     cell_transition.transitions.clear()
     if "main_menu" in globals():
+        active_workspace().controller.activate()
         rebuild_context_menu()
     set_status(f"{definition.name}: {definition.status_hint}", 4.0)
 
@@ -1355,26 +1189,20 @@ def place_ant(row: int, col: int) -> None:
     set_status(f"Ant moved to ({row}, {col}).")
 
 
-def zoom(factor: float) -> None:
-    global CELL_SIZE, eca_cell_size
-    if active_dimension == "1d":
-        new_size = int(round(eca_cell_size * factor))
-        new_size = max(ECA_MIN_CELL_SIZE, min(ECA_MAX_CELL_SIZE, new_size))
-        if new_size == eca_cell_size:
-            return
-        eca_cell_size = new_size
-        center_view()
-        invalidate_render_cache(ECA_RENDER_KEY)
-        set_status(f"Elementary cell size: {eca_cell_size}px")
-        return
-
+def _zoom_2d(factor: float) -> None:
+    global CELL_SIZE
     new_size = int(round(CELL_SIZE * factor))
     new_size = max(MIN_CELL_SIZE, min(MAX_CELL_SIZE, new_size))
     if new_size == CELL_SIZE:
         return
     CELL_SIZE = new_size
-    center_view()
+    _center_2d_view()
     set_status(f"Cell size: {CELL_SIZE}px")
+
+
+def zoom(factor: float) -> None:
+    """Zoom through the active workspace controller."""
+    active_workspace().controller.zoom(factor)
 
 
 def activate_pattern_menu() -> None:
@@ -1635,49 +1463,6 @@ def apply_cyclic_generation() -> bool:
     return True
 
 
-def apply_eca_generation() -> bool:
-    """Append one elementary-automaton row to the space-time diagram."""
-    global eca_rows, eca_generation, eca_background, eca_view_offset_x
-    current_row = eca_rows[-1]
-    history_saved = False
-    if eca_boundary == BOUNDARY_INFINITE and (
-        current_row[0] != eca_background
-        or current_row[-1] != eca_background
-    ):
-        save_history()
-        history_saved = True
-        eca_rows[-1] = (
-            eca_background,
-            *current_row,
-            eca_background,
-        )
-        current_row = eca_rows[-1]
-        eca_view_offset_x -= eca_cell_size
-
-    next_row = step_elementary(
-        current_row,
-        eca_rule,
-        boundary=eca_boundary,
-        background=eca_background,
-    )
-    next_background = (
-        next_eca_background(eca_rule, eca_background)
-        if eca_boundary == BOUNDARY_INFINITE
-        else 0
-    )
-
-    if not history_saved:
-        save_history()
-    eca_rows.append(next_row)
-    eca_background = next_background
-    if len(eca_rows) > ECA_DIAGRAM_LIMIT:
-        eca_rows.pop(0)
-    eca_generation += 1
-    follow_eca_latest()
-    invalidate_render_cache(ECA_RENDER_KEY)
-    return True
-
-
 GENERATION_HANDLERS = {
     "life": apply_life_generation,
     "immigration": apply_immigration_generation,
@@ -1688,11 +1473,25 @@ GENERATION_HANDLERS = {
 }
 
 
-def apply_generation() -> bool:
-    """Advance the active dimension's selected simulation."""
-    if active_dimension == "1d":
-        return apply_eca_generation()
+def _two_d_generation() -> int:
+    """Return the counter belonging to the selected 2D mode."""
+    return {
+        "life": generation,
+        "immigration": immigration_generation,
+        "brians_brain": brain_generation,
+        "langtons_ant": ant_generation,
+        "wireworld": wireworld_generation,
+        "cyclic_automaton": cyclic_generation,
+    }[simulation_mode]
+
+
+def _apply_2d_generation() -> bool:
     return GENERATION_HANDLERS[simulation_mode]()
+
+
+def apply_generation() -> bool:
+    """Advance through the active workspace controller."""
+    return active_workspace().controller.advance()
 
 
 # ---------------------------------------------------------------------------
@@ -1900,91 +1699,7 @@ def draw_grid() -> None:
 
 
 def draw_eca_grid() -> None:
-    """Draw the 1D row editor and its downward-growing space-time diagram."""
-    viewport = grid_viewport()
-    diagram_viewport = eca_diagram_viewport()
-    origin_x, origin_y = eca_grid_origin()
-    editor = eca_editor_rect()
-    theme = THEMES[current_theme]
-    live_color = DIMENSION_BY_KEY["1d"].accent
-
-    old_clip = screen.get_clip()
-    screen.set_clip(viewport)
-    pygame.draw.rect(
-        screen,
-        theme["info_bar"],
-        (viewport.x, viewport.y, viewport.width, ECA_EDITOR_HEIGHT),
-    )
-    editor_label = (
-        "Editable current row  ·  left click: on  ·  right click: off"
-    )
-    screen.blit(
-        tiny_font.render(editor_label, True, theme["text"]),
-        (viewport.x + 10, viewport.y + 5),
-    )
-
-    current_row = eca_rows[-1]
-    for column, value in enumerate(current_row):
-        x = editor.x + column * eca_cell_size
-        rect = pygame.Rect(x, editor.y, eca_cell_size, eca_cell_size)
-        if rect.right < viewport.left or rect.left > viewport.right:
-            continue
-        if value:
-            pygame.draw.rect(screen, live_color, rect)
-        if show_grid and eca_cell_size >= 4:
-            pygame.draw.rect(screen, theme["grid"], rect, 1)
-    pygame.draw.rect(screen, live_color, editor, 1)
-    pygame.draw.line(
-        screen,
-        theme["grid"],
-        (viewport.x, diagram_viewport.y - 1),
-        (viewport.right, diagram_viewport.y - 1),
-    )
-
-    screen.set_clip(diagram_viewport)
-    first_row = max(0, (diagram_viewport.top - origin_y) // eca_cell_size)
-    last_row = min(
-        len(eca_rows),
-        (diagram_viewport.bottom - origin_y + eca_cell_size - 1) // eca_cell_size,
-    )
-    current_width = len(current_row)
-    for row_index in range(first_row, last_row):
-        row_data = eca_rows[row_index]
-        row_origin_x = origin_x + (
-            (current_width - len(row_data)) * eca_cell_size // 2
-        )
-        first_col = max(
-            0,
-            (diagram_viewport.left - row_origin_x) // eca_cell_size,
-        )
-        last_col = min(
-            len(row_data),
-            (
-                diagram_viewport.right
-                - row_origin_x
-                + eca_cell_size
-                - 1
-            )
-            // eca_cell_size,
-        )
-        y = origin_y + row_index * eca_cell_size
-        for column in range(first_col, last_col):
-            x = row_origin_x + column * eca_cell_size
-            rect = pygame.Rect(x, y, eca_cell_size, eca_cell_size)
-            if row_data[column]:
-                pygame.draw.rect(screen, live_color, rect)
-            if show_grid and eca_cell_size >= 4:
-                pygame.draw.rect(screen, theme["grid"], rect, 1)
-
-    if eca_rows:
-        newest = pygame.Rect(
-            origin_x,
-            origin_y + (len(eca_rows) - 1) * eca_cell_size,
-            current_width * eca_cell_size,
-            eca_cell_size,
-        )
-        pygame.draw.rect(screen, live_color, newest, 1)
-    screen.set_clip(old_clip)
+    elementary_renderer.draw_base()
 
 
 def immigration_species_color(value: int) -> tuple[int, int, int]:
@@ -2414,19 +2129,13 @@ def draw_pattern_preview() -> None:
     )
 
 
-def draw_info_bar() -> None:
+def _draw_2d_info_bar() -> None:
     theme = THEMES[current_theme]
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    if active_dimension == "1d":
-        text = (
-            f"{state}   Dimension: 1D   Elementary Rule: {eca_rule}   "
-            f"Speed: {speed} gen/s   Generation: {eca_generation}   "
-            f"Boundary: {eca_boundary_label()}"
-        )
-    elif simulation_mode == "cyclic_automaton":
+    if simulation_mode == "cyclic_automaton":
         text = (
             f"{state}   Mode: Cyclic Cellular Automaton   Speed: {speed} gen/s   "
             f"Generation: {cyclic_generation}   Brush: Color {cyclic_brush}   "
@@ -2465,36 +2174,11 @@ def draw_info_bar() -> None:
     screen.blit(rendered, (10, 11))
 
 
-def draw_stats() -> None:
+def _draw_2d_stats() -> None:
     theme = THEMES[current_theme]
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
-
-    if active_dimension == "1d":
-        stats = cached_mode_stats(
-            ECA_RENDER_KEY,
-            lambda: {
-                **eca_row_stats(eca_rows[-1]),
-                "diagram_active": sum(sum(row) for row in eca_rows),
-            },
-        )
-        current_width = len(eca_rows[-1])
-        first_line = (
-            f"Current row: {stats['active']}/{current_width} active   "
-            f"Density: {stats['density']:.2f}%   Rows shown: {len(eca_rows)}   "
-            f"Diagram active cells: {stats['diagram_active']}   "
-            f"Outside state: {eca_background}   "
-            f"Undo: {len(eca_undo_history)}/{HISTORY_LIMIT}"
-        )
-        outputs = "".join(str(value) for value in eca_rule_bits(eca_rule))
-        second_line = (
-            f"111 110 101 100 011 010 001 000  →  {outputs}   ·   "
-            "Time flows downward; the fixed editor always changes the latest row."
-        )
-        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
-        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
-        return
 
     if simulation_mode == "cyclic_automaton":
         stats = cached_mode_stats(
@@ -2624,6 +2308,11 @@ def draw_stats() -> None:
 
     rendered = tiny_font.render(patterns_text, True, theme["text"])
     screen.blit(rendered, (10, y + 38))
+
+
+def _draw_2d_bars() -> None:
+    _draw_2d_info_bar()
+    _draw_2d_stats()
 
 
 def draw_rule_overlay() -> None:
@@ -2988,153 +2677,23 @@ def handle_dimension_menu_event(event: pygame.event.Event) -> bool:
 
 
 def activate_eca_rule_menu() -> None:
-    """Open the complete 0–255 elementary-rule catalogue."""
-    global eca_rule_menu_active, eca_rule_menu_input, simulation_active
-    global dimension_menu_active, mode_menu_active, pattern_menu_active
-    if active_dimension != "1d":
-        return
-    eca_rule_menu_active = True
-    eca_rule_menu_input = ""
-    dimension_menu_active = False
-    mode_menu_active = False
-    pattern_menu_active = False
-    simulation_active = False
+    """Open the Elementary workspace's complete rule catalogue."""
+    elementary_controller.open_rule_menu()
 
 
 def eca_rule_menu_geometry() -> tuple[pygame.Rect, list[tuple[int, pygame.Rect]]]:
-    """Return a compact 16×16 rule-catalogue layout."""
-    modal_width = min(820, WINDOW_WIDTH - 40)
-    modal_height = min(540, WINDOW_HEIGHT - 40)
-    modal = pygame.Rect(0, 0, modal_width, modal_height)
-    modal.center = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
-
-    columns = 16
-    rows = 16
-    gap = 2
-    grid_top = modal.y + 88
-    grid_bottom = modal.bottom - 45
-    card_width = (modal.width - 40 - gap * (columns - 1)) // columns
-    card_height = (grid_bottom - grid_top - gap * (rows - 1)) // rows
-    grid_width = columns * card_width + gap * (columns - 1)
-    start_x = modal.centerx - grid_width // 2
-    cards = []
-    for rule in range(256):
-        row, column = divmod(rule, columns)
-        cards.append(
-            (
-                rule,
-                pygame.Rect(
-                    start_x + column * (card_width + gap),
-                    grid_top + row * (card_height + gap),
-                    card_width,
-                    card_height,
-                ),
-            )
-        )
-    return modal, cards
+    """Return the Elementary workspace's rule-catalogue layout."""
+    return elementary_controller.rule_menu_geometry()
 
 
 def draw_eca_rule_menu() -> None:
-    """Draw all 256 Wolfram rules as a directly selectable palette."""
-    if not eca_rule_menu_active:
-        return
-
-    dimmer = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-    dimmer.fill((0, 0, 0, 195))
-    screen.blit(dimmer, (0, 0))
-    modal, cards = eca_rule_menu_geometry()
-    accent = DIMENSION_BY_KEY["1d"].accent
-    pygame.draw.rect(screen, (25, 28, 36), modal, border_radius=12)
-    pygame.draw.rect(screen, (210, 214, 224), modal, 2, border_radius=12)
-    screen.blit(
-        font.render("Elementary rule catalogue · 0–255", True, (245, 247, 250)),
-        (modal.x + 20, modal.y + 15),
-    )
-    binary = "".join(str(value) for value in eca_rule_bits(eca_rule))
-    detail = (
-        f"Current: Rule {eca_rule} = {binary}₂   ·   "
-        "gold border: featured rule"
-    )
-    screen.blit(
-        tiny_font.render(detail, True, (192, 198, 211)),
-        (modal.x + 21, modal.y + 53),
-    )
-    input_label = f"Type rule: {eca_rule_menu_input or '—'}"
-    input_surface = tiny_font.render(input_label, True, accent)
-    screen.blit(
-        input_surface,
-        (modal.right - input_surface.get_width() - 21, modal.y + 53),
-    )
-
-    mouse_position = pygame.mouse.get_pos()
-    for rule, card in cards:
-        selected = rule == eca_rule
-        hovered = card.collidepoint(mouse_position)
-        featured = rule in ECA_RULE_PRESETS
-        background = (54, 91, 112) if selected else (48, 52, 63)
-        if hovered and not selected:
-            background = (62, 68, 82)
-        pygame.draw.rect(screen, background, card, border_radius=3)
-        border = accent if selected else (225, 182, 70) if featured else (82, 88, 102)
-        pygame.draw.rect(screen, border, card, 2 if selected or featured else 1, border_radius=3)
-        number = tiny_font.render(str(rule), True, (247, 248, 251))
-        screen.blit(number, number.get_rect(center=card.center))
-
-    footer = "Click a rule · type 0–255 + Enter · ←/→ previous/next · E/Esc closes"
-    footer_surface = tiny_font.render(footer, True, (190, 195, 205))
-    screen.blit(
-        footer_surface,
-        (modal.centerx - footer_surface.get_width() // 2, modal.bottom - 29),
-    )
+    """Draw the Elementary workspace's rule-selection modal."""
+    elementary_renderer.draw_modal()
 
 
 def handle_eca_rule_menu_event(event: pygame.event.Event) -> bool:
-    """Handle direct, typed, and adjacent rule selection."""
-    global eca_rule_menu_active, eca_rule_menu_input
-    if not eca_rule_menu_active:
-        return False
-
-    if event.type == pygame.KEYDOWN:
-        if event.key in (pygame.K_ESCAPE, pygame.K_e):
-            eca_rule_menu_active = False
-            return True
-        if event.key == pygame.K_LEFT:
-            adjust_eca_rule(-1)
-            eca_rule_menu_input = ""
-            return True
-        if event.key == pygame.K_RIGHT:
-            adjust_eca_rule(1)
-            eca_rule_menu_input = ""
-            return True
-        if event.key == pygame.K_BACKSPACE:
-            eca_rule_menu_input = eca_rule_menu_input[:-1]
-            return True
-        if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-            if eca_rule_menu_input:
-                set_eca_rule(int(eca_rule_menu_input))
-                eca_rule_menu_active = False
-            return True
-        if pygame.K_0 <= event.key <= pygame.K_9:
-            digit = str(event.key - pygame.K_0)
-            candidate = (eca_rule_menu_input + digit)[-3:]
-            if int(candidate) <= 255:
-                eca_rule_menu_input = candidate
-            else:
-                set_status("Elementary rule numbers range from 0 to 255.")
-            return True
-
-    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-        modal, cards = eca_rule_menu_geometry()
-        for rule, card in cards:
-            if card.collidepoint(event.pos):
-                set_eca_rule(rule)
-                eca_rule_menu_active = False
-                return True
-        if not modal.collidepoint(event.pos):
-            eca_rule_menu_active = False
-        return True
-
-    return True
+    """Delegate rule-selection input to the Elementary workspace."""
+    return elementary_controller.handle_overlay_event(event)
 
 
 def draw_status() -> None:
@@ -3163,24 +2722,24 @@ DRAW_HANDLERS = {
 }
 
 
+def active_workspace() -> WorkspaceBundle:
+    """Return the controller/renderer pair for the selected dimension."""
+    return workspace_registry.get(active_dimension)
+
+
 def active_render_key() -> str:
     """Return the cache identity for the visible dimensional workspace."""
-    return ECA_RENDER_KEY if active_dimension == "1d" else simulation_mode
+    return active_workspace().renderer.cache_identity
 
 
 def active_grid_cache_key() -> tuple[Any, ...]:
     """Return the visual state that determines the cached viewport pixels."""
+    return active_workspace().renderer.cache_key()
+
+
+def _two_d_cache_key() -> tuple[Any, ...]:
+    """Return visual state used to cache the active 2D mode."""
     viewport = grid_viewport()
-    if active_dimension == "1d":
-        return (
-            render_revisions[ECA_RENDER_KEY],
-            viewport.size,
-            eca_grid_origin(),
-            eca_editor_rect(),
-            eca_cell_size,
-            current_theme,
-            show_grid,
-        )
     return (
         render_revisions[simulation_mode],
         viewport.size,
@@ -3196,27 +2755,21 @@ def active_grid_cache_key() -> tuple[Any, ...]:
 
 
 def draw_active_grid() -> None:
-    """Draw or reuse the active workspace, then add 2D live previews."""
+    """Draw or reuse the active workspace through the shared renderer."""
     global render_cache_hits, render_cache_misses
     viewport = grid_viewport()
-    render_key = active_render_key()
-    cache_key = active_grid_cache_key()
+    renderer = active_workspace().renderer
+    render_key = renderer.cache_identity
+    cache_key = renderer.cache_key()
     cache_entry = rendered_grid_cache.get(render_key)
-    transition_active = (
-        active_dimension == "2d"
-        and simulation_mode == "life"
-        and bool(cell_transition.transitions)
-    )
+    transition_active = renderer.transition_active
 
     if not transition_active and cache_entry is not None and cache_entry[0] == cache_key:
         screen.blit(cache_entry[1], viewport.topleft)
         render_cache_hits += 1
     else:
         rendered_grid_cache.clear()
-        if active_dimension == "1d":
-            draw_eca_grid()
-        else:
-            DRAW_HANDLERS[simulation_mode]()
+        renderer.draw_base()
         render_cache_misses += 1
         changes_every_frame = simulation_active and speed >= 60
         if not transition_active and not changes_every_frame:
@@ -3225,25 +2778,19 @@ def draw_active_grid() -> None:
                 screen.subsurface(viewport).copy(),
             )
 
-    if active_dimension == "2d":
-        old_clip = screen.get_clip()
-        screen.set_clip(viewport)
-        draw_pattern_preview()
-        screen.set_clip(old_clip)
+    renderer.draw_dynamic()
 
 
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
     draw_active_grid()
-    draw_info_bar()
-    draw_stats()
+    renderer = active_workspace().renderer
+    renderer.draw_bars()
     main_menu.draw(screen, tiny_font)
-    draw_pattern_menu()
-    draw_rule_overlay()
+    renderer.draw_decorations()
     draw_status()
-    draw_mode_menu()
+    renderer.draw_modal()
     draw_dimension_menu()
-    draw_eca_rule_menu()
 
 
 # ---------------------------------------------------------------------------
@@ -3331,98 +2878,51 @@ def add_context_action(menu: Menu, action: str) -> None:
         raise ValueError(f"Unknown contextual action: {action}")
 
 
-def rebuild_context_menu() -> None:
-    """Build a dimension-aware sidebar for the active workspace."""
-    if active_dimension == "1d":
-        accent = DIMENSION_BY_KEY["1d"].accent
-        main_menu.clear_buttons()
-        main_menu.set_header("1D · Elementary CA")
-        main_menu.add_button(
-            "Select Dimension (D)",
-            activate_dimension_menu,
-            accent=accent,
-        )
-        main_menu.add_button(
-            "Browse Rules 0–255 (E)",
-            activate_eca_rule_menu,
-            accent=accent,
-        )
-        main_menu.add_button(
-            f"Next Featured: {next_featured_eca_rule()}",
-            cycle_eca_rule_preset,
-            accent=(225, 182, 70),
-        )
-        main_menu.add_button(
-            f"Previous Rule: {(eca_rule - 1) % 256}",
-            lambda: adjust_eca_rule(-1),
-        )
-        main_menu.add_button(
-            f"Next Rule: {(eca_rule + 1) % 256}",
-            lambda: adjust_eca_rule(1),
-        )
-        rule_change_label = (
-            "Canonical Reset" if eca_rule_change_reset else "Keep Current Row"
-        )
-        main_menu.add_button(
-            f"Rule Change: {rule_change_label}",
-            toggle_eca_rule_change_reset,
-            active=eca_rule_change_reset,
-        )
-        main_menu.add_button(
-            f"Boundary: {eca_boundary_label()}",
-            toggle_eca_boundary,
-        )
-        main_menu.add_button("Seed: Single Center", use_single_eca_seed)
-        main_menu.add_button("Seed: Random", randomize_grid)
-        main_menu.add_button("Clear Diagram", clear_grid)
-        main_menu.add_button("Step Back", step_back)
-        main_menu.add_button(
-            f"Grid Lines: {'On' if show_grid else 'Off'}",
-            toggle_grid_lines,
-            active=show_grid,
-        )
-        main_menu.add_button(f"Theme: {current_theme.title()}", cycle_theme)
-        main_menu.add_button("Center Diagram", center_view)
-        return
-
+def _build_2d_sidebar(menu: Menu) -> None:
+    """Populate the controls shared by all 2D simulation modes."""
     definition = get_mode_definition(simulation_mode)
-    main_menu.clear_buttons()
-    main_menu.set_header(f"2D · {definition.name}")
-    main_menu.add_button(
+    menu.clear_buttons()
+    menu.set_header(f"2D · {definition.name}")
+    menu.add_button(
         "Select Dimension (D)",
         activate_dimension_menu,
         accent=DIMENSION_BY_KEY["2d"].accent,
     )
-    main_menu.add_button(
+    menu.add_button(
         "Select Mode (M)",
         activate_mode_menu,
         accent=definition.accent,
     )
     for action in definition.contextual_actions:
-        add_context_action(main_menu, action)
+        add_context_action(menu, action)
 
-    main_menu.add_button("Clear Grid", clear_grid)
-    main_menu.add_button("Randomize", randomize_grid)
-    main_menu.add_button("Step Back", step_back)
-    main_menu.add_button(
+    menu.add_button("Clear Grid", clear_grid)
+    menu.add_button("Randomize", randomize_grid)
+    menu.add_button("Step Back", step_back)
+    menu.add_button(
         f"Grid Lines: {'On' if show_grid else 'Off'}",
         toggle_grid_lines,
         active=show_grid,
     )
-    main_menu.add_button("Show Patterns", activate_pattern_menu)
-    main_menu.add_button("Save Pattern", save_current_pattern)
-    main_menu.add_button(f"Theme: {current_theme.title()}", cycle_theme)
-    main_menu.add_button("Center View", center_view)
-    main_menu.add_button(
+    menu.add_button("Show Patterns", activate_pattern_menu)
+    menu.add_button("Save Pattern", save_current_pattern)
+    menu.add_button(f"Theme: {current_theme.title()}", cycle_theme)
+    menu.add_button("Center View", center_view)
+    menu.add_button(
         f"Coordinates: {'On' if show_coordinates else 'Off'}",
         toggle_coordinates,
         active=show_coordinates,
     )
-    main_menu.add_button(
+    menu.add_button(
         f"Quadrants: {'On' if show_quadrants else 'Off'}",
         toggle_quadrants,
         active=show_quadrants,
     )
+
+
+def rebuild_context_menu() -> None:
+    """Ask the active workspace to rebuild its contextual sidebar."""
+    active_workspace().controller.build_sidebar(main_menu)
 
 
 def setup_menu() -> Menu:
@@ -3506,23 +3006,62 @@ def handle_pattern_menu_event(event: pygame.event.Event) -> bool:
     return True
 
 
-def handle_keydown(event: pygame.event.Event) -> None:
-    global simulation_active, single_step_requested, speed
+def _two_d_overlay_active() -> bool:
+    return mode_menu_active or pattern_menu_active
+
+
+def _close_2d_overlays() -> None:
+    global mode_menu_active, pattern_menu_active, selected_pattern
+    mode_menu_active = False
+    pattern_menu_active = False
+    selected_pattern = None
+
+
+def _handle_2d_overlay_event(event: pygame.event.Event) -> bool:
+    if mode_menu_active:
+        return handle_mode_menu_event(event)
+    if pattern_menu_active:
+        return handle_pattern_menu_event(event)
+    return False
+
+
+def _handle_2d_keydown(event: pygame.event.Event) -> bool:
     global rotation, flip_h, flip_v, selected_pattern
+
+    if event.key == pygame.K_m:
+        activate_mode_menu()
+    elif event.key == pygame.K_t:
+        toggle_active_species()
+    elif event.key == pygame.K_r and selected_pattern:
+        rotation = (rotation + 90) % 360
+    elif event.key == pygame.K_f and selected_pattern:
+        flip_h = not flip_h
+    elif event.key == pygame.K_v and selected_pattern:
+        flip_v = not flip_v
+    elif event.key == pygame.K_ESCAPE:
+        selected_pattern = None
+    elif event.key == pygame.K_h:
+        toggle_heatmap()
+    elif event.key == pygame.K_a:
+        toggle_age_numbers()
+    elif pygame.K_1 <= event.key <= pygame.K_9:
+        patterns = list(available_patterns().values())
+        index = event.key - pygame.K_1
+        if index < len(patterns):
+            select_pattern(patterns[index])
+    else:
+        return False
+    return True
+
+
+def handle_keydown(event: pygame.event.Event) -> None:
+    """Handle app-wide commands before delegating workspace-specific keys."""
+    global simulation_active, single_step_requested, speed
 
     if event.key == pygame.K_SPACE:
         simulation_active = not simulation_active
     elif event.key == pygame.K_d:
         activate_dimension_menu()
-    elif event.key == pygame.K_m:
-        activate_mode_menu()
-    elif event.key == pygame.K_e and active_dimension == "1d":
-        activate_eca_rule_menu()
-    elif event.key == pygame.K_t:
-        if active_dimension == "2d":
-            toggle_active_species()
-        else:
-            set_status("The 1D workspace uses rule and boundary controls in the sidebar.")
     elif event.key == pygame.K_n:
         if simulation_active:
             set_status("Pause the simulation before stepping with N.")
@@ -3534,85 +3073,22 @@ def handle_keydown(event: pygame.event.Event) -> None:
         speed = max(1, speed - 1)
     elif event.key == pygame.K_g:
         toggle_grid_lines()
-    elif event.key == pygame.K_r and selected_pattern:
-        rotation = (rotation + 90) % 360
-    elif event.key == pygame.K_f and selected_pattern:
-        flip_h = not flip_h
-    elif event.key == pygame.K_v and selected_pattern:
-        flip_v = not flip_v
-    elif event.key == pygame.K_ESCAPE:
-        selected_pattern = None
-    elif event.key == pygame.K_h:
-        if active_dimension == "2d":
-            toggle_heatmap()
-    elif event.key == pygame.K_a:
-        if active_dimension == "2d":
-            toggle_age_numbers()
     elif event.key == pygame.K_c:
         center_view()
     elif event.key == pygame.K_LEFTBRACKET:
         zoom(0.80)
     elif event.key == pygame.K_RIGHTBRACKET:
         zoom(1.20)
-    elif pygame.K_1 <= event.key <= pygame.K_9:
-        if active_dimension != "2d":
-            return
-        patterns = list(available_patterns().values())
-        index = event.key - pygame.K_1
-        if index < len(patterns):
-            select_pattern(patterns[index])
+    else:
+        active_workspace().controller.handle_keydown(event)
 
 
-def handle_event(event: pygame.event.Event) -> bool:
+def _handle_2d_pointer_event(event: pygame.event.Event) -> bool:
+    """Handle drawing and panning inside the established 2D workspace."""
     global drawing, drawing_value, drawing_history_pending
     global view_offset_x, view_offset_y
-    global eca_view_offset_x, eca_view_offset_y
-
-    if event.type == pygame.QUIT:
-        return False
-
-    if event.type == pygame.VIDEORESIZE:
-        update_window_size(event.w, event.h)
-        return True
-
-    if eca_rule_menu_active:
-        handle_eca_rule_menu_event(event)
-        return True
-
-    if dimension_menu_active:
-        handle_dimension_menu_event(event)
-        return True
-
-    if mode_menu_active:
-        handle_mode_menu_event(event)
-        return True
-
-    if pattern_menu_active:
-        handle_pattern_menu_event(event)
-        return True
-
-    if main_menu.handle_event(event):
-        return True
-
-    if event.type == pygame.KEYDOWN:
-        handle_keydown(event)
-        return True
-
-    if event.type == pygame.MOUSEWHEEL:
-        zoom(1.10 if event.y > 0 else 0.90)
-        return True
 
     if event.type == pygame.MOUSEBUTTONDOWN:
-        if active_dimension == "1d":
-            if event.button in (1, 3):
-                column = mouse_to_eca_column(event.pos)
-                if column is not None:
-                    drawing = True
-                    drawing_value = 1 if event.button == 1 else 0
-                    drawing_history_pending = True
-                    draw_eca_cell(column)
-            return True
-
         if event.button == 1:
             position = mouse_to_grid(event.pos)
             if (
@@ -3647,23 +3123,45 @@ def handle_event(event: pygame.event.Event) -> bool:
 
     if event.type == pygame.MOUSEMOTION:
         if drawing:
-            if active_dimension == "1d":
-                column = mouse_to_eca_column(event.pos)
-                if column is not None:
-                    draw_eca_cell(column)
-            else:
-                position = mouse_to_grid(event.pos)
-                if position is not None:
-                    draw_cell(*position)
+            position = mouse_to_grid(event.pos)
+            if position is not None:
+                draw_cell(*position)
         elif event.buttons[1]:
-            if active_dimension == "1d":
-                eca_view_offset_x += event.rel[0]
-                eca_view_offset_y += event.rel[1]
-            else:
-                view_offset_x += event.rel[0]
-                view_offset_y += event.rel[1]
+            view_offset_x += event.rel[0]
+            view_offset_y += event.rel[1]
+        return True
+    return False
+
+
+def handle_event(event: pygame.event.Event) -> bool:
+    if event.type == pygame.QUIT:
+        return False
+
+    if event.type == pygame.VIDEORESIZE:
+        update_window_size(event.w, event.h)
         return True
 
+    if dimension_menu_active:
+        handle_dimension_menu_event(event)
+        return True
+
+    controller = active_workspace().controller
+    if controller.overlay_active:
+        controller.handle_overlay_event(event)
+        return True
+
+    if main_menu.handle_event(event):
+        return True
+
+    if event.type == pygame.KEYDOWN:
+        handle_keydown(event)
+        return True
+
+    if event.type == pygame.MOUSEWHEEL:
+        zoom(1.10 if event.y > 0 else 0.90)
+        return True
+
+    controller.handle_pointer_event(event)
     return True
 
 
@@ -3671,6 +3169,108 @@ def handle_event(event: pygame.event.Event) -> bool:
 # Main loop
 # ---------------------------------------------------------------------------
 
+
+def _draw_2d_base() -> None:
+    DRAW_HANDLERS[simulation_mode]()
+
+
+def _draw_2d_dynamic() -> None:
+    old_clip = screen.get_clip()
+    screen.set_clip(grid_viewport())
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
+def _draw_2d_decorations() -> None:
+    draw_pattern_menu()
+    draw_rule_overlay()
+
+
+def _draw_2d_modal() -> None:
+    draw_mode_menu()
+
+
+def _two_d_transition_active() -> bool:
+    return simulation_mode == "life" and bool(cell_transition.transitions)
+
+
+def _set_simulation_running(value: bool) -> None:
+    global simulation_active
+    simulation_active = value
+
+
+elementary_state = ElementaryWorkspaceState()
+elementary_services = ElementaryWorkspaceServices(
+    viewport=grid_viewport,
+    screen=lambda: screen,
+    window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+    theme_name=lambda: current_theme,
+    is_running=lambda: simulation_active,
+    speed=lambda: speed,
+    show_grid=lambda: show_grid,
+    set_running=_set_simulation_running,
+    set_status=set_status,
+    invalidate=invalidate_render_cache,
+    rebuild_sidebar=lambda: rebuild_context_menu(),
+    activate_dimension_menu=activate_dimension_menu,
+    toggle_grid=toggle_grid_lines,
+    cycle_theme=cycle_theme,
+    cached_stats=cached_mode_stats,
+    render_revision=lambda key: render_revisions[key],
+    large_font=lambda: font,
+    small_font=lambda: small_font,
+    tiny_font=lambda: tiny_font,
+    menu_width=MENU_WIDTH,
+    info_bar_height=INFO_BAR_HEIGHT,
+    stats_height=STATS_HEIGHT,
+    grid_top_margin=GRID_TOP_MARGIN,
+    history_limit=HISTORY_LIMIT,
+)
+elementary_controller = ElementaryWorkspaceController(
+    elementary_services,
+    elementary_state,
+)
+elementary_renderer = ElementaryWorkspaceRenderer(
+    elementary_controller,
+    elementary_services,
+)
+
+two_dimensional_controller = TwoDimensionalWorkspaceController(
+    TwoDimensionalControllerCallbacks(
+        generation=_two_d_generation,
+        advance=_apply_2d_generation,
+        save_history=_save_2d_history,
+        step_back=_step_back_2d,
+        clear=_clear_2d_grid,
+        randomize=_randomize_2d_grid,
+        build_sidebar=_build_2d_sidebar,
+        overlay_active=_two_d_overlay_active,
+        close_overlays=_close_2d_overlays,
+        handle_overlay_event=_handle_2d_overlay_event,
+        handle_keydown=_handle_2d_keydown,
+        handle_pointer_event=_handle_2d_pointer_event,
+        center_view=_center_2d_view,
+        zoom=_zoom_2d,
+    )
+)
+two_dimensional_renderer = TwoDimensionalWorkspaceRenderer(
+    TwoDimensionalRendererCallbacks(
+        render_key=lambda: simulation_mode,
+        cache_key=_two_d_cache_key,
+        draw_base=_draw_2d_base,
+        draw_dynamic=_draw_2d_dynamic,
+        draw_bars=_draw_2d_bars,
+        draw_decorations=_draw_2d_decorations,
+        draw_modal=_draw_2d_modal,
+        transition_active=_two_d_transition_active,
+    )
+)
+
+workspace_registry = WorkspaceRegistry()
+workspace_registry.register(
+    WorkspaceBundle(two_dimensional_controller, two_dimensional_renderer)
+)
+workspace_registry.register(WorkspaceBundle(elementary_controller, elementary_renderer))
 
 main_menu = setup_menu()
 rebuild_context_menu()

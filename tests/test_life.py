@@ -88,22 +88,17 @@ class ApplicationSmokeTests(unittest.TestCase):
 class DimensionUITests(unittest.TestCase):
     def setUp(self) -> None:
         life.set_simulation_mode("life")
+        self.eca = life.ElementaryWorkspaceState()
+        life.elementary_controller.state = self.eca
+        life.elementary_state = self.eca
         life.dimension_menu_active = False
         life.mode_menu_active = False
         life.pattern_menu_active = False
-        life.eca_rule_menu_active = False
-        life.eca_rule = life.ECA_DEFAULT_RULE
-        life.eca_boundary = life.BOUNDARY_INFINITE
-        life.eca_background = 0
-        life.eca_rule_change_reset = True
-        life.eca_rows = [life.single_eca_seed(life.ECA_WIDTH)]
-        life.eca_generation = 0
-        life.eca_undo_history.clear()
 
     def tearDown(self) -> None:
         life.dimension_menu_active = False
-        life.eca_rule_menu_active = False
-        life.eca_rule_change_reset = True
+        self.eca.rule_menu_active = False
+        self.eca.rule_change_reset = True
         life.rendered_grid_cache.clear()
         life.mode_stats_cache.clear()
         life.set_simulation_mode("life")
@@ -172,44 +167,44 @@ class DimensionUITests(unittest.TestCase):
 
     def test_elementary_generation_dispatch_and_step_back(self) -> None:
         life.set_active_dimension("1d")
-        seed = life.eca_rows[-1]
+        seed = self.eca.rows[-1]
         self.assertTrue(life.apply_generation())
-        self.assertEqual(life.eca_generation, 1)
-        self.assertNotEqual(life.eca_rows[-1], seed)
-        self.assertEqual(len(life.eca_undo_history), 1)
+        self.assertEqual(self.eca.generation, 1)
+        self.assertNotEqual(self.eca.rows[-1], seed)
+        self.assertEqual(len(self.eca.undo_history), 1)
 
         life.step_back()
-        self.assertEqual(life.eca_generation, 0)
-        self.assertEqual(life.eca_rows, [seed])
+        self.assertEqual(self.eca.generation, 0)
+        self.assertEqual(self.eca.rows, [seed])
 
     def test_rule_4_keeps_recording_identical_rows_like_reference_diagram(self) -> None:
         life.set_active_dimension("1d")
-        life.eca_rule = 4
+        self.eca.rule = 4
         seed = life.single_eca_seed(life.ECA_WIDTH)
-        life.eca_rows = [seed]
+        self.eca.rows = [seed]
 
         for _ in range(4):
             self.assertTrue(life.apply_generation())
 
-        self.assertEqual(life.eca_generation, 4)
-        self.assertEqual(life.eca_rows, [seed] * 5)
+        self.assertEqual(self.eca.generation, 4)
+        self.assertEqual(self.eca.rows, [seed] * 5)
 
     def test_adjacent_rule_buttons_wrap_and_use_canonical_defaults(self) -> None:
         life.set_active_dimension("1d")
-        life.eca_rule = 0
-        life.eca_rows = [tuple(1 for _ in range(life.ECA_WIDTH))]
-        life.eca_boundary = life.BOUNDARY_WRAP
-        life.eca_background = 1
+        self.eca.rule = 0
+        self.eca.rows = [tuple(1 for _ in range(life.ECA_WIDTH))]
+        self.eca.boundary = life.BOUNDARY_WRAP
+        self.eca.background = 1
 
         life.adjust_eca_rule(-1)
 
-        self.assertEqual(life.eca_rule, 255)
-        self.assertEqual(life.eca_rows, [life.single_eca_seed(life.ECA_WIDTH)])
-        self.assertEqual(life.eca_boundary, life.BOUNDARY_INFINITE)
-        self.assertEqual(life.eca_background, 0)
+        self.assertEqual(self.eca.rule, 255)
+        self.assertEqual(self.eca.rows, [life.single_eca_seed(life.ECA_WIDTH)])
+        self.assertEqual(self.eca.boundary, life.BOUNDARY_INFINITE)
+        self.assertEqual(self.eca.background, 0)
 
         life.adjust_eca_rule(1)
-        self.assertEqual(life.eca_rule, 0)
+        self.assertEqual(self.eca.rule, 0)
 
     def test_sidebar_previous_and_next_rule_buttons_execute_and_relabel(self) -> None:
         life.set_active_dimension("1d")
@@ -227,7 +222,7 @@ class DimensionUITests(unittest.TestCase):
                 )
             )
         )
-        self.assertEqual(life.eca_rule, 31)
+        self.assertEqual(self.eca.rule, 31)
         self.assertIn("Previous Rule: 30", self.menu_labels())
         self.assertIn("Next Rule: 32", self.menu_labels())
 
@@ -243,30 +238,30 @@ class DimensionUITests(unittest.TestCase):
                 pos=previous_button.rect.center,
             )
         )
-        self.assertEqual(life.eca_rule, 30)
+        self.assertEqual(self.eca.rule, 30)
 
     def test_rule_change_can_explicitly_keep_current_row(self) -> None:
         life.set_active_dimension("1d")
         current = tuple(index % 2 for index in range(life.ECA_WIDTH))
-        life.eca_rows = [current]
-        life.eca_boundary = life.BOUNDARY_WRAP
+        self.eca.rows = [current]
+        self.eca.boundary = life.BOUNDARY_WRAP
         life.toggle_eca_rule_change_reset()
 
         life.adjust_eca_rule(1)
 
-        self.assertEqual(life.eca_rule, 31)
-        self.assertEqual(life.eca_rows, [current])
-        self.assertEqual(life.eca_boundary, life.BOUNDARY_WRAP)
+        self.assertEqual(self.eca.rule, 31)
+        self.assertEqual(self.eca.rows, [current])
+        self.assertEqual(self.eca.boundary, life.BOUNDARY_WRAP)
 
     def test_boundary_cycles_through_reference_and_experimental_modes(self) -> None:
         life.set_active_dimension("1d")
-        self.assertEqual(life.eca_boundary, life.BOUNDARY_INFINITE)
+        self.assertEqual(self.eca.boundary, life.BOUNDARY_INFINITE)
         life.toggle_eca_boundary()
-        self.assertEqual(life.eca_boundary, life.BOUNDARY_FIXED)
+        self.assertEqual(self.eca.boundary, life.BOUNDARY_FIXED)
         life.toggle_eca_boundary()
-        self.assertEqual(life.eca_boundary, life.BOUNDARY_WRAP)
+        self.assertEqual(self.eca.boundary, life.BOUNDARY_WRAP)
         life.toggle_eca_boundary()
-        self.assertEqual(life.eca_boundary, life.BOUNDARY_INFINITE)
+        self.assertEqual(self.eca.boundary, life.BOUNDARY_INFINITE)
 
     def test_rule_catalog_contains_all_rules_and_selects_a_card(self) -> None:
         life.set_active_dimension("1d")
@@ -282,8 +277,8 @@ class DimensionUITests(unittest.TestCase):
             pos=rule_110_card.center,
         )
         self.assertTrue(life.handle_eca_rule_menu_event(event))
-        self.assertEqual(life.eca_rule, 110)
-        self.assertFalse(life.eca_rule_menu_active)
+        self.assertEqual(self.eca.rule, 110)
+        self.assertFalse(self.eca.rule_menu_active)
 
     def test_rule_catalog_fits_the_minimum_window(self) -> None:
         original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
@@ -305,36 +300,36 @@ class DimensionUITests(unittest.TestCase):
         life.handle_eca_rule_menu_event(
             life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_RETURN)
         )
-        self.assertEqual(life.eca_rule, 184)
-        self.assertFalse(life.eca_rule_menu_active)
+        self.assertEqual(self.eca.rule, 184)
+        self.assertFalse(self.eca.rule_menu_active)
 
     def test_infinite_background_state_is_restored_by_step_back(self) -> None:
         life.set_active_dimension("1d")
-        life.eca_rule = 1
+        self.eca.rule = 1
         self.assertTrue(life.apply_generation())
-        self.assertEqual(life.eca_background, 1)
+        self.assertEqual(self.eca.background, 1)
         life.step_back()
-        self.assertEqual(life.eca_background, 0)
+        self.assertEqual(self.eca.background, 0)
 
     def test_infinite_workspace_expands_before_activity_is_clipped(self) -> None:
         life.set_active_dimension("1d")
-        life.eca_rule = 254
+        self.eca.rule = 254
         for _ in range(life.ECA_WIDTH // 2 + 2):
             life.apply_generation()
 
-        self.assertGreater(len(life.eca_rows[-1]), life.ECA_WIDTH)
-        self.assertEqual(len(life.eca_rows[-1]) % 2, 1)
+        self.assertGreater(len(self.eca.rows[-1]), life.ECA_WIDTH)
+        self.assertEqual(len(self.eca.rows[-1]) % 2, 1)
         life.draw_active_grid()
 
     def test_one_eca_brush_stroke_creates_one_undo_snapshot(self) -> None:
         life.set_active_dimension("1d")
-        life.eca_rows = [tuple(0 for _ in range(life.ECA_WIDTH))]
+        self.eca.rows = [tuple(0 for _ in range(life.ECA_WIDTH))]
         life.drawing_value = 1
         life.drawing_history_pending = True
         life.draw_eca_cell(4)
         life.draw_eca_cell(5)
-        self.assertEqual(life.eca_rows[-1][4:6], (1, 1))
-        self.assertEqual(len(life.eca_undo_history), 1)
+        self.assertEqual(self.eca.rows[-1][4:6], (1, 1))
+        self.assertEqual(len(self.eca.undo_history), 1)
 
     def test_elementary_render_reuses_cached_viewport(self) -> None:
         life.set_active_dimension("1d")
