@@ -49,6 +49,7 @@ satırı yine `import pygame` olarak kalır.
 | Space | Başlat / durdur |
 | D | 1D / 2D / 3D boyut seçme panelini aç / kapat |
 | M | 2D çalışma alanında açıklamalı mod seçme panelini aç / kapat |
+| E | 1D çalışma alanında 0–255 rule kataloğunu aç / kapat |
 | T | Immigration türünü, Wireworld fırçasını veya Cyclic renk fırçasını değiştir; Langton karıncasını döndür |
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
@@ -142,10 +143,23 @@ ile aynı sırayı kullanır.
 
 1D alanında üstte sabit bir güncel-satır editörü, altta ise nesillerin aşağı doğru
 aktığı space-time diyagramı bulunur. Sol/sağ tıkla güncel satır açılıp kapatılabilir.
-Sağ panelde bütün kurallar arasında `−1` / `+1` ile gezilebilir; 30, 54, 90, 110 ve
-184 için hızlı preset döngüsü vardır. `Fixed Zero` sınırı grid dışını 0 kabul eder;
-`Wrap` sınırı satırın iki ucunu komşu yapar. Sınır veya kural değiştiğinde eski ve yeni
-kurallar aynı diyagramda karışmasın diye mevcut son satırdan yeni bir diyagram başlar.
+`Browse Rules 0–255` veya `E`, 16×16 rule kataloğunu açar; bir rule tıklanabilir ya da
+numarası yazılıp Enter'a basılabilir. `Previous Rule` ve `Next Rule` düğmeleri hedef
+numarayı açıkça gösterir; 0 ile 255 arasında sarar. 30, 54, 90, 110 ve 184 ayrıca
+featured rule olarak işaretlenir.
+
+Varsayılan `Canonical Reset` davranışı her rule değişiminde MathWorld kataloğundaki
+gibi ortada tek aktif hücreye ve sıfır durumundaki sonsuz arka plana döner. Böylece
+Rule 4, Rule 30 veya Rule 110 karşılaştırılırken ayrıca seed ve boundary ayarlamak
+gerekmez. `Rule Change` düğmesi `Keep Current Row` seçeneğine alınırsa deneysel
+karşılaştırmalar için son satır korunur.
+
+`Infinite Background`, görünür alanın dışındaki tekdüze arka planı rule'a göre zamanla
+evrimleştirir ve referans katalog için varsayılandır. Aktivite görünür kenara
+ulaştığında çalışma alanı iki yana otomatik genişler; uzun koşularda pattern kesilmez.
+`Fixed Zero`, görünür alanın dışını her nesilde zorla 0 tutar; `Wrap` ise satırın iki
+ucunu komşu yapar. Rule 4 gibi değişmeyen satırlar artık simülasyonu durdurmaz: her
+zaman adımı diyagrama eklenir ve referanstaki dikey zaman izi oluşur.
 
 ## Bağlamsal arayüz
 
