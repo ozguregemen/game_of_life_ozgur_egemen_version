@@ -3,7 +3,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -209,6 +209,170 @@ class ContextualModeUITests(unittest.TestCase):
                     )
         finally:
             life.update_window_size(*original_size)
+
+
+class RenderCacheTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.set_simulation_mode("wireworld")
+        life.wireworld_grid = life.make_wireworld_grid(life.ROWS, life.COLS)
+        life.selected_pattern = None
+        life.show_grid = True
+        life.simulation_active = False
+        life.rendered_grid_cache.clear()
+        life.mode_stats_cache.clear()
+        life.reset_render_cache_metrics()
+        life.invalidate_render_cache("wireworld")
+
+    def tearDown(self) -> None:
+        life.cell_transition.transitions.clear()
+        life.show_grid = True
+        life.show_heatmap = False
+        life.rendered_grid_cache.clear()
+        life.mode_stats_cache.clear()
+        life.set_simulation_mode("life")
+
+    def test_unchanged_grid_reuses_cached_viewport(self) -> None:
+        renderer = Mock()
+        with (
+            patch.dict(life.DRAW_HANDLERS, {"wireworld": renderer}),
+            patch("life.draw_pattern_preview"),
+        ):
+            life.draw_active_grid()
+            life.draw_active_grid()
+
+        self.assertEqual(renderer.call_count, 1)
+        self.assertEqual(life.render_cache_misses, 1)
+        self.assertEqual(life.render_cache_hits, 1)
+
+    def test_drawing_a_cell_invalidates_cached_viewport(self) -> None:
+        renderer = Mock()
+        with (
+            patch.dict(life.DRAW_HANDLERS, {"wireworld": renderer}),
+            patch("life.draw_pattern_preview"),
+        ):
+            life.draw_active_grid()
+            life.drawing_value = 1
+            life.drawing_history_pending = False
+            life.draw_cell(2, 2)
+            life.draw_active_grid()
+
+        self.assertEqual(renderer.call_count, 2)
+
+    def test_pattern_preview_remains_dynamic_on_cache_hits(self) -> None:
+        renderer = Mock()
+        preview_clips = []
+
+        def record_clip() -> None:
+            preview_clips.append(life.screen.get_clip())
+
+        with (
+            patch.dict(life.DRAW_HANDLERS, {"wireworld": renderer}),
+            patch("life.draw_pattern_preview", side_effect=record_clip) as preview,
+        ):
+            life.draw_active_grid()
+            life.draw_active_grid()
+
+        self.assertEqual(renderer.call_count, 1)
+        self.assertEqual(preview.call_count, 2)
+        self.assertEqual(preview_clips, [life.grid_viewport(), life.grid_viewport()])
+
+    def test_visual_setting_change_rebuilds_cache(self) -> None:
+        renderer = Mock()
+        with (
+            patch.dict(life.DRAW_HANDLERS, {"wireworld": renderer}),
+            patch("life.draw_pattern_preview"),
+        ):
+            life.draw_active_grid()
+            life.show_grid = False
+            life.draw_active_grid()
+
+        self.assertEqual(renderer.call_count, 2)
+
+    def test_cached_viewport_matches_uncached_pixels(self) -> None:
+        life.wireworld_grid[3][3:6] = [
+            life.ELECTRON_TAIL,
+            life.ELECTRON_HEAD,
+            life.CONDUCTOR,
+        ]
+        life.invalidate_render_cache("wireworld")
+
+        life.draw_active_grid()
+        viewport = life.grid_viewport()
+        uncached = life.screen.subsurface(viewport).copy()
+        life.draw_active_grid()
+        cached = life.screen.subsurface(viewport).copy()
+
+        self.assertEqual(
+            life.pygame.image.tobytes(uncached, "RGB"),
+            life.pygame.image.tobytes(cached, "RGB"),
+        )
+
+    def test_cached_life_heatmap_matches_uncached_pixels(self) -> None:
+        life.set_simulation_mode("life")
+        life.grid = life.make_grid()
+        life.trail_grid = life.make_grid()
+        life.activity_grid = life.make_float_grid()
+        life.grid[3][3] = 4
+        life.trail_grid[4][4] = life.TRAIL_MAX
+        life.activity_grid[5][5] = 8.0
+        life.show_heatmap = True
+        life.invalidate_render_cache("life")
+
+        life.draw_active_grid()
+        viewport = life.grid_viewport()
+        uncached = life.screen.subsurface(viewport).copy()
+        life.draw_active_grid()
+        cached = life.screen.subsurface(viewport).copy()
+
+        self.assertEqual(
+            life.pygame.image.tobytes(uncached, "RGB"),
+            life.pygame.image.tobytes(cached, "RGB"),
+        )
+
+    def test_running_at_sixty_skips_cache_capture(self) -> None:
+        original_speed = life.speed
+        life.simulation_active = True
+        life.speed = 60
+        renderer = Mock()
+        try:
+            with (
+                patch.dict(life.DRAW_HANDLERS, {"wireworld": renderer}),
+                patch("life.draw_pattern_preview"),
+            ):
+                life.draw_active_grid()
+        finally:
+            life.speed = original_speed
+            life.simulation_active = False
+
+        self.assertEqual(renderer.call_count, 1)
+        self.assertNotIn("wireworld", life.rendered_grid_cache)
+
+    def test_life_transitions_bypass_static_cache(self) -> None:
+        life.set_simulation_mode("life")
+        life.invalidate_render_cache("life")
+        life.cell_transition.start_transition(1, 1, 0, 1)
+        renderer = Mock()
+        with (
+            patch.dict(life.DRAW_HANDLERS, {"life": renderer}),
+            patch("life.draw_pattern_preview"),
+        ):
+            life.draw_active_grid()
+            life.draw_active_grid()
+
+        self.assertEqual(renderer.call_count, 2)
+        self.assertNotIn("life", life.rendered_grid_cache)
+
+    def test_mode_statistics_are_cached_until_invalidation(self) -> None:
+        calculator = Mock(side_effect=({"value": 1}, {"value": 2}))
+
+        first = life.cached_mode_stats("wireworld", calculator)
+        second = life.cached_mode_stats("wireworld", calculator)
+        life.invalidate_render_cache("wireworld")
+        third = life.cached_mode_stats("wireworld", calculator)
+
+        self.assertIs(first, second)
+        self.assertIsNot(second, third)
+        self.assertEqual(calculator.call_count, 2)
 
 
 class ImmigrationIntegrationTests(unittest.TestCase):

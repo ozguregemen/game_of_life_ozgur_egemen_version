@@ -5,7 +5,7 @@ import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
-from typing import Any
+from typing import Any, Callable
 
 os.environ["SDL_VIDEO_CENTERED"] = "1"
 
@@ -213,6 +213,15 @@ pattern_scan_executor = ThreadPoolExecutor(max_workers=1)
 grid_revision = 0
 stats_dirty = True
 
+render_revisions = {mode: 0 for mode in SIMULATION_MODES}
+rendered_grid_cache: dict[
+    str,
+    tuple[tuple[Any, ...], pygame.Surface],
+] = {}
+mode_stats_cache: dict[str, tuple[int, dict[str, Any]]] = {}
+render_cache_hits = 0
+render_cache_misses = 0
+
 cell_transition = CellTransition(duration=0.18)
 main_menu: Menu
 
@@ -250,10 +259,41 @@ def set_status(message: str, duration: float = 2.0) -> None:
     status_message_until = time.time() + duration
 
 
+def invalidate_render_cache(mode: str | None = None) -> None:
+    """Mark one mode's rendered grid and derived statistics as stale."""
+    target_mode = simulation_mode if mode is None else mode
+    if target_mode not in render_revisions:
+        raise ValueError(f"Unknown simulation mode: {target_mode}")
+    render_revisions[target_mode] += 1
+    rendered_grid_cache.pop(target_mode, None)
+    mode_stats_cache.pop(target_mode, None)
+
+
+def reset_render_cache_metrics() -> None:
+    """Reset cache counters used by tests and the render benchmark."""
+    global render_cache_hits, render_cache_misses
+    render_cache_hits = 0
+    render_cache_misses = 0
+
+
+def cached_mode_stats(
+    mode: str,
+    calculator: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Return mode statistics until its underlying state changes."""
+    revision = render_revisions[mode]
+    cached = mode_stats_cache.get(mode)
+    if cached is None or cached[0] != revision:
+        cached = (revision, calculator())
+        mode_stats_cache[mode] = cached
+    return cached[1]
+
+
 def mark_stats_dirty() -> None:
     global stats_dirty, grid_revision
     stats_dirty = True
     grid_revision += 1
+    invalidate_render_cache("life")
 
 
 def save_history() -> None:
@@ -311,6 +351,7 @@ def step_back() -> None:
             return
         cyclic_grid, cyclic_generation = cyclic_history.pop()
         simulation_active = False
+        invalidate_render_cache("cyclic_automaton")
         set_status(f"Returned to Cyclic generation {cyclic_generation}.")
         return
 
@@ -320,6 +361,7 @@ def step_back() -> None:
             return
         wireworld_grid, wireworld_generation = wireworld_history.pop()
         simulation_active = False
+        invalidate_render_cache("wireworld")
         set_status(f"Returned to Wireworld generation {wireworld_generation}.")
         return
 
@@ -329,6 +371,7 @@ def step_back() -> None:
             return
         ant_grid, ant_state, ant_generation, ant_last_report = ant_history.pop()
         simulation_active = False
+        invalidate_render_cache("langtons_ant")
         set_status(f"Returned to Langton step {ant_generation}.")
         return
 
@@ -338,6 +381,7 @@ def step_back() -> None:
             return
         brain_grid, brain_generation = brain_history.pop()
         simulation_active = False
+        invalidate_render_cache("brians_brain")
         set_status(f"Returned to Brian's Brain generation {brain_generation}.")
         return
 
@@ -347,6 +391,7 @@ def step_back() -> None:
             return
         immigration_grid, immigration_generation = immigration_history.pop()
         simulation_active = False
+        invalidate_render_cache("immigration")
         set_status(f"Returned to Immigration generation {immigration_generation}.")
         return
 
@@ -484,6 +529,7 @@ def draw_cell(row: int, col: int) -> None:
             save_history()
             drawing_history_pending = False
         cyclic_grid[row][col] = target_value
+        invalidate_render_cache("cyclic_automaton")
         return
 
     if simulation_mode == "wireworld":
@@ -494,6 +540,7 @@ def draw_cell(row: int, col: int) -> None:
             save_history()
             drawing_history_pending = False
         wireworld_grid[row][col] = target_value
+        invalidate_render_cache("wireworld")
         return
 
     if simulation_mode == "langtons_ant":
@@ -504,6 +551,7 @@ def draw_cell(row: int, col: int) -> None:
             save_history()
             drawing_history_pending = False
         ant_grid[row][col] = target_value
+        invalidate_render_cache("langtons_ant")
         return
 
     if simulation_mode == "brians_brain":
@@ -514,6 +562,7 @@ def draw_cell(row: int, col: int) -> None:
             save_history()
             drawing_history_pending = False
         brain_grid[row][col] = target_value
+        invalidate_render_cache("brians_brain")
         return
 
     if simulation_mode == "immigration":
@@ -524,6 +573,7 @@ def draw_cell(row: int, col: int) -> None:
             save_history()
             drawing_history_pending = False
         immigration_grid[row][col] = target_value
+        invalidate_render_cache("immigration")
         return
 
     if grid[row][col] == drawing_value:
@@ -634,6 +684,8 @@ def place_selected_pattern(row: int, col: int) -> None:
             set_pattern_cell(target_row, target_col, target_value)
         if next_ant is not None:
             ant_state = next_ant
+        if simulation_mode != "life":
+            invalidate_render_cache()
 
     selected_pattern = None
     if changes or ant_changed:
@@ -659,6 +711,7 @@ def clear_grid() -> None:
         cyclic_grid = make_cyclic_grid(ROWS, COLS)
         cyclic_generation = 0
         simulation_active = False
+        invalidate_render_cache("cyclic_automaton")
         set_status("Cyclic Automaton reset to color 0.")
         return
 
@@ -667,6 +720,7 @@ def clear_grid() -> None:
         wireworld_grid = make_wireworld_grid(ROWS, COLS)
         wireworld_generation = 0
         simulation_active = False
+        invalidate_render_cache("wireworld")
         set_status("Wireworld grid cleared.")
         return
 
@@ -677,6 +731,7 @@ def clear_grid() -> None:
         ant_generation = 0
         ant_last_report = AntStepReport()
         simulation_active = False
+        invalidate_render_cache("langtons_ant")
         set_status("Langton's Ant board reset.")
         return
 
@@ -685,6 +740,7 @@ def clear_grid() -> None:
         brain_grid = make_brain_grid(ROWS, COLS)
         brain_generation = 0
         simulation_active = False
+        invalidate_render_cache("brians_brain")
         set_status("Brian's Brain grid cleared.")
         return
 
@@ -693,6 +749,7 @@ def clear_grid() -> None:
         immigration_grid = make_immigration_grid(ROWS, COLS)
         immigration_generation = 0
         simulation_active = False
+        invalidate_render_cache("immigration")
         set_status("Immigration grid cleared.")
         return
 
@@ -724,6 +781,7 @@ def randomize_grid(density: float = 0.20) -> None:
         )
         cyclic_generation = 0
         simulation_active = False
+        invalidate_render_cache("cyclic_automaton")
         set_status("Random eight-color Cyclic Automaton state created.")
         return
 
@@ -738,6 +796,7 @@ def randomize_grid(density: float = 0.20) -> None:
         )
         wireworld_generation = 0
         simulation_active = False
+        invalidate_render_cache("wireworld")
         set_status("Random Wireworld conductors and signals created.")
         return
 
@@ -753,6 +812,7 @@ def randomize_grid(density: float = 0.20) -> None:
         ant_generation = 0
         ant_last_report = AntStepReport()
         simulation_active = False
+        invalidate_render_cache("langtons_ant")
         set_status("Random Langton board created; ant reset to center.")
         return
 
@@ -766,6 +826,7 @@ def randomize_grid(density: float = 0.20) -> None:
         )
         brain_generation = 0
         simulation_active = False
+        invalidate_render_cache("brians_brain")
         set_status("Random Brian's Brain state created.")
         return
 
@@ -779,6 +840,7 @@ def randomize_grid(density: float = 0.20) -> None:
         )
         immigration_generation = 0
         simulation_active = False
+        invalidate_render_cache("immigration")
         set_status("Random two-species Immigration population created.")
         return
 
@@ -880,6 +942,7 @@ def toggle_active_species() -> None:
         return
     if simulation_mode == "langtons_ant":
         ant_state = rotate_ant_clockwise(ant_state)
+        invalidate_render_cache("langtons_ant")
         direction = DIRECTION_NAMES[ant_state.direction]
         set_status(f"Ant direction: {direction}")
         return
@@ -946,6 +1009,7 @@ def place_ant(row: int, col: int) -> None:
     save_history()
     ant_state = AntState(row, col, ant_state.direction)
     simulation_active = False
+    invalidate_render_cache("langtons_ant")
     set_status(f"Ant moved to ({row}, {col}).")
 
 
@@ -1137,6 +1201,7 @@ def apply_immigration_generation() -> bool:
     save_history()
     immigration_grid = apply_immigration_rules(immigration_grid)
     immigration_generation += 1
+    invalidate_render_cache("immigration")
     return True
 
 
@@ -1151,6 +1216,7 @@ def apply_brain_generation() -> bool:
     save_history()
     brain_grid = apply_brain_rules(brain_grid)
     brain_generation += 1
+    invalidate_render_cache("brians_brain")
     return True
 
 
@@ -1166,6 +1232,7 @@ def apply_ant_generation() -> bool:
     save_history()
     ant_grid, ant_state, ant_last_report = step_ant(ant_grid, ant_state)
     ant_generation += 1
+    invalidate_render_cache("langtons_ant")
     if ant_last_report.exited:
         simulation_active = False
         set_status("Langton's Ant reached the finite board boundary.", 4.0)
@@ -1188,6 +1255,7 @@ def apply_wireworld_generation() -> bool:
     save_history()
     wireworld_grid = apply_wireworld_rules(wireworld_grid)
     wireworld_generation += 1
+    invalidate_render_cache("wireworld")
     return True
 
 
@@ -1207,6 +1275,7 @@ def apply_cyclic_generation() -> bool:
     save_history()
     cyclic_grid = next_grid
     cyclic_generation += 1
+    invalidate_render_cache("cyclic_automaton")
     return True
 
 
@@ -1239,15 +1308,25 @@ def count_recognized_patterns(source: list[list[int]]) -> dict[str, int]:
     return counts
 
 
+def calculate_life_population_stats() -> dict[str, Any]:
+    """Calculate Life population values cached between grid mutations."""
+    alive_cells = sum(1 for row in grid for cell in row if cell > 0)
+    total_cells = ROWS * COLS
+    return {
+        "alive": alive_cells,
+        "dead": total_cells - alive_cells,
+        "density": 100.0 * alive_cells / total_cells if total_cells else 0.0,
+    }
+
+
 def calculate_stats() -> dict[str, Any]:
     global recognized_pattern_cache, pattern_scan_generation
     global pattern_scan_revision, pattern_scan_future, stats_dirty
 
-    alive_cells = sum(
-        1 for row in grid for cell in row if cell > 0
+    population_stats = cached_mode_stats(
+        "life",
+        calculate_life_population_stats,
     )
-    total_cells = ROWS * COLS
-    density = 100.0 * alive_cells / total_cells if total_cells else 0.0
 
     if pattern_scan_future is not None and pattern_scan_future.done():
         try:
@@ -1275,9 +1354,7 @@ def calculate_stats() -> dict[str, Any]:
         )
 
     return {
-        "alive": alive_cells,
-        "dead": total_cells - alive_cells,
-        "density": density,
+        **population_stats,
         "patterns": recognized_pattern_cache,
     }
 
@@ -1418,7 +1495,6 @@ def draw_grid() -> None:
             label = tiny_font.render(str(row), True, theme["text"])
             screen.blit(label, (origin_x + 2, y))
 
-    draw_pattern_preview()
     screen.set_clip(old_clip)
 
 
@@ -1513,7 +1589,6 @@ def draw_immigration_grid() -> None:
             label = tiny_font.render(str(row), True, theme["text"])
             screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
 
-    draw_pattern_preview()
     screen.set_clip(old_clip)
 
 
@@ -1566,7 +1641,6 @@ def draw_brain_grid() -> None:
             label = tiny_font.render(str(row), True, theme["text"])
             screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
 
-    draw_pattern_preview()
     screen.set_clip(old_clip)
 
 
@@ -1620,7 +1694,6 @@ def draw_wireworld_grid() -> None:
             label = tiny_font.render(str(row), True, (205, 210, 220))
             screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
 
-    draw_pattern_preview()
     screen.set_clip(old_clip)
 
 
@@ -1672,7 +1745,6 @@ def draw_cyclic_grid() -> None:
             label = tiny_font.render(str(row), True, (245, 245, 248))
             screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
 
-    draw_pattern_preview()
     screen.set_clip(old_clip)
 
 
@@ -1758,7 +1830,6 @@ def draw_ant_grid() -> None:
             ant_triangle_points(ant_rect, ant_state.direction),
         )
 
-    draw_pattern_preview()
     screen.set_clip(old_clip)
 
 
@@ -1906,7 +1977,10 @@ def draw_stats() -> None:
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
 
     if simulation_mode == "cyclic_automaton":
-        stats = cyclic_stats(cyclic_grid, state_count=CYCLIC_STATE_COUNT)
+        stats = cached_mode_stats(
+            "cyclic_automaton",
+            lambda: cyclic_stats(cyclic_grid, state_count=CYCLIC_STATE_COUNT),
+        )
         first_line = (
             f"Colors present: {stats['diversity']}/{CYCLIC_STATE_COUNT}   "
             f"Dominant: {stats['dominant_state']} "
@@ -1923,7 +1997,10 @@ def draw_stats() -> None:
         return
 
     if simulation_mode == "wireworld":
-        stats = wireworld_stats(wireworld_grid)
+        stats = cached_mode_stats(
+            "wireworld",
+            lambda: wireworld_stats(wireworld_grid),
+        )
         first_line = (
             f"Heads: {stats['heads']}   Tails: {stats['tails']}   "
             f"Conductors: {stats['conductors']}   Empty: {stats['empty']}   "
@@ -1939,7 +2016,10 @@ def draw_stats() -> None:
         return
 
     if simulation_mode == "langtons_ant":
-        stats = ant_stats(ant_grid)
+        stats = cached_mode_stats(
+            "langtons_ant",
+            lambda: ant_stats(ant_grid),
+        )
         first_line = (
             f"Black: {stats['black']}   White: {stats['white']}   "
             f"Black density: {stats['black_density']:.2f}%   "
@@ -1960,7 +2040,10 @@ def draw_stats() -> None:
         return
 
     if simulation_mode == "brians_brain":
-        stats = brain_stats(brain_grid)
+        stats = cached_mode_stats(
+            "brians_brain",
+            lambda: brain_stats(brain_grid),
+        )
         first_line = (
             f"Active: {stats['active']}   Firing: {stats['firing']}   "
             f"Dying: {stats['dying']}   Off: {stats['off']}   "
@@ -1976,7 +2059,10 @@ def draw_stats() -> None:
         return
 
     if simulation_mode == "immigration":
-        stats = immigration_stats(immigration_grid)
+        stats = cached_mode_stats(
+            "immigration",
+            lambda: immigration_stats(immigration_grid),
+        )
         first_line = (
             f"Population: {stats['population']}   Species A: {stats['species_a']}   "
             f"Species B: {stats['species_b']}   Density: {stats['density']:.2f}%   "
@@ -2277,9 +2363,56 @@ DRAW_HANDLERS = {
 }
 
 
+def active_grid_cache_key() -> tuple[Any, ...]:
+    """Return the visual state that determines the cached viewport pixels."""
+    viewport = grid_viewport()
+    return (
+        render_revisions[simulation_mode],
+        viewport.size,
+        grid_origin(),
+        CELL_SIZE,
+        current_theme,
+        show_grid,
+        show_heatmap,
+        show_age_numbers,
+        show_coordinates,
+        show_quadrants,
+    )
+
+
+def draw_active_grid() -> None:
+    """Draw or reuse the active mode's cached grid, then add live previews."""
+    global render_cache_hits, render_cache_misses
+    viewport = grid_viewport()
+    cache_key = active_grid_cache_key()
+    cache_entry = rendered_grid_cache.get(simulation_mode)
+    transition_active = (
+        simulation_mode == "life" and bool(cell_transition.transitions)
+    )
+
+    if not transition_active and cache_entry is not None and cache_entry[0] == cache_key:
+        screen.blit(cache_entry[1], viewport.topleft)
+        render_cache_hits += 1
+    else:
+        rendered_grid_cache.clear()
+        DRAW_HANDLERS[simulation_mode]()
+        render_cache_misses += 1
+        changes_every_frame = simulation_active and speed >= 60
+        if not transition_active and not changes_every_frame:
+            rendered_grid_cache[simulation_mode] = (
+                cache_key,
+                screen.subsurface(viewport).copy(),
+            )
+
+    old_clip = screen.get_clip()
+    screen.set_clip(viewport)
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    DRAW_HANDLERS[simulation_mode]()
+    draw_active_grid()
     draw_info_bar()
     draw_stats()
     main_menu.draw(screen, tiny_font)
