@@ -3,6 +3,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -408,6 +409,143 @@ class WireworldIntegrationTests(unittest.TestCase):
 
         self.assertEqual(life.wireworld_grid[2][2], life.WIRE_EMPTY)
         self.assertEqual(len(life.wireworld_history), 1)
+
+
+class ModeSpecificPatternIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.simulation_active = False
+        life.selected_pattern = None
+        life.rotation = 0
+        life.flip_h = False
+        life.flip_v = False
+        life.grid = life.make_grid()
+        life.grid_history.clear()
+        life.immigration_grid = life.make_immigration_grid(life.ROWS, life.COLS)
+        life.immigration_history.clear()
+        life.brain_grid = life.make_brain_grid(life.ROWS, life.COLS)
+        life.brain_history.clear()
+        life.ant_grid = life.make_ant_grid(life.ROWS, life.COLS)
+        life.ant_state = life.centered_ant(life.ROWS, life.COLS)
+        life.ant_history.clear()
+        life.wireworld_grid = life.make_wireworld_grid(life.ROWS, life.COLS)
+        life.wireworld_history.clear()
+
+    def tearDown(self) -> None:
+        life.rotation = 0
+        life.flip_h = False
+        life.flip_v = False
+        life.set_simulation_mode("life")
+
+    def pattern_named(self, name: str) -> dict:
+        return next(
+            pattern
+            for pattern in life.available_patterns().values()
+            if pattern["name"] == name
+        )
+
+    def test_available_patterns_follow_selected_mode(self) -> None:
+        for mode in life.SIMULATION_MODES:
+            with self.subTest(mode=mode):
+                life.set_simulation_mode(mode)
+                available = life.available_patterns()
+                self.assertTrue(available)
+                self.assertTrue(
+                    all(pattern["mode"] == mode for pattern in available.values())
+                )
+
+    def test_wireworld_pattern_preserves_all_signal_states(self) -> None:
+        life.set_simulation_mode("wireworld")
+        life.selected_pattern = self.pattern_named("Signal on Straight Wire")
+
+        life.place_selected_pattern(3, 4)
+
+        self.assertEqual(
+            life.wireworld_grid[3][4:8],
+            [life.ELECTRON_TAIL, life.ELECTRON_HEAD, life.CONDUCTOR, life.CONDUCTOR],
+        )
+        self.assertEqual(len(life.wireworld_history), 1)
+
+    def test_brain_pattern_preserves_dying_cells(self) -> None:
+        life.set_simulation_mode("brians_brain")
+        life.selected_pattern = self.pattern_named("Period-3 Oscillator")
+
+        life.place_selected_pattern(3, 4)
+
+        self.assertEqual(life.brain_grid[4][5:7], [life.DYING, life.DYING])
+        self.assertEqual(len(life.brain_history), 1)
+
+    def test_immigration_pattern_preserves_both_species(self) -> None:
+        life.set_simulation_mode("immigration")
+        life.active_species = life.SPECIES_A
+        life.selected_pattern = self.pattern_named("Split-Species Block")
+
+        life.place_selected_pattern(3, 4)
+
+        self.assertEqual(
+            [life.immigration_grid[3][4:6], life.immigration_grid[4][4:6]],
+            [[life.SPECIES_A, life.SPECIES_A], [life.SPECIES_B, life.SPECIES_B]],
+        )
+
+    def test_langton_pattern_places_and_rotates_ant_metadata(self) -> None:
+        life.set_simulation_mode("langtons_ant")
+        life.selected_pattern = self.pattern_named("Single Ant on White")
+        life.rotation = 90
+
+        life.place_selected_pattern(4, 7)
+
+        self.assertEqual((life.ant_state.row, life.ant_state.col), (4, 7))
+        self.assertEqual(life.DIRECTION_NAMES[life.ant_state.direction], "East")
+        self.assertEqual(len(life.ant_history), 1)
+
+    def test_pattern_from_other_mode_is_rejected(self) -> None:
+        life.set_simulation_mode("life")
+        life.selected_pattern = next(
+            pattern
+            for pattern in life.get_patterns_for_mode("wireworld").values()
+            if pattern["name"] == "Signal on Straight Wire"
+        )
+
+        life.place_selected_pattern(2, 2)
+
+        self.assertFalse(any(cell for row in life.grid for cell in row))
+        self.assertEqual(life.grid_history, [])
+
+    def test_cropping_preserves_wireworld_states(self) -> None:
+        life.wireworld_grid[2][3:6] = [
+            life.ELECTRON_TAIL,
+            life.ELECTRON_HEAD,
+            life.CONDUCTOR,
+        ]
+
+        cropped, ant = life.crop_mode_pattern(life.wireworld_grid, "wireworld")
+
+        self.assertEqual(cropped, [[2, 1, 3]])
+        self.assertIsNone(ant)
+
+    def test_blank_langton_board_can_save_ant_state(self) -> None:
+        life.ant_state = life.AntState(6, 9, 3)
+
+        cropped, ant = life.crop_mode_pattern(life.ant_grid, "langtons_ant")
+
+        self.assertEqual(cropped, [[0]])
+        self.assertEqual(ant, {"row": 0, "col": 0, "direction": 3})
+
+    def test_saving_langton_pattern_includes_mode_and_ant(self) -> None:
+        life.set_simulation_mode("langtons_ant")
+        life.ant_state = life.AntState(6, 9, 3)
+
+        with (
+            patch("life.get_pattern_name", return_value="Corner Ant"),
+            patch("life.save_pattern") as save_pattern,
+        ):
+            life.save_current_pattern()
+
+        save_pattern.assert_called_once_with(
+            [[0]],
+            "Corner Ant",
+            mode="langtons_ant",
+            ant={"row": 0, "col": 0, "direction": 3},
+        )
 
 
 if __name__ == "__main__":

@@ -50,7 +50,7 @@ from mode_registry import (
     MODE_KEYS,
     get_mode_definition,
 )
-from patterns import get_all_patterns, flip_pattern, rotate_pattern, save_pattern
+from patterns import get_patterns_for_mode, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
 from themes import THEMES, Menu
 from visuals import CellTransition, get_enhanced_age_color
@@ -318,39 +318,89 @@ def step_back() -> None:
     set_status(f"Returned to generation {generation}.")
 
 
-def crop_live_pattern(source: list[list[int]]) -> list[list[int]]:
-    live_positions = [
+def normalize_pattern_cell(value: int, mode: str) -> int:
+    """Convert runtime state such as cell age into a saved pattern state."""
+    if mode == "life":
+        return 1 if value > 0 else 0
+    if mode == "immigration":
+        return species_of(value)
+    return int(value)
+
+
+def crop_mode_pattern(
+    source: list[list[int]],
+    mode: str,
+) -> tuple[list[list[int]], dict[str, int] | None]:
+    """Crop a mode grid while preserving its meaningful cell states."""
+    occupied_positions = [
         (row, col)
         for row in range(ROWS)
         for col in range(COLS)
         if source[row][col] != 0
     ]
-    if not live_positions:
-        return []
+    if mode == "langtons_ant":
+        occupied_positions.append((ant_state.row, ant_state.col))
+    if not occupied_positions:
+        return [], None
 
-    min_row = min(row for row, _ in live_positions)
-    max_row = max(row for row, _ in live_positions)
-    min_col = min(col for _, col in live_positions)
-    max_col = max(col for _, col in live_positions)
+    min_row = min(row for row, _ in occupied_positions)
+    max_row = max(row for row, _ in occupied_positions)
+    min_col = min(col for _, col in occupied_positions)
+    max_col = max(col for _, col in occupied_positions)
 
-    return [
+    cropped = [
         [
-            1 if source[row][col] != 0 else 0
+            normalize_pattern_cell(source[row][col], mode)
             for col in range(min_col, max_col + 1)
         ]
         for row in range(min_row, max_row + 1)
     ]
+    ant = None
+    if mode == "langtons_ant":
+        ant = {
+            "row": ant_state.row - min_row,
+            "col": ant_state.col - min_col,
+            "direction": ant_state.direction,
+        }
+    return cropped, ant
+
+
+def transformed_pattern(
+    pattern: dict[str, Any],
+) -> tuple[list[list[int]], dict[str, int] | None]:
+    """Apply rotation/flips to pattern cells and optional ant metadata."""
+    data = [list(row) for row in pattern["pattern"]]
+    ant = dict(pattern["ant"]) if "ant" in pattern else None
+    rows, cols = len(data), len(data[0])
+
+    if rotation:
+        if ant is not None:
+            ant_row, ant_col = ant["row"], ant["col"]
+            if rotation == 90:
+                ant["row"], ant["col"] = ant_col, rows - 1 - ant_row
+            elif rotation == 180:
+                ant["row"], ant["col"] = rows - 1 - ant_row, cols - 1 - ant_col
+            else:
+                ant["row"], ant["col"] = cols - 1 - ant_col, ant_row
+            ant["direction"] = (ant["direction"] + rotation // 90) % 4
+        data = [list(row) for row in rotate_pattern(data, rotation)]
+        rows, cols = len(data), len(data[0])
+    if flip_h:
+        data = [list(row) for row in flip_pattern(data, True)]
+        if ant is not None:
+            ant["col"] = cols - 1 - ant["col"]
+            ant["direction"] = (-ant["direction"]) % 4
+    if flip_v:
+        data = [list(row) for row in flip_pattern(data, False)]
+        if ant is not None:
+            ant["row"] = rows - 1 - ant["row"]
+            ant["direction"] = (2 - ant["direction"]) % 4
+    return data, ant
 
 
 def transformed_pattern_data(pattern: dict[str, Any]) -> list[list[int]]:
-    data = [list(row) for row in pattern["pattern"]]
-    if rotation:
-        data = [list(row) for row in rotate_pattern(data, rotation)]
-    if flip_h:
-        data = [list(row) for row in flip_pattern(data, True)]
-    if flip_v:
-        data = [list(row) for row in flip_pattern(data, False)]
-    return data
+    """Return transformed cells for callers that do not need metadata."""
+    return transformed_pattern(pattern)[0]
 
 
 def mouse_to_grid(position: tuple[int, int]) -> tuple[int, int] | None:
@@ -441,58 +491,96 @@ def pattern_fits(data: list[list[int]], row: int, col: int) -> bool:
     )
 
 
+def pattern_target_value(value: int, pattern_mode: str | None) -> int:
+    """Map a pattern cell to the current mode, including legacy binary data."""
+    if pattern_mode is not None:
+        return value
+    if simulation_mode == "immigration":
+        return active_species
+    if simulation_mode == "brians_brain":
+        return FIRING
+    if simulation_mode == "langtons_ant":
+        return ANT_BLACK
+    if simulation_mode == "wireworld":
+        return CONDUCTOR
+    return 1
+
+
+def current_pattern_cell(row: int, col: int) -> int:
+    """Return the current cell state normalized for pattern comparison."""
+    if simulation_mode == "immigration":
+        return species_of(immigration_grid[row][col])
+    if simulation_mode == "brians_brain":
+        return brain_grid[row][col]
+    if simulation_mode == "langtons_ant":
+        return ant_grid[row][col]
+    if simulation_mode == "wireworld":
+        return wireworld_grid[row][col]
+    return 1 if grid[row][col] > 0 else 0
+
+
+def set_pattern_cell(row: int, col: int, value: int) -> None:
+    """Write one already-validated state to the selected mode grid."""
+    if simulation_mode == "immigration":
+        immigration_grid[row][col] = value
+    elif simulation_mode == "brians_brain":
+        brain_grid[row][col] = value
+    elif simulation_mode == "langtons_ant":
+        ant_grid[row][col] = value
+    elif simulation_mode == "wireworld":
+        wireworld_grid[row][col] = value
+    else:
+        set_cell(row, col, value)
+
+
 def place_selected_pattern(row: int, col: int) -> None:
-    global selected_pattern
+    global selected_pattern, ant_state
     if selected_pattern is None:
         return
 
-    data = transformed_pattern_data(selected_pattern)
+    pattern_mode = selected_pattern.get("mode")
+    if pattern_mode is not None and pattern_mode != simulation_mode:
+        selected_pattern = None
+        set_status("That pattern belongs to a different simulation mode.")
+        return
+
+    data, ant = transformed_pattern(selected_pattern)
     if not pattern_fits(data, row, col):
         selected_pattern = None
         set_status("Pattern does not fit inside the grid.")
         return
 
-    additions: list[tuple[int, int]] = []
+    changes: list[tuple[int, int, int]] = []
     for delta_row, pattern_row in enumerate(data):
         for delta_col, value in enumerate(pattern_row):
             if not value:
                 continue
             target_row = row + delta_row
             target_col = col + delta_col
-            if simulation_mode == "immigration":
-                changed = (
-                    species_of(immigration_grid[target_row][target_col])
-                    != active_species
-                )
-            elif simulation_mode == "brians_brain":
-                changed = brain_grid[target_row][target_col] != FIRING
-            elif simulation_mode == "langtons_ant":
-                changed = ant_grid[target_row][target_col] != ANT_BLACK
-            elif simulation_mode == "wireworld":
-                changed = wireworld_grid[target_row][target_col] != CONDUCTOR
-            else:
-                changed = grid[target_row][target_col] <= 0
-            if changed:
-                additions.append((target_row, target_col))
-    if additions:
+            target_value = pattern_target_value(value, pattern_mode)
+            if current_pattern_cell(target_row, target_col) != target_value:
+                changes.append((target_row, target_col, target_value))
+
+    next_ant = None
+    if simulation_mode == "langtons_ant" and ant is not None:
+        next_ant = AntState(
+            row + ant["row"],
+            col + ant["col"],
+            ant["direction"],
+        )
+    ant_changed = next_ant is not None and next_ant != ant_state
+    if changes or ant_changed:
         save_history()
-        for target_row, target_col in additions:
-            if simulation_mode == "immigration":
-                immigration_grid[target_row][target_col] = active_species
-            elif simulation_mode == "brians_brain":
-                brain_grid[target_row][target_col] = FIRING
-            elif simulation_mode == "langtons_ant":
-                ant_grid[target_row][target_col] = ANT_BLACK
-            elif simulation_mode == "wireworld":
-                wireworld_grid[target_row][target_col] = CONDUCTOR
-            else:
-                set_cell(target_row, target_col, 1)
+        for target_row, target_col, target_value in changes:
+            set_pattern_cell(target_row, target_col, target_value)
+        if next_ant is not None:
+            ant_state = next_ant
 
     selected_pattern = None
-    if additions:
+    if changes or ant_changed:
         set_status("Pattern placed.")
     else:
-        set_status("Pattern added no new cells.")
+        set_status("Pattern made no changes.")
 
 
 # ---------------------------------------------------------------------------
@@ -857,9 +945,9 @@ def save_current_pattern() -> None:
         source = wireworld_grid
     else:
         source = grid
-    cropped = crop_live_pattern(source)
+    cropped, ant = crop_mode_pattern(source, simulation_mode)
     if not cropped:
-        set_status("There are no live cells to save.")
+        set_status("There are no pattern cells to save.")
         return
 
     name = get_pattern_name()
@@ -868,8 +956,13 @@ def save_current_pattern() -> None:
         return
 
     try:
-        save_pattern(cropped, name)
-    except (OSError, ValueError) as exc:
+        save_pattern(
+            cropped,
+            name,
+            mode=simulation_mode,
+            ant=ant,
+        )
+    except (OSError, TypeError, ValueError) as exc:
         set_status(f"Could not save pattern: {exc}", 4.0)
         return
 
@@ -1475,6 +1568,36 @@ def draw_ant_grid() -> None:
     screen.set_clip(old_clip)
 
 
+def pattern_preview_color(
+    value: int,
+    pattern_mode: str | None,
+) -> tuple[int, int, int]:
+    """Return a state-aware preview color, including legacy binary patterns."""
+    if pattern_mode == "immigration":
+        return immigration_species_color(value)
+    if pattern_mode == "brians_brain":
+        return brain_state_color(value)
+    if pattern_mode == "langtons_ant":
+        return (20, 20, 25)
+    if pattern_mode == "wireworld":
+        return wireworld_state_color(value)
+    if pattern_mode == "life":
+        color = get_enhanced_age_color(1, current_theme)
+    elif simulation_mode == "immigration":
+        color = immigration_species_color(active_species)
+    elif simulation_mode == "brians_brain":
+        color = brain_state_color(FIRING)
+    elif simulation_mode == "langtons_ant":
+        color = (20, 20, 25)
+    elif simulation_mode == "wireworld":
+        color = wireworld_state_color(CONDUCTOR)
+    else:
+        color = get_enhanced_age_color(1, current_theme)
+    if hasattr(color, "r"):
+        return color.r, color.g, color.b
+    return tuple(color)
+
+
 def draw_pattern_preview() -> None:
     if selected_pattern is None:
         return
@@ -1485,24 +1608,9 @@ def draw_pattern_preview() -> None:
 
     start_row, start_col = position
     origin_x, origin_y = grid_origin()
-    data = transformed_pattern_data(selected_pattern)
+    data, ant = transformed_pattern(selected_pattern)
     fits = pattern_fits(data, start_row, start_col)
-    if fits:
-        if simulation_mode == "immigration":
-            base_color = immigration_species_color(active_species)
-        elif simulation_mode == "brians_brain":
-            base_color = brain_state_color(FIRING)
-        elif simulation_mode == "langtons_ant":
-            base_color = (20, 20, 25)
-        elif simulation_mode == "wireworld":
-            base_color = wireworld_state_color(CONDUCTOR)
-        else:
-            base_color = get_enhanced_age_color(1, current_theme)
-        if hasattr(base_color, "r"):
-            base_color = (base_color.r, base_color.g, base_color.b)
-        preview_color = tuple(base_color) + (125,)
-    else:
-        preview_color = (255, 45, 45, 155)
+    pattern_mode = selected_pattern.get("mode")
 
     preview = pygame.Surface(
         (len(data[0]) * CELL_SIZE, len(data) * CELL_SIZE),
@@ -1513,6 +1621,11 @@ def draw_pattern_preview() -> None:
         for delta_col, value in enumerate(pattern_row):
             if not value:
                 continue
+            preview_color = (
+                pattern_preview_color(value, pattern_mode) + (135,)
+                if fits
+                else (255, 45, 45, 155)
+            )
             pygame.draw.rect(
                 preview,
                 preview_color,
@@ -1523,6 +1636,19 @@ def draw_pattern_preview() -> None:
                     CELL_SIZE,
                 ),
             )
+
+    if ant is not None:
+        ant_rect = pygame.Rect(
+            ant["col"] * CELL_SIZE,
+            ant["row"] * CELL_SIZE,
+            CELL_SIZE,
+            CELL_SIZE,
+        )
+        pygame.draw.polygon(
+            preview,
+            (230, 35, 45, 190) if fits else (255, 45, 45, 190),
+            ant_triangle_points(ant_rect, ant["direction"]),
+        )
 
     screen.blit(
         preview,
@@ -1717,11 +1843,16 @@ def pattern_menu_geometry() -> tuple[int, int, int, int]:
     return menu_x, menu_y, menu_height, visible_rows
 
 
+def available_patterns() -> dict[str, dict[str, Any]]:
+    """Return the shared cached patterns for the active simulation mode."""
+    return get_patterns_for_mode(simulation_mode)
+
+
 def draw_pattern_menu() -> None:
     if not pattern_menu_active:
         return
 
-    patterns = list(get_all_patterns().items())
+    patterns = list(available_patterns().items())
     menu_x, menu_y, menu_height, visible_rows = pattern_menu_geometry()
     visible = patterns[pattern_scroll : pattern_scroll + visible_rows]
     theme = THEMES[current_theme]
@@ -1729,10 +1860,13 @@ def draw_pattern_menu() -> None:
     surface = pygame.Surface((MENU_WIDTH, menu_height))
     surface.fill(theme["menu"])
     pygame.draw.rect(surface, theme["menu_text"], surface.get_rect(), 2)
-    surface.blit(
-        small_font.render("Choose pattern · Esc closes", True, theme["menu_text"]),
-        (10, 8),
+    mode_name = MODE_BY_KEY[simulation_mode].name
+    heading = tiny_font.render(
+        f"{mode_name} Patterns · Esc closes",
+        True,
+        theme["menu_text"],
     )
+    surface.blit(heading, (10, 8))
 
     mouse_x, mouse_y = pygame.mouse.get_pos()
     for index, (_, pattern) in enumerate(visible):
@@ -2071,6 +2205,10 @@ def update_window_size(new_width: int, new_height: int) -> None:
 
 def select_pattern(pattern: dict[str, Any]) -> None:
     global selected_pattern, rotation, flip_h, flip_v, pattern_menu_active
+    pattern_mode = pattern.get("mode")
+    if pattern_mode is not None and pattern_mode != simulation_mode:
+        set_status("That pattern belongs to a different simulation mode.")
+        return
     selected_pattern = pattern
     rotation = 0
     flip_h = False
@@ -2085,7 +2223,7 @@ def handle_pattern_menu_event(event: pygame.event.Event) -> bool:
     if not pattern_menu_active:
         return False
 
-    patterns = list(get_all_patterns().items())
+    patterns = list(available_patterns().items())
     _, menu_y, _, visible_rows = pattern_menu_geometry()
     max_scroll = max(0, len(patterns) - visible_rows)
 
@@ -2159,7 +2297,7 @@ def handle_keydown(event: pygame.event.Event) -> None:
     elif event.key == pygame.K_RIGHTBRACKET:
         zoom(1.20)
     elif pygame.K_1 <= event.key <= pygame.K_9:
-        patterns = list(get_all_patterns().values())
+        patterns = list(available_patterns().values())
         index = event.key - pygame.K_1
         if index < len(patterns):
             select_pattern(patterns[index])
