@@ -31,6 +31,19 @@ from immigration import (
     randomize_immigration_grid,
     species_of,
 )
+from langtons_ant import (
+    BLACK as ANT_BLACK,
+    DIRECTION_NAMES,
+    AntGrid,
+    AntState,
+    AntStepReport,
+    ant_stats,
+    centered_ant,
+    make_ant_grid,
+    randomize_ant_grid,
+    rotate_ant_clockwise,
+    step_ant,
+)
 from patterns import get_all_patterns, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
 from themes import THEMES, Menu
@@ -96,7 +109,14 @@ brain_history: list[tuple[BrainGrid, int]] = []
 brain_generation = 0
 brain_rng = random.Random()
 
-SIMULATION_MODES = ("life", "immigration", "brians_brain")
+ant_grid: AntGrid = make_ant_grid(ROWS, COLS)
+ant_state = centered_ant(ROWS, COLS)
+ant_history: list[tuple[AntGrid, AntState, int, AntStepReport]] = []
+ant_generation = 0
+ant_last_report = AntStepReport()
+ant_rng = random.Random()
+
+SIMULATION_MODES = ("life", "immigration", "brians_brain", "langtons_ant")
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
 simulation_mode = (
     requested_start_mode if requested_start_mode in SIMULATION_MODES else "life"
@@ -184,6 +204,14 @@ def mark_stats_dirty() -> None:
 
 
 def save_history() -> None:
+    if simulation_mode == "langtons_ant":
+        if len(ant_history) >= HISTORY_LIMIT:
+            ant_history.pop(0)
+        ant_history.append(
+            (deepcopy(ant_grid), ant_state, ant_generation, ant_last_report)
+        )
+        return
+
     if simulation_mode == "brians_brain":
         if len(brain_history) >= HISTORY_LIMIT:
             brain_history.pop(0)
@@ -209,6 +237,16 @@ def step_back() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
+    global ant_grid, ant_state, ant_generation, ant_last_report
+    if simulation_mode == "langtons_ant":
+        if not ant_history:
+            set_status("No earlier Langton's Ant step is available.")
+            return
+        ant_grid, ant_state, ant_generation, ant_last_report = ant_history.pop()
+        simulation_active = False
+        set_status(f"Returned to Langton step {ant_generation}.")
+        return
+
     if simulation_mode == "brians_brain":
         if not brain_history:
             set_status("No earlier Brian's Brain generation is available.")
@@ -303,6 +341,16 @@ def set_cell(row: int, col: int, value: int) -> bool:
 def draw_cell(row: int, col: int) -> None:
     """Apply the active brush and save one history entry per changed stroke."""
     global drawing_history_pending
+    if simulation_mode == "langtons_ant":
+        target_value = ANT_BLACK if drawing_value else 0
+        if ant_grid[row][col] == target_value:
+            return
+        if drawing_history_pending:
+            save_history()
+            drawing_history_pending = False
+        ant_grid[row][col] = target_value
+        return
+
     if simulation_mode == "brians_brain":
         target_value = FIRING if drawing_value else 0
         if brain_grid[row][col] == target_value:
@@ -366,6 +414,8 @@ def place_selected_pattern(row: int, col: int) -> None:
                 )
             elif simulation_mode == "brians_brain":
                 changed = brain_grid[target_row][target_col] != FIRING
+            elif simulation_mode == "langtons_ant":
+                changed = ant_grid[target_row][target_col] != ANT_BLACK
             else:
                 changed = grid[target_row][target_col] <= 0
             if changed:
@@ -377,6 +427,8 @@ def place_selected_pattern(row: int, col: int) -> None:
                 immigration_grid[target_row][target_col] = active_species
             elif simulation_mode == "brians_brain":
                 brain_grid[target_row][target_col] = FIRING
+            elif simulation_mode == "langtons_ant":
+                ant_grid[target_row][target_col] = ANT_BLACK
             else:
                 set_cell(target_row, target_col, 1)
 
@@ -396,6 +448,17 @@ def clear_grid() -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
+    global ant_grid, ant_state, ant_generation, ant_last_report
+    if simulation_mode == "langtons_ant":
+        save_history()
+        ant_grid = make_ant_grid(ROWS, COLS)
+        ant_state = centered_ant(ROWS, COLS)
+        ant_generation = 0
+        ant_last_report = AntStepReport()
+        simulation_active = False
+        set_status("Langton's Ant board reset.")
+        return
+
     if simulation_mode == "brians_brain":
         save_history()
         brain_grid = make_brain_grid(ROWS, COLS)
@@ -427,6 +490,22 @@ def randomize_grid(density: float = 0.20) -> None:
     global grid, trail_grid, activity_grid, generation, simulation_active
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
+    global ant_grid, ant_state, ant_generation, ant_last_report
+    if simulation_mode == "langtons_ant":
+        save_history()
+        ant_grid = randomize_ant_grid(
+            ROWS,
+            COLS,
+            density=0.15,
+            rng=ant_rng,
+        )
+        ant_state = centered_ant(ROWS, COLS)
+        ant_generation = 0
+        ant_last_report = AntStepReport()
+        simulation_active = False
+        set_status("Random Langton board created; ant reset to center.")
+        return
+
     if simulation_mode == "brians_brain":
         save_history()
         brain_grid = randomize_brain_grid(
@@ -482,8 +561,10 @@ def cycle_rule() -> None:
     if simulation_mode != "life":
         if simulation_mode == "immigration":
             message = "Immigration Game uses Conway B3/S23 for both species."
-        else:
+        elif simulation_mode == "brians_brain":
             message = "Brian's Brain uses the fixed 2-neighbor firing rule."
+        else:
+            message = "Langton's Ant uses right-on-white and left-on-black."
         set_status(message)
         return
     rules = list(RULES)
@@ -508,19 +589,39 @@ def toggle_simulation_mode() -> None:
         set_status("Immigration Game: T changes the active species.", 4.0)
     elif simulation_mode == "brians_brain":
         set_status("Brian's Brain: firing cells leave a one-step dying trail.", 4.0)
+    elif simulation_mode == "langtons_ant":
+        set_status("Langton's Ant: T rotates, Shift+click moves the ant.", 4.0)
     else:
         set_status("Life-like cellular automata mode.", 3.0)
 
 
 def toggle_active_species() -> None:
-    """Choose which Immigration species the drawing brush places."""
-    global active_species
+    """Change the active species or rotate the Langton ant."""
+    global active_species, ant_state
+    if simulation_mode == "langtons_ant":
+        ant_state = rotate_ant_clockwise(ant_state)
+        direction = DIRECTION_NAMES[ant_state.direction]
+        set_status(f"Ant direction: {direction}")
+        return
     if simulation_mode != "immigration":
         set_status("Species selection is available in Immigration mode.")
         return
     active_species = SPECIES_B if active_species == SPECIES_A else SPECIES_A
     label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
     set_status(f"Active species: {label}")
+
+
+def place_ant(row: int, col: int) -> None:
+    """Move and reactivate Langton's ant without changing its heading."""
+    global ant_state, simulation_active
+    if simulation_mode != "langtons_ant":
+        return
+    if ant_state.row == row and ant_state.col == col and ant_state.active:
+        return
+    save_history()
+    ant_state = AntState(row, col, ant_state.direction)
+    simulation_active = False
+    set_status(f"Ant moved to ({row}, {col}).")
 
 
 def zoom(factor: float) -> None:
@@ -611,6 +712,8 @@ def save_current_pattern() -> None:
         source = immigration_grid
     elif simulation_mode == "brians_brain":
         source = brain_grid
+    elif simulation_mode == "langtons_ant":
+        source = ant_grid
     else:
         source = grid
     cropped = crop_live_pattern(source)
@@ -700,8 +803,28 @@ def apply_brain_generation() -> bool:
     return True
 
 
+def apply_ant_generation() -> bool:
+    """Advance Langton's Ant by one turn, flip, and movement step."""
+    global ant_grid, ant_state, ant_generation, ant_last_report
+    global simulation_active
+    if not ant_state.active:
+        simulation_active = False
+        set_status("Langton's Ant stopped at the board boundary.")
+        return False
+
+    save_history()
+    ant_grid, ant_state, ant_last_report = step_ant(ant_grid, ant_state)
+    ant_generation += 1
+    if ant_last_report.exited:
+        simulation_active = False
+        set_status("Langton's Ant reached the finite board boundary.", 4.0)
+    return True
+
+
 def apply_generation() -> bool:
     """Advance the selected simulation mode."""
+    if simulation_mode == "langtons_ant":
+        return apply_ant_generation()
     if simulation_mode == "brians_brain":
         return apply_brain_generation()
     if simulation_mode == "immigration":
@@ -1038,6 +1161,92 @@ def draw_brain_grid() -> None:
     screen.set_clip(old_clip)
 
 
+def ant_triangle_points(
+    rect: pygame.Rect,
+    direction: int,
+) -> list[tuple[int, int]]:
+    """Return a direction-facing triangle inside one grid cell."""
+    margin = max(2, CELL_SIZE // 5)
+    left, right = rect.left + margin, rect.right - margin
+    top, bottom = rect.top + margin, rect.bottom - margin
+    center_x, center_y = rect.center
+    if direction == 0:
+        return [(center_x, top), (right, bottom), (left, bottom)]
+    if direction == 1:
+        return [(right, center_y), (left, top), (left, bottom)]
+    if direction == 2:
+        return [(center_x, bottom), (left, top), (right, top)]
+    return [(left, center_y), (right, bottom), (right, top)]
+
+
+def draw_ant_grid() -> None:
+    """Render Langton's black/white board and its directional ant."""
+    viewport = grid_viewport()
+    origin_x, origin_y = grid_origin()
+    old_clip = screen.get_clip()
+    screen.set_clip(viewport)
+    white_color = (235, 235, 225)
+    black_color = (24, 25, 30)
+    line_color = (105, 108, 112)
+
+    for row in range(ROWS):
+        y = origin_y + row * CELL_SIZE
+        if y + CELL_SIZE < viewport.top or y > viewport.bottom:
+            continue
+        for col in range(COLS):
+            x = origin_x + col * CELL_SIZE
+            if x + CELL_SIZE < viewport.left or x > viewport.right:
+                continue
+            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+            color = black_color if ant_grid[row][col] == ANT_BLACK else white_color
+            pygame.draw.rect(screen, color, rect)
+            if show_grid and CELL_SIZE >= 6:
+                pygame.draw.rect(screen, line_color, rect, 1)
+
+    if show_quadrants:
+        center_x = origin_x + COLS * CELL_SIZE // 2
+        center_y = origin_y + ROWS * CELL_SIZE // 2
+        pygame.draw.line(
+            screen,
+            (175, 40, 45),
+            (center_x, origin_y),
+            (center_x, origin_y + ROWS * CELL_SIZE),
+            2,
+        )
+        pygame.draw.line(
+            screen,
+            (175, 40, 45),
+            (origin_x, center_y),
+            (origin_x + COLS * CELL_SIZE, center_y),
+            2,
+        )
+
+    if show_coordinates and CELL_SIZE >= 10:
+        for col in range(0, COLS, 5):
+            label = tiny_font.render(str(col), True, black_color)
+            screen.blit(label, (origin_x + col * CELL_SIZE + 2, origin_y + 2))
+        for row in range(0, ROWS, 5):
+            label = tiny_font.render(str(row), True, black_color)
+            screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
+
+    if 0 <= ant_state.row < ROWS and 0 <= ant_state.col < COLS:
+        ant_rect = pygame.Rect(
+            origin_x + ant_state.col * CELL_SIZE,
+            origin_y + ant_state.row * CELL_SIZE,
+            CELL_SIZE,
+            CELL_SIZE,
+        )
+        ant_color = (230, 35, 45) if ant_state.active else (125, 35, 40)
+        pygame.draw.polygon(
+            screen,
+            ant_color,
+            ant_triangle_points(ant_rect, ant_state.direction),
+        )
+
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
 def draw_pattern_preview() -> None:
     if selected_pattern is None:
         return
@@ -1055,6 +1264,8 @@ def draw_pattern_preview() -> None:
             base_color = immigration_species_color(active_species)
         elif simulation_mode == "brians_brain":
             base_color = brain_state_color(FIRING)
+        elif simulation_mode == "langtons_ant":
+            base_color = (20, 20, 25)
         else:
             base_color = get_enhanced_age_color(1, current_theme)
         if hasattr(base_color, "r"):
@@ -1095,7 +1306,14 @@ def draw_info_bar() -> None:
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    if simulation_mode == "brians_brain":
+    if simulation_mode == "langtons_ant":
+        direction = DIRECTION_NAMES[ant_state.direction]
+        ant_status = "active" if ant_state.active else "stopped"
+        text = (
+            f"{state}   Mode: Langton's Ant   Step: {ant_generation}   "
+            f"Direction: {direction}   Ant: {ant_status}"
+        )
+    elif simulation_mode == "brians_brain":
         text = (
             f"{state}   Mode: Brian's Brain   Speed: {speed} gen/s   "
             f"Generation: {brain_generation}   Rule: exactly 2 firing neighbors"
@@ -1120,6 +1338,27 @@ def draw_stats() -> None:
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
+
+    if simulation_mode == "langtons_ant":
+        stats = ant_stats(ant_grid)
+        first_line = (
+            f"Black: {stats['black']}   White: {stats['white']}   "
+            f"Black density: {stats['black_density']:.2f}%   "
+            f"Ant: ({ant_state.row}, {ant_state.col})   History: "
+            f"{len(ant_history)}/{HISTORY_LIMIT}"
+        )
+        action = (
+            f"Last action: turn {ant_last_report.turned}"
+            if ant_last_report.turned
+            else "Last action: none"
+        )
+        second_line = (
+            f"{action}   ·   White: turn right, paint black   ·   "
+            "Black: turn left, paint white"
+        )
+        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
+        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
+        return
 
     if simulation_mode == "brians_brain":
         stats = brain_stats(brain_grid)
@@ -1292,7 +1531,9 @@ def draw_status() -> None:
 
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    if simulation_mode == "brians_brain":
+    if simulation_mode == "langtons_ant":
+        draw_ant_grid()
+    elif simulation_mode == "brians_brain":
         draw_brain_grid()
     elif simulation_mode == "immigration":
         draw_immigration_grid()
@@ -1320,7 +1561,7 @@ def setup_menu() -> Menu:
         current_theme,
     )
     menu.add_button("Change Mode", toggle_simulation_mode)
-    menu.add_button("Change Species", toggle_active_species)
+    menu.add_button("Species / Ant Direction", toggle_active_species)
     menu.add_button("Clear Grid", clear_grid)
     menu.add_button("Randomize", randomize_grid)
     menu.add_button("Step Back", step_back)
@@ -1481,6 +1722,13 @@ def handle_event(event: pygame.event.Event) -> bool:
     if event.type == pygame.MOUSEBUTTONDOWN:
         if event.button == 1:
             position = mouse_to_grid(event.pos)
+            if (
+                simulation_mode == "langtons_ant"
+                and position is not None
+                and pygame.key.get_mods() & pygame.KMOD_SHIFT
+            ):
+                place_ant(*position)
+                return True
             if selected_pattern and position is not None:
                 place_selected_pattern(*position)
                 return True
@@ -1524,7 +1772,7 @@ def handle_event(event: pygame.event.Event) -> bool:
 
 main_menu = setup_menu()
 center_view()
-set_status("M: mode · T: species · Space: run/pause · Mouse: draw/erase", 5.0)
+set_status("M: mode · T: species/direction · Space: run/pause · Mouse: draw", 5.0)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""

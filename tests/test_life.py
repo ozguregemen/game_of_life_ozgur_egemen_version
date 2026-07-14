@@ -70,6 +70,9 @@ class ApplicationSmokeTests(unittest.TestCase):
     def test_brians_brain_dummy_video_driver_startup(self) -> None:
         self.run_smoke_test("brians_brain")
 
+    def test_langtons_ant_dummy_video_driver_startup(self) -> None:
+        self.run_smoke_test("langtons_ant")
+
 
 class ImmigrationIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -103,6 +106,7 @@ class ImmigrationIntegrationTests(unittest.TestCase):
         life.grid[2][2] = 4
         life.immigration_grid[3][3] = life.SPECIES_B
 
+        life.toggle_simulation_mode()
         life.toggle_simulation_mode()
         life.toggle_simulation_mode()
         life.toggle_simulation_mode()
@@ -167,6 +171,57 @@ class BriansBrainIntegrationTests(unittest.TestCase):
                 for col in (2, 3)
             )
         )
+
+
+class LangtonsAntIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.simulation_mode = "langtons_ant"
+        life.simulation_active = False
+        life.ant_grid = life.make_ant_grid(life.ROWS, life.COLS)
+        life.ant_state = life.centered_ant(life.ROWS, life.COLS)
+        life.ant_history.clear()
+        life.ant_generation = 0
+        life.ant_last_report = life.AntStepReport()
+
+    def tearDown(self) -> None:
+        life.simulation_mode = "life"
+        life.simulation_active = False
+
+    def test_generation_tracks_ant_state_and_history(self) -> None:
+        original = life.ant_state
+
+        self.assertTrue(life.apply_generation())
+
+        self.assertEqual(life.ant_generation, 1)
+        self.assertEqual(len(life.ant_history), 1)
+        self.assertEqual(life.ant_grid[original.row][original.col], life.ANT_BLACK)
+        self.assertNotEqual(life.ant_state, original)
+
+    def test_pattern_places_black_cells(self) -> None:
+        life.selected_pattern = {
+            "name": "Block",
+            "pattern": [[1, 1], [1, 1]],
+        }
+
+        life.place_selected_pattern(2, 2)
+
+        self.assertEqual(len(life.ant_history), 1)
+        self.assertTrue(
+            all(
+                life.ant_grid[row][col] == life.ANT_BLACK
+                for row in (2, 3)
+                for col in (2, 3)
+            )
+        )
+
+    def test_place_ant_preserves_direction_and_saves_history(self) -> None:
+        original_direction = life.ant_state.direction
+
+        life.place_ant(4, 7)
+
+        self.assertEqual((life.ant_state.row, life.ant_state.col), (4, 7))
+        self.assertEqual(life.ant_state.direction, original_direction)
+        self.assertEqual(len(life.ant_history), 1)
 
 
 if __name__ == "__main__":
