@@ -91,14 +91,19 @@ class DimensionUITests(unittest.TestCase):
         life.dimension_menu_active = False
         life.mode_menu_active = False
         life.pattern_menu_active = False
+        life.eca_rule_menu_active = False
         life.eca_rule = life.ECA_DEFAULT_RULE
-        life.eca_boundary = life.BOUNDARY_FIXED
+        life.eca_boundary = life.BOUNDARY_INFINITE
+        life.eca_background = 0
+        life.eca_rule_change_reset = True
         life.eca_rows = [life.single_eca_seed(life.ECA_WIDTH)]
         life.eca_generation = 0
         life.eca_undo_history.clear()
 
     def tearDown(self) -> None:
         life.dimension_menu_active = False
+        life.eca_rule_menu_active = False
+        life.eca_rule_change_reset = True
         life.rendered_grid_cache.clear()
         life.mode_stats_cache.clear()
         life.set_simulation_mode("life")
@@ -143,7 +148,11 @@ class DimensionUITests(unittest.TestCase):
         life.set_active_dimension("1d")
         labels = self.menu_labels()
         self.assertIn("Select Dimension (D)", labels)
-        self.assertTrue(any(label.startswith("Preset Rule:") for label in labels))
+        self.assertIn("Browse Rules 0–255 (E)", labels)
+        self.assertTrue(any(label.startswith("Next Featured:") for label in labels))
+        self.assertTrue(any(label.startswith("Previous Rule:") for label in labels))
+        self.assertTrue(any(label.startswith("Next Rule:") for label in labels))
+        self.assertIn("Rule Change: Canonical Reset", labels)
         self.assertTrue(any(label.startswith("Boundary:") for label in labels))
         self.assertNotIn("Select Mode (M)", labels)
         self.assertNotIn("Show Patterns", labels)
@@ -172,6 +181,150 @@ class DimensionUITests(unittest.TestCase):
         life.step_back()
         self.assertEqual(life.eca_generation, 0)
         self.assertEqual(life.eca_rows, [seed])
+
+    def test_rule_4_keeps_recording_identical_rows_like_reference_diagram(self) -> None:
+        life.set_active_dimension("1d")
+        life.eca_rule = 4
+        seed = life.single_eca_seed(life.ECA_WIDTH)
+        life.eca_rows = [seed]
+
+        for _ in range(4):
+            self.assertTrue(life.apply_generation())
+
+        self.assertEqual(life.eca_generation, 4)
+        self.assertEqual(life.eca_rows, [seed] * 5)
+
+    def test_adjacent_rule_buttons_wrap_and_use_canonical_defaults(self) -> None:
+        life.set_active_dimension("1d")
+        life.eca_rule = 0
+        life.eca_rows = [tuple(1 for _ in range(life.ECA_WIDTH))]
+        life.eca_boundary = life.BOUNDARY_WRAP
+        life.eca_background = 1
+
+        life.adjust_eca_rule(-1)
+
+        self.assertEqual(life.eca_rule, 255)
+        self.assertEqual(life.eca_rows, [life.single_eca_seed(life.ECA_WIDTH)])
+        self.assertEqual(life.eca_boundary, life.BOUNDARY_INFINITE)
+        self.assertEqual(life.eca_background, 0)
+
+        life.adjust_eca_rule(1)
+        self.assertEqual(life.eca_rule, 0)
+
+    def test_sidebar_previous_and_next_rule_buttons_execute_and_relabel(self) -> None:
+        life.set_active_dimension("1d")
+        next_button = next(
+            data["button"]
+            for data in life.main_menu.buttons
+            if data["button"].text == "Next Rule: 31"
+        )
+        self.assertTrue(
+            life.main_menu.handle_event(
+                life.pygame.event.Event(
+                    life.pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=next_button.rect.center,
+                )
+            )
+        )
+        self.assertEqual(life.eca_rule, 31)
+        self.assertIn("Previous Rule: 30", self.menu_labels())
+        self.assertIn("Next Rule: 32", self.menu_labels())
+
+        previous_button = next(
+            data["button"]
+            for data in life.main_menu.buttons
+            if data["button"].text == "Previous Rule: 30"
+        )
+        life.main_menu.handle_event(
+            life.pygame.event.Event(
+                life.pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=previous_button.rect.center,
+            )
+        )
+        self.assertEqual(life.eca_rule, 30)
+
+    def test_rule_change_can_explicitly_keep_current_row(self) -> None:
+        life.set_active_dimension("1d")
+        current = tuple(index % 2 for index in range(life.ECA_WIDTH))
+        life.eca_rows = [current]
+        life.eca_boundary = life.BOUNDARY_WRAP
+        life.toggle_eca_rule_change_reset()
+
+        life.adjust_eca_rule(1)
+
+        self.assertEqual(life.eca_rule, 31)
+        self.assertEqual(life.eca_rows, [current])
+        self.assertEqual(life.eca_boundary, life.BOUNDARY_WRAP)
+
+    def test_boundary_cycles_through_reference_and_experimental_modes(self) -> None:
+        life.set_active_dimension("1d")
+        self.assertEqual(life.eca_boundary, life.BOUNDARY_INFINITE)
+        life.toggle_eca_boundary()
+        self.assertEqual(life.eca_boundary, life.BOUNDARY_FIXED)
+        life.toggle_eca_boundary()
+        self.assertEqual(life.eca_boundary, life.BOUNDARY_WRAP)
+        life.toggle_eca_boundary()
+        self.assertEqual(life.eca_boundary, life.BOUNDARY_INFINITE)
+
+    def test_rule_catalog_contains_all_rules_and_selects_a_card(self) -> None:
+        life.set_active_dimension("1d")
+        life.activate_eca_rule_menu()
+        modal, cards = life.eca_rule_menu_geometry()
+        self.assertEqual([rule for rule, _ in cards], list(range(256)))
+        self.assertTrue(all(modal.contains(card) for _, card in cards))
+
+        rule_110_card = dict(cards)[110]
+        event = life.pygame.event.Event(
+            life.pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=rule_110_card.center,
+        )
+        self.assertTrue(life.handle_eca_rule_menu_event(event))
+        self.assertEqual(life.eca_rule, 110)
+        self.assertFalse(life.eca_rule_menu_active)
+
+    def test_rule_catalog_fits_the_minimum_window(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(760, 560)
+            modal, cards = life.eca_rule_menu_geometry()
+            self.assertTrue(all(modal.contains(card) for _, card in cards))
+            self.assertTrue(all(card.width > 0 and card.height > 0 for _, card in cards))
+        finally:
+            life.update_window_size(*original_size)
+
+    def test_rule_catalog_accepts_a_typed_rule_number(self) -> None:
+        life.set_active_dimension("1d")
+        life.activate_eca_rule_menu()
+        for key in (life.pygame.K_1, life.pygame.K_8, life.pygame.K_4):
+            life.handle_eca_rule_menu_event(
+                life.pygame.event.Event(life.pygame.KEYDOWN, key=key)
+            )
+        life.handle_eca_rule_menu_event(
+            life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_RETURN)
+        )
+        self.assertEqual(life.eca_rule, 184)
+        self.assertFalse(life.eca_rule_menu_active)
+
+    def test_infinite_background_state_is_restored_by_step_back(self) -> None:
+        life.set_active_dimension("1d")
+        life.eca_rule = 1
+        self.assertTrue(life.apply_generation())
+        self.assertEqual(life.eca_background, 1)
+        life.step_back()
+        self.assertEqual(life.eca_background, 0)
+
+    def test_infinite_workspace_expands_before_activity_is_clipped(self) -> None:
+        life.set_active_dimension("1d")
+        life.eca_rule = 254
+        for _ in range(life.ECA_WIDTH // 2 + 2):
+            life.apply_generation()
+
+        self.assertGreater(len(life.eca_rows[-1]), life.ECA_WIDTH)
+        self.assertEqual(len(life.eca_rows[-1]) % 2, 1)
+        life.draw_active_grid()
 
     def test_one_eca_brush_stroke_creates_one_undo_snapshot(self) -> None:
         life.set_active_dimension("1d")
