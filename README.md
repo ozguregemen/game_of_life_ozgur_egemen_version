@@ -84,7 +84,10 @@ satırı yine `import pygame` olarak kalır.
 
 ## Dosyalar
 
-- `life.py`: Boyut seçici, 1D çalışma alanı ve güncel 2D uygulama
+- `life.py`: Uygulama kabuğu, pencere koordinasyonu ve mevcut 2D mod uygulamaları
+- `workspaces/base.py`: Ortak workspace controller/renderer sözleşmesi ve registry
+- `workspaces/elementary_1d.py`: 1D state, history, input, sidebar ve renderer
+- `workspaces/two_dimensional.py`: Altı mevcut 2D modu ortak workspace akışına bağlayan adaptör
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
@@ -102,6 +105,20 @@ satırı yine `import pygame` olarak kalır.
 - `life2d_backup.py`: Eski 2D sürüm yedeği
 - `benchmarks/render_benchmark.py`: Mod bazında tekrar çalıştırılabilir render ölçümü
 
+## Workspace mimarisi
+
+Çalışan her boyut, `WorkspaceController` ve `WorkspaceRenderer` ikilisi olarak
+`WorkspaceRegistry` içine kaydedilir. Controller; generation, history, input,
+sidebar, clear/randomize ve görünüm komutlarını standartlaştırır. Renderer ise
+viewport cache anahtarı, temel çizim, dinamik katmanlar, bilgi/istatistik barları ve
+modal çizimini üstlenir. Ana event loop seçili boyutun ayrıntılarını bilmeden bu
+ortak arayüzü çağırır.
+
+1D Elementary CA kendi state/controller/renderer modülünde yaşar. Mevcut 2D modlar
+davranışları değiştirilmeden bir workspace adaptörüyle aynı akışa bağlanmıştır. Bu
+ayrım, ileride 3D workspace eklenirken ana event loop'a yeni boyut dalları ekleme
+zorunluluğunu ortadan kaldırır.
+
 ## Test
 
 ```powershell
@@ -112,8 +129,8 @@ Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atom
 pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
 depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Automaton
 kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod registry ve
-bağlamsal menü davranışını; altı 2D mod ile 1D alanın SDL dummy video driver ile
-başlangıcını kapsar.
+bağlamsal menü davranışını; workspace registry/controller/renderer sözleşmesini;
+altı 2D mod ile 1D alanın SDL dummy video driver ile başlangıcını kapsar.
 
 ## Render performansı
 
