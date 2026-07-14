@@ -32,6 +32,8 @@ satırı yine `import pygame` olarak kalır.
 - Aktivite heatmap'i ve ölü hücre izleri
 - Sürüklenebilir generation timeline, doğrudan nesle gitme ve ileri/geri oynatma
 - Tam grid kopyaları yerine periyodik checkpoint + hücre/satır deltaları kullanan geçmiş
+- Population, density, entropy ve değişim oranı zaman serilerini gösteren bilimsel panel
+- Periyot/stabilizasyon algılama ve ortak koşullarda 1D Wolfram rule karşılaştırması
 - Her oyun moduna özel, durumları koruyan hazır ve kullanıcı patternleri
 - Pattern döndürme, yatay/dikey çevirme ve yerleştirme önizlemesi
 - Otomatik pattern recognition
@@ -60,6 +62,7 @@ satırı yine `import pygame` olarak kalır.
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | J | Timeline içinde kayıtlı bir generation'a doğrudan git |
+| I | Bilimsel analiz ve 1D rule karşılaştırma panelini aç / kapat |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
 | H | Heatmap aç/kapat |
@@ -110,6 +113,8 @@ satırı yine `import pygame` olarak kalır.
 - `session_ui.py`: Oturum kataloğu, 1D profil menüsü ve modal input/render akışı
 - `timeline_history.py`: Checkpoint/delta geçmiş motoru, dallanma ve doğrudan frame/nesil erişimi
 - `timeline_ui.py`: Sürüklenebilir ortak timeline, ileri/geri oynatma ve checkpoint göstergeleri
+- `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
+- `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
 - `themes.py`: Temalar ve menü bileşenleri
 - `visuals.py`: Animasyon ve görsel yardımcılar
 - `life3d.py`: Deneysel 3D slice sürümü
@@ -147,6 +152,29 @@ delta uygulayarak gerçekleştirilir. Varsayılan üst sınır workspace/mod ba�
 frame'dir. Kullanıcı geçmişteki bir frame'e dönüp düzenleme yaparsa yalnız o
 workspace'in ileri dalı atılır; diğer boyut ve 2D mod timeline'ları korunur.
 
+## Bilimsel analiz paneli
+
+Sağ menüdeki `Scientific Analysis` düğmesi veya `I`, simülasyonu durdurmadan çalışan
+iki sekmeli analiz panelini açar. `Live Metrics`; population, density, normalize
+Shannon entropy ve bir önceki nesle göre değişen hücre yüzdesini dört zaman serisi
+olarak gösterir. Aynı tam durum tekrar görüldüğünde periyot ve döngünün başladığı
+stabilizasyon generation'ı raporlanır; periyot `1` sabit noktayı ifade eder.
+
+Ölçümler modların gerçek durum uzayına göre normalize edilir. Life hücre yaşları
+canlı/ölü, Immigration yaşları boş/Tür A/Tür B olarak ölçülür. Langton's Ant periyot
+imzasına karıncanın konumunu, yönünü ve aktifliğini; Cyclic Automaton ise state count
+ve threshold'u dahil eder. Böylece görsel yaş sayaçları veya farklı deney parametreleri
+yanlış değişim ve periyot sonucu üretmez. Clear, randomize, rule/threshold değişimi ya
+da aynı generation'da elle müdahale yeni bir ölçüm koşusu başlatır. Seriler mod ve
+workspace başına bağımsız tutulur ve en fazla 2000 örnek saklar.
+
+`1D Rule Comparison` sekmesi, seçili Elementary rule ile 30, 54, 90, 110 ve 184
+referans kurallarını arayüzü dondurmayan bir arka plan işinde karşılaştırır. Her rule
+aynı merkezî tek-hücre seed'i, 160 generation ve kenara ulaşılmayan eşit 321 hücrelik
+sonsuz-arka-plan penceresini kullanır. Tablo ortalama/final population, ortalama
+density, entropy, değişim oranı, periyot ve stabilizasyon generation'ını birlikte
+gösterir.
+
 ## Test
 
 ```powershell
@@ -159,6 +187,7 @@ depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Auto
 kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod registry ve
 bağlamsal menü davranışını; workspace registry/controller/renderer sözleşmesini;
 checkpoint/delta round-trip, timeline dallanması, ileri/geri gezinme ve sürükleme davranışını;
+bilimsel metrikleri, periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
 oturum/profile güvenliğini ve tam-state round-trip davranışını; altı 2D mod ile 1D
 alanın SDL dummy video driver ile başlangıcını kapsar.
 
@@ -176,6 +205,8 @@ boundary, seed, tam diyagram ve generation durumunu içerir. Yükleme simülasyo
 güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
 başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
+Bilimsel zaman serileri türetilmiş veri oldukları için JSON'a eklenmez; yüklenen
+workspace durumları her mod için yeni bir analiz başlangıç örneği oluşturur.
 
 1D çalışma alanında oturum yöneticisi ayrıca `Save 1D Experiment Profile` ve
 `Browse 1D Experiment Profiles` seçeneklerini gösterir. Bir profil mevcut rule,

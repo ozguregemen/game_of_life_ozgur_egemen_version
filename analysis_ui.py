@@ -1,0 +1,441 @@
+"""Pygame scientific dashboard for live metrics and Elementary CA comparison."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+import pygame
+
+from scientific_analysis import (
+    AnalysisSample,
+    AnalysisSeries,
+    ElementaryComparisonRunner,
+    ElementaryRuleComparison,
+)
+
+
+@dataclass(frozen=True)
+class AnalysisPanelServices:
+    """Drawing resources and application callbacks for the analysis panel."""
+
+    screen: Callable[[], pygame.Surface]
+    window_size: Callable[[], tuple[int, int]]
+    content_width: Callable[[], int]
+    theme: Callable[[], dict[str, tuple[int, int, int]]]
+    large_font: Callable[[], pygame.font.Font]
+    small_font: Callable[[], pygame.font.Font]
+    tiny_font: Callable[[], pygame.font.Font]
+    live_series: Callable[[], AnalysisSeries]
+    current_generation: Callable[[], int]
+    comparison_rules: Callable[[], tuple[int, ...]]
+    current_rule: Callable[[], int]
+    set_status: Callable[[str, float], None]
+
+
+class ScientificAnalysisPanel:
+    """Display live scientific time series and reproducible 1D comparisons."""
+
+    def __init__(
+        self,
+        services: AnalysisPanelServices,
+        comparison_runner: ElementaryComparisonRunner,
+    ) -> None:
+        self.services = services
+        self.comparison_runner = comparison_runner
+        self.active = False
+        self.tab = "live"
+        self.comparison_results: list[ElementaryRuleComparison] | None = None
+        self.comparison_error = ""
+
+    def toggle(self) -> None:
+        self.active = not self.active
+        if self.active and self.tab == "comparison":
+            self.request_comparison()
+
+    def close(self) -> None:
+        self.active = False
+
+    def request_comparison(self) -> None:
+        rules = self.services.comparison_rules()
+        if self.comparison_runner.request(rules, generations=160):
+            self.comparison_results = None
+            self.comparison_error = ""
+
+    def update(self) -> None:
+        """Collect a completed background comparison without blocking Pygame."""
+        try:
+            results = self.comparison_runner.poll()
+        except Exception as exc:  # The dashboard must not stop the simulation.
+            self.comparison_error = str(exc)
+            self.services.set_status(f"Rule comparison failed: {exc}", 4.0)
+            return
+        if results is not None:
+            self.comparison_results = results
+
+    def geometry(
+        self,
+    ) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect, pygame.Rect]:
+        width, height = self.services.window_size()
+        content_width = self.services.content_width()
+        modal = pygame.Rect(
+            0,
+            0,
+            max(320, min(980, content_width - 30)),
+            max(360, min(620, height - 40)),
+        )
+        modal.center = (content_width // 2, height // 2)
+        tab_width = min(170, (modal.width - 100) // 2)
+        live_tab = pygame.Rect(modal.x + 18, modal.y + 47, tab_width, 28)
+        comparison_tab = pygame.Rect(live_tab.right + 8, live_tab.y, tab_width, 28)
+        close_button = pygame.Rect(modal.right - 42, modal.y + 12, 28, 25)
+        return modal, live_tab, comparison_tab, close_button
+
+    def handle_event(self, event: pygame.event.Event) -> bool:
+        if not self.active:
+            return False
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_ESCAPE, pygame.K_i):
+                self.close()
+                return True
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            modal, live_tab, comparison_tab, close_button = self.geometry()
+            if close_button.collidepoint(event.pos) or not modal.collidepoint(event.pos):
+                self.close()
+            elif live_tab.collidepoint(event.pos):
+                self.tab = "live"
+            elif comparison_tab.collidepoint(event.pos):
+                self.tab = "comparison"
+                self.request_comparison()
+            return True
+        return event.type in (
+            pygame.MOUSEMOTION,
+            pygame.MOUSEBUTTONUP,
+            pygame.MOUSEWHEEL,
+        )
+
+    def draw(self) -> None:
+        if not self.active:
+            return
+        self.update()
+        modal, live_tab, comparison_tab, close_button = self.geometry()
+        screen = self.services.screen()
+        theme = self.services.theme()
+
+        shadow = pygame.Surface((modal.width + 12, modal.height + 12), pygame.SRCALPHA)
+        shadow.fill((0, 0, 0, 100))
+        screen.blit(shadow, (modal.x + 5, modal.y + 5))
+        pygame.draw.rect(screen, theme["info_bar"], modal, border_radius=10)
+        pygame.draw.rect(screen, theme["text"], modal, 2, border_radius=10)
+        title = self.services.large_font().render(
+            "Scientific Analysis",
+            True,
+            theme["text"],
+        )
+        screen.blit(title, (modal.x + 18, modal.y + 12))
+
+        self._draw_tab(live_tab, "Live Metrics", self.tab == "live")
+        self._draw_tab(
+            comparison_tab,
+            "1D Rule Comparison",
+            self.tab == "comparison",
+        )
+        pygame.draw.rect(screen, theme["button"], close_button, border_radius=4)
+        pygame.draw.rect(screen, theme["text"], close_button, 1, border_radius=4)
+        close_text = self.services.small_font().render("×", True, theme["text"])
+        screen.blit(close_text, close_text.get_rect(center=close_button.center))
+
+        content = pygame.Rect(
+            modal.x + 16,
+            live_tab.bottom + 9,
+            modal.width - 32,
+            modal.bottom - live_tab.bottom - 23,
+        )
+        if self.tab == "comparison":
+            self._draw_comparison(content)
+        else:
+            self._draw_live(content)
+
+    def _draw_tab(self, rect: pygame.Rect, label: str, active: bool) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        color = theme["button_hover"] if active else theme["button"]
+        pygame.draw.rect(screen, color, rect, border_radius=4)
+        border = (70, 170, 255) if active else theme["grid"]
+        pygame.draw.rect(screen, border, rect, 2 if active else 1, border_radius=4)
+        text = self.services.tiny_font().render(label, True, theme["button_text"])
+        screen.blit(text, text.get_rect(center=rect.center))
+
+    def _draw_live(self, content: pygame.Rect) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        series = self.services.live_series()
+        current_generation = self.services.current_generation()
+        matching_indices = [
+            index
+            for index, sample in enumerate(series.samples)
+            if sample.generation == current_generation
+        ]
+        displayed_samples = (
+            series.samples[: matching_indices[-1] + 1]
+            if matching_indices
+            else series.samples
+        )
+        latest = displayed_samples[-1] if displayed_samples else None
+        if latest is None:
+            message = self.services.small_font().render(
+                "No measurements are available yet.", True, theme["text"]
+            )
+            screen.blit(message, message.get_rect(center=content.center))
+            return
+
+        summary_height = 53
+        summary_rect = pygame.Rect(content.x, content.y, content.width, summary_height)
+        pygame.draw.rect(screen, theme["stats_bar"], summary_rect, border_radius=6)
+        heading = (
+            f"{series.title}  ·  Generation {latest.generation}  ·  "
+            f"Samples {len(displayed_samples)}/{len(series.samples)}"
+        )
+        screen.blit(
+            self.services.small_font().render(heading, True, theme["text"]),
+            (summary_rect.x + 10, summary_rect.y + 6),
+        )
+        if series.period is None:
+            behavior = "Period: not detected  ·  Stabilization: not detected"
+        else:
+            behavior = (
+                f"Period: {series.period}"
+                f"{' (stable)' if series.period == 1 else ''}  ·  "
+                f"Stabilization generation: {series.stabilization_generation}"
+            )
+        screen.blit(
+            self.services.tiny_font().render(behavior, True, theme["text"]),
+            (summary_rect.x + 10, summary_rect.y + 31),
+        )
+
+        graph_area = pygame.Rect(
+            content.x,
+            summary_rect.bottom + 8,
+            content.width,
+            content.bottom - summary_rect.bottom - 8,
+        )
+        gap = 8
+        chart_width = (graph_area.width - gap) // 2
+        chart_height = (graph_area.height - gap) // 2
+        charts = (
+            (
+                pygame.Rect(graph_area.x, graph_area.y, chart_width, chart_height),
+                series.population_label,
+                "population",
+                (80, 195, 255),
+                None,
+            ),
+            (
+                pygame.Rect(
+                    graph_area.x + chart_width + gap,
+                    graph_area.y,
+                    chart_width,
+                    chart_height,
+                ),
+                "Density (%)",
+                "density",
+                (90, 220, 130),
+                100.0,
+            ),
+            (
+                pygame.Rect(
+                    graph_area.x,
+                    graph_area.y + chart_height + gap,
+                    chart_width,
+                    chart_height,
+                ),
+                "Normalized entropy",
+                "entropy",
+                (225, 175, 65),
+                1.0,
+            ),
+            (
+                pygame.Rect(
+                    graph_area.x + chart_width + gap,
+                    graph_area.y + chart_height + gap,
+                    chart_width,
+                    chart_height,
+                ),
+                "Change rate (%)",
+                "change_rate",
+                (235, 100, 145),
+                100.0,
+            ),
+        )
+        for rect, label, attribute, color, fixed_max in charts:
+            self._draw_graph(
+                rect,
+                label,
+                displayed_samples,
+                attribute,
+                color,
+                fixed_max,
+            )
+
+    def _draw_graph(
+        self,
+        rect: pygame.Rect,
+        label: str,
+        samples: list[AnalysisSample],
+        attribute: str,
+        color: tuple[int, int, int],
+        fixed_max: float | None,
+    ) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        pygame.draw.rect(screen, theme["stats_bar"], rect, border_radius=6)
+        pygame.draw.rect(screen, theme["grid"], rect, 1, border_radius=6)
+        latest_value = float(getattr(samples[-1], attribute))
+        display_value = (
+            f"{latest_value:.0f}"
+            if attribute == "population"
+            else f"{latest_value:.3f}"
+            if attribute == "entropy"
+            else f"{latest_value:.2f}"
+        )
+        heading = self.services.tiny_font().render(
+            f"{label}: {display_value}",
+            True,
+            theme["text"],
+        )
+        screen.blit(heading, (rect.x + 7, rect.y + 5))
+        plot = pygame.Rect(rect.x + 32, rect.y + 24, rect.width - 40, rect.height - 42)
+        if plot.width < 2 or plot.height < 2:
+            return
+        for division in range(3):
+            y = plot.y + round(division * plot.height / 2)
+            pygame.draw.line(screen, theme["grid"], (plot.x, y), (plot.right, y), 1)
+
+        values = [float(getattr(sample, attribute)) for sample in samples]
+        maximum = fixed_max if fixed_max is not None else max(1.0, max(values) * 1.08)
+        point_count = min(len(samples), max(2, plot.width))
+        if len(samples) == 1:
+            indices = [0]
+        else:
+            indices = [
+                round(index * (len(samples) - 1) / (point_count - 1))
+                for index in range(point_count)
+            ]
+        points = [
+            (
+                plot.x
+                + round(position * plot.width / max(1, len(indices) - 1)),
+                plot.bottom
+                - round(min(maximum, values[index]) * plot.height / maximum),
+            )
+            for position, index in enumerate(indices)
+        ]
+        if len(points) > 1:
+            pygame.draw.lines(screen, color, False, points, 2)
+        else:
+            pygame.draw.circle(screen, color, points[0], 3)
+        first_generation = samples[0].generation
+        last_generation = samples[-1].generation
+        axis = self.services.tiny_font()
+        screen.blit(
+            axis.render(str(first_generation), True, theme["text"]),
+            (plot.x, plot.bottom + 2),
+        )
+        last_text = axis.render(str(last_generation), True, theme["text"])
+        screen.blit(last_text, (plot.right - last_text.get_width(), plot.bottom + 2))
+
+    def _draw_comparison(self, content: pygame.Rect) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        note = (
+            "Canonical single-center seed · 160 generations · "
+            "equal 321-cell infinite-background window"
+        )
+        screen.blit(
+            self.services.tiny_font().render(note, True, theme["text"]),
+            (content.x + 4, content.y + 2),
+        )
+        if self.comparison_error:
+            error = self.services.small_font().render(
+                f"Comparison failed: {self.comparison_error}",
+                True,
+                (245, 95, 95),
+            )
+            screen.blit(error, error.get_rect(center=content.center))
+            return
+        if self.comparison_results is None:
+            dots = "." * ((pygame.time.get_ticks() // 350) % 4)
+            loading = self.services.small_font().render(
+                f"Computing comparable rule experiments{dots}",
+                True,
+                theme["text"],
+            )
+            screen.blit(loading, loading.get_rect(center=content.center))
+            return
+
+        table = pygame.Rect(content.x, content.y + 27, content.width, content.height - 27)
+        columns = (
+            ("Rule", 0.09),
+            ("Avg pop", 0.15),
+            ("Final", 0.12),
+            ("Avg density", 0.18),
+            ("Entropy", 0.14),
+            ("Change", 0.14),
+            ("Period @ gen", 0.18),
+        )
+        positions: list[tuple[int, int]] = []
+        cursor = table.x
+        for _, fraction in columns:
+            width = round(table.width * fraction)
+            positions.append((cursor, width))
+            cursor += width
+        header_height = 29
+        pygame.draw.rect(
+            screen,
+            theme["button"],
+            (table.x, table.y, table.width, header_height),
+            border_radius=5,
+        )
+        for (label, _), (x, width) in zip(columns, positions):
+            rendered = self.services.tiny_font().render(label, True, theme["text"])
+            screen.blit(rendered, rendered.get_rect(center=(x + width // 2, table.y + 14)))
+
+        row_height = max(34, min(58, (table.height - header_height) // max(1, len(self.comparison_results))))
+        current_rule = self.services.current_rule()
+        max_density = max(
+            1.0,
+            max(result.mean_density for result in self.comparison_results),
+        )
+        for index, result in enumerate(self.comparison_results):
+            y = table.y + header_height + index * row_height
+            row = pygame.Rect(table.x, y, table.width, row_height - 2)
+            background = theme["button"] if index % 2 == 0 else theme["stats_bar"]
+            pygame.draw.rect(screen, background, row, border_radius=3)
+            if result.rule == current_rule:
+                pygame.draw.rect(screen, (225, 175, 65), row, 2, border_radius=3)
+            density_column_x, density_column_width = positions[3]
+            bar = pygame.Rect(
+                density_column_x + 4,
+                row.centery + 7,
+                round((density_column_width - 8) * result.mean_density / max_density),
+                4,
+            )
+            pygame.draw.rect(screen, (90, 220, 130), bar, border_radius=2)
+            period_label = (
+                "—"
+                if result.period is None
+                else f"{result.period} @ {result.stabilization_generation}"
+            )
+            values = (
+                str(result.rule),
+                f"{result.mean_population:.1f}",
+                str(result.final_population),
+                f"{result.mean_density:.2f}%",
+                f"{result.mean_entropy:.3f}",
+                f"{result.mean_change_rate:.2f}%",
+                period_label,
+            )
+            for value, (x, width) in zip(values, positions):
+                rendered = self.services.tiny_font().render(value, True, theme["text"])
+                screen.blit(rendered, rendered.get_rect(center=(x + width // 2, row.centery - 4)))

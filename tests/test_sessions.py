@@ -139,6 +139,16 @@ class ApplicationSessionTests(unittest.TestCase):
                 for binding in life.two_d_timelines.values()
             )
         )
+        self.assertEqual(
+            life.analysis_registry.get("1d:elementary").summary.sample_count,
+            1,
+        )
+        self.assertTrue(
+            all(
+                life.analysis_registry.get(f"2d:{mode}").summary.sample_count == 1
+                for mode in life.SIMULATION_MODES
+            )
+        )
         self.assertFalse(life.simulation_active)
 
     def test_invalid_session_does_not_partially_mutate_live_state(self) -> None:

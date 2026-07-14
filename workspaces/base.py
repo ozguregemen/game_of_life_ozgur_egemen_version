@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 import pygame
 
+from scientific_analysis import StateObservation
 from themes import Menu
 from timeline_history import TimelineStatus
 
@@ -68,6 +69,10 @@ class WorkspaceController(ABC):
     @abstractmethod
     def reset_history(self) -> None:
         """Discard timeline frames and checkpoint the current state."""
+
+    @abstractmethod
+    def analysis_observation(self) -> StateObservation:
+        """Return normalized state for scientific measurement."""
 
     @abstractmethod
     def clear(self) -> None:

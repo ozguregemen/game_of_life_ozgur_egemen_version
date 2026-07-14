@@ -6,6 +6,7 @@ from typing import Any, Mapping
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 import life
+from scientific_analysis import StateObservation
 from themes import Menu
 from timeline_history import TimelineStatus
 from workspaces.base import (
@@ -58,6 +59,16 @@ class StubController(WorkspaceController):
 
     def reset_history(self) -> None:
         pass
+
+    def analysis_observation(self) -> StateObservation:
+        return StateObservation(
+            key="stub",
+            title="Stub",
+            generation=0,
+            values=(0,),
+            state_count=2,
+            active_states=(1,),
+        )
 
     def clear(self) -> None:
         pass

@@ -7,6 +7,7 @@ from typing import Any, Callable, Mapping
 
 import pygame
 
+from scientific_analysis import StateObservation
 from themes import Menu
 from timeline_history import TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
@@ -26,6 +27,7 @@ class TwoDimensionalControllerCallbacks:
     sync_history: Callable[[], bool]
     history_status: Callable[[], TimelineStatus]
     reset_history: Callable[[], None]
+    analysis_observation: Callable[[], StateObservation]
     clear: Callable[[], None]
     randomize: Callable[[float], None]
     snapshot: Callable[[], dict[str, Any]]
@@ -88,6 +90,9 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
 
     def reset_history(self) -> None:
         self.callbacks.reset_history()
+
+    def analysis_observation(self) -> StateObservation:
+        return self.callbacks.analysis_observation()
 
     def clear(self) -> None:
         self.callbacks.clear()

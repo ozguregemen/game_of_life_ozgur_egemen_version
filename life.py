@@ -11,6 +11,7 @@ os.environ["SDL_VIDEO_CENTERED"] = "1"
 
 import pygame
 
+from analysis_ui import AnalysisPanelServices, ScientificAnalysisPanel
 from brians_brain import (
     DYING,
     FIRING,
@@ -42,6 +43,7 @@ from elementary_ca import (
     BOUNDARY_WRAP,
     DEFAULT_RULE as ECA_DEFAULT_RULE,
     DEFAULT_WIDTH as ECA_WIDTH,
+    RULE_PRESETS as ECA_RULE_PRESETS,
     single_cell_seed as single_eca_seed,
 )
 from immigration import (
@@ -93,6 +95,12 @@ from session_storage import (
     validate_session_document,
 )
 from session_ui import SessionMenu, SessionMenuServices
+from scientific_analysis import (
+    AnalysisSeries,
+    ElementaryComparisonRunner,
+    ScientificAnalysisRegistry,
+    StateObservation,
+)
 from themes import THEMES, Menu
 from timeline_history import TimelineBinding, TimelineStatus
 from timeline_ui import TimelinePanel, TimelinePanelServices
@@ -229,6 +237,8 @@ single_step_requested = False
 speed = 10
 generation = 0
 two_d_timelines: dict[str, TimelineBinding] = {}
+analysis_registry = ScientificAnalysisRegistry(max_samples=TIMELINE_MAX_FRAMES)
+comparison_runner = ElementaryComparisonRunner()
 
 show_grid = True
 show_heatmap = False
@@ -427,7 +437,10 @@ def _seek_2d_generation(target_generation: int) -> bool:
 
 
 def _sync_2d_history() -> bool:
-    return two_d_timelines[simulation_mode].sync()
+    recorded = two_d_timelines[simulation_mode].sync()
+    if recorded:
+        analysis_registry.observe(_analysis_observation_2d(simulation_mode))
+    return recorded
 
 
 def _two_d_history_status() -> TimelineStatus:
@@ -436,6 +449,7 @@ def _two_d_history_status() -> TimelineStatus:
 
 def _reset_2d_history() -> None:
     two_d_timelines[simulation_mode].reset()
+    analysis_registry.reset(_analysis_observation_2d(simulation_mode))
 
 
 def step_back() -> None:
@@ -1440,6 +1454,8 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
     mode_menu_active = False
     dimension_menu_active = False
     session_manager.close()
+    if "analysis_panel" in globals():
+        analysis_panel.close()
     drawing = False
     drawing_history_pending = False
     main_menu.theme = current_theme
@@ -1758,6 +1774,111 @@ def _generation_for_2d_mode(mode: str) -> int:
     }[mode]
 
 
+def _analysis_observation_2d(mode: str) -> StateObservation:
+    """Normalize one 2D mode without treating ages as distinct cell states."""
+    title = MODE_BY_KEY[mode].name
+    if mode == "life":
+        values = tuple(1 if cell > 0 else 0 for row in grid for cell in row)
+        return StateObservation(
+            key="2d:life",
+            title=title,
+            generation=generation,
+            values=values,
+            state_count=2,
+            active_states=(1,),
+            population_label="Live cells",
+            experiment_context=current_rule,
+        )
+    if mode == "immigration":
+        values = tuple(
+            1 if cell > 0 else 2 if cell < 0 else 0
+            for row in immigration_grid
+            for cell in row
+        )
+        return StateObservation(
+            key="2d:immigration",
+            title=title,
+            generation=immigration_generation,
+            values=values,
+            state_count=3,
+            active_states=(1, 2),
+            population_label="Population",
+            experiment_context="B3/S23",
+        )
+    if mode == "brians_brain":
+        return StateObservation(
+            key="2d:brians_brain",
+            title=title,
+            generation=brain_generation,
+            values=tuple(cell for row in brain_grid for cell in row),
+            state_count=3,
+            active_states=(FIRING, DYING),
+            population_label="Active cells",
+            experiment_context="Brian's Brain",
+        )
+    if mode == "langtons_ant":
+        return StateObservation(
+            key="2d:langtons_ant",
+            title=title,
+            generation=ant_generation,
+            values=tuple(cell for row in ant_grid for cell in row),
+            state_count=2,
+            active_states=(ANT_BLACK,),
+            population_label="Black cells",
+            experiment_context="RL finite",
+            signature_context=(
+                ant_state.row,
+                ant_state.col,
+                ant_state.direction,
+                ant_state.active,
+            ),
+        )
+    if mode == "wireworld":
+        return StateObservation(
+            key="2d:wireworld",
+            title=title,
+            generation=wireworld_generation,
+            values=tuple(cell for row in wireworld_grid for cell in row),
+            state_count=4,
+            active_states=(ELECTRON_HEAD, ELECTRON_TAIL, CONDUCTOR),
+            population_label="Occupied cells",
+            experiment_context="Wireworld",
+        )
+    if mode == "cyclic_automaton":
+        return StateObservation(
+            key="2d:cyclic_automaton",
+            title=title,
+            generation=cyclic_generation,
+            values=tuple(cell for row in cyclic_grid for cell in row),
+            state_count=CYCLIC_STATE_COUNT,
+            active_states=tuple(range(1, CYCLIC_STATE_COUNT)),
+            population_label="Non-zero phase",
+            experiment_context=(CYCLIC_STATE_COUNT, cyclic_threshold),
+        )
+    raise ValueError(f"Unknown 2D analysis mode: {mode}")
+
+
+def active_analysis_series() -> AnalysisSeries:
+    """Return the live series belonging to the active workspace."""
+    observation = active_workspace().controller.analysis_observation()
+    series = analysis_registry.get(observation.key)
+    if series is None:
+        series = analysis_registry.reset(observation)
+    return series
+
+
+def elementary_comparison_rules() -> tuple[int, ...]:
+    """Compare the current Elementary rule with the featured reference set."""
+    current = elementary_controller.state.rule
+    return tuple(dict.fromkeys((current, *ECA_RULE_PRESETS)))
+
+
+def toggle_analysis_panel() -> None:
+    """Open or close the non-blocking scientific dashboard."""
+    timeline_panel.stop()
+    analysis_panel.toggle()
+
+
 def _snapshot_2d_mode(mode: str) -> dict[str, Any]:
     """Capture one mode's simulation state for its independent timeline."""
     if mode == "life":
@@ -1981,6 +2102,8 @@ def _restore_2d(snapshot: Mapping[str, Any]) -> None:
         invalidate_render_cache(mode)
     for binding in two_d_timelines.values():
         binding.reset()
+    for mode in SIMULATION_MODES:
+        analysis_registry.reset(_analysis_observation_2d(mode))
 
 
 def _apply_2d_generation() -> bool:
@@ -3291,6 +3414,7 @@ def draw_scene() -> None:
     renderer.draw_decorations()
     draw_status()
     renderer.draw_modal()
+    analysis_panel.draw()
     draw_dimension_menu()
     draw_session_menu()
 
@@ -3396,6 +3520,11 @@ def _build_2d_sidebar(menu: Menu) -> None:
         accent=(80, 190, 145),
     )
     menu.add_button(
+        "Scientific Analysis (I)",
+        toggle_analysis_panel,
+        accent=(90, 195, 255),
+    )
+    menu.add_button(
         "Select Mode (M)",
         activate_mode_menu,
         accent=definition.accent,
@@ -3405,7 +3534,6 @@ def _build_2d_sidebar(menu: Menu) -> None:
 
     menu.add_button("Clear Grid", clear_grid)
     menu.add_button("Randomize", randomize_grid)
-    menu.add_button("Step Back", step_back)
     menu.add_button(
         f"Grid Lines: {'On' if show_grid else 'Off'}",
         toggle_grid_lines,
@@ -3572,6 +3700,8 @@ def handle_keydown(event: pygame.event.Event) -> None:
         load_quick_session()
     elif event.key == pygame.K_p:
         activate_session_menu()
+    elif event.key == pygame.K_i:
+        toggle_analysis_panel()
     elif event.key == pygame.K_j:
         timeline_panel.stop()
         request_timeline_generation()
@@ -3666,6 +3796,9 @@ def handle_event(event: pygame.event.Event) -> bool:
 
     if dimension_menu_active:
         handle_dimension_menu_event(event)
+        return True
+
+    if analysis_panel.handle_event(event):
         return True
 
     controller = active_workspace().controller
@@ -3771,6 +3904,7 @@ elementary_services = ElementaryWorkspaceServices(
     rebuild_sidebar=lambda: rebuild_context_menu(),
     activate_dimension_menu=activate_dimension_menu,
     activate_session_menu=activate_session_menu,
+    activate_analysis=toggle_analysis_panel,
     toggle_grid=toggle_grid_lines,
     cycle_theme=cycle_theme,
     cached_stats=cached_mode_stats,
@@ -3783,6 +3917,8 @@ elementary_services = ElementaryWorkspaceServices(
     stats_height=STATS_HEIGHT,
     grid_top_margin=GRID_TOP_MARGIN,
     timeline_max_frames=TIMELINE_MAX_FRAMES,
+    record_analysis=analysis_registry.observe,
+    reset_analysis=analysis_registry.reset,
 )
 elementary_controller = ElementaryWorkspaceController(
     elementary_services,
@@ -3805,6 +3941,7 @@ two_dimensional_controller = TwoDimensionalWorkspaceController(
         sync_history=_sync_2d_history,
         history_status=_two_d_history_status,
         reset_history=_reset_2d_history,
+        analysis_observation=lambda: _analysis_observation_2d(simulation_mode),
         clear=_clear_2d_grid,
         randomize=_randomize_2d_grid,
         snapshot=_snapshot_2d,
@@ -3838,6 +3975,28 @@ workspace_registry.register(
 )
 workspace_registry.register(WorkspaceBundle(elementary_controller, elementary_renderer))
 
+analysis_registry.reset(elementary_controller.analysis_observation())
+for analysis_mode in SIMULATION_MODES:
+    analysis_registry.reset(_analysis_observation_2d(analysis_mode))
+
+analysis_panel = ScientificAnalysisPanel(
+    AnalysisPanelServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        content_width=lambda: max(1, WINDOW_WIDTH - MENU_WIDTH),
+        theme=lambda: THEMES[current_theme],
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+        live_series=active_analysis_series,
+        current_generation=lambda: active_workspace().controller.generation,
+        comparison_rules=elementary_comparison_rules,
+        current_rule=lambda: elementary_controller.state.rule,
+        set_status=set_status,
+    ),
+    comparison_runner,
+)
+
 timeline_panel = TimelinePanel(
     TimelinePanelServices(
         rect=timeline_rect,
@@ -3856,7 +4015,7 @@ main_menu = setup_menu()
 rebuild_context_menu()
 center_view()
 set_status(
-    "D: dimension · M: 2D mode · P: sessions · J: generation · Space: run/pause",
+    "D: dimension · M: mode · I: analysis · J: generation · Space: run/pause",
     5.0,
 )
 
@@ -3914,6 +4073,7 @@ def run() -> None:
 
     finally:
         pattern_scan_executor.shutdown(wait=True, cancel_futures=True)
+        comparison_runner.shutdown()
         pygame.quit()
 
 

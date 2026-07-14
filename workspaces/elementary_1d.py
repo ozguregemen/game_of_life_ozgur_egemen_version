@@ -26,6 +26,7 @@ from elementary_ca import (
     step_elementary,
     validate_rule,
 )
+from scientific_analysis import StateObservation
 from themes import THEMES, Menu
 from timeline_history import TimelineBinding, TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
@@ -79,6 +80,7 @@ class ElementaryWorkspaceServices:
     rebuild_sidebar: Callable[[], None]
     activate_dimension_menu: Callable[[], None]
     activate_session_menu: Callable[[], None]
+    activate_analysis: Callable[[], None]
     toggle_grid: Callable[[], None]
     cycle_theme: Callable[[], None]
     cached_stats: Callable[[str, Callable[[], dict[str, Any]]], dict[str, Any]]
@@ -91,6 +93,8 @@ class ElementaryWorkspaceServices:
     stats_height: int
     grid_top_margin: int
     timeline_max_frames: int
+    record_analysis: Callable[[StateObservation], None]
+    reset_analysis: Callable[[StateObservation], None]
 
 
 class ElementaryWorkspaceController(WorkspaceController):
@@ -216,13 +220,35 @@ class ElementaryWorkspaceController(WorkspaceController):
         return moved
 
     def sync_history(self) -> bool:
-        return self.timeline.sync()
+        recorded = self.timeline.sync()
+        if recorded:
+            self.services.record_analysis(self.analysis_observation())
+        return recorded
 
     def history_status(self) -> TimelineStatus:
         return self.timeline.status()
 
     def reset_history(self) -> None:
         self.timeline.reset()
+        self.services.reset_analysis(self.analysis_observation())
+
+    def analysis_observation(self) -> StateObservation:
+        return StateObservation(
+            key="1d:elementary",
+            title=f"Elementary Rule {self.state.rule}",
+            generation=self.state.generation,
+            values=tuple(self.state.rows[-1]),
+            state_count=2,
+            active_states=(1,),
+            population_label="Active cells",
+            alignment="center",
+            experiment_context=(
+                self.state.rule,
+                self.state.boundary,
+                self.state.rule_change_reset,
+            ),
+            signature_context=self.state.background,
+        )
 
     def advance(self) -> bool:
         current_row = self.state.rows[-1]
@@ -680,6 +706,11 @@ class ElementaryWorkspaceController(WorkspaceController):
             accent=(80, 190, 145),
         )
         menu.add_button(
+            "Scientific Analysis (I)",
+            self.services.activate_analysis,
+            accent=(90, 195, 255),
+        )
+        menu.add_button(
             "Browse Rules 0–255 (E)",
             self.open_rule_menu,
             accent=accent,
@@ -714,7 +745,6 @@ class ElementaryWorkspaceController(WorkspaceController):
         menu.add_button("Seed: Single Center", self.use_single_seed)
         menu.add_button("Seed: Random", self.randomize)
         menu.add_button("Clear Diagram", self.clear)
-        menu.add_button("Step Back", self.step_back)
         menu.add_button(
             f"Grid Lines: {'On' if self.services.show_grid() else 'Off'}",
             self.services.toggle_grid,
