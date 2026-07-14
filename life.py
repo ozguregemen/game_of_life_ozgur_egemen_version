@@ -94,6 +94,8 @@ from session_storage import (
 )
 from session_ui import SessionMenu, SessionMenuServices
 from themes import THEMES, Menu
+from timeline_history import TimelineBinding, TimelineStatus
+from timeline_ui import TimelinePanel, TimelinePanelServices
 from visuals import CellTransition, get_enhanced_age_color
 from wireworld import (
     CONDUCTOR,
@@ -131,6 +133,7 @@ WINDOW_HEIGHT = 720
 MENU_WIDTH = 260
 INFO_BAR_HEIGHT = 42
 STATS_HEIGHT = 68
+TIMELINE_HEIGHT = 58
 GRID_TOP_MARGIN = 8
 
 ROWS = 48
@@ -139,7 +142,7 @@ CELL_SIZE = 12
 MIN_CELL_SIZE = 5
 MAX_CELL_SIZE = 40
 
-HISTORY_LIMIT = 50
+TIMELINE_MAX_FRAMES = 2000
 TRAIL_MAX = 10
 PATTERN_ROW_HEIGHT = 30
 
@@ -179,35 +182,29 @@ def make_float_grid() -> list[list[float]]:
 grid = make_grid()
 trail_grid = make_grid()
 activity_grid = make_float_grid()
-grid_history: list[tuple[list[list[int]], list[list[int]], list[list[float]], int]] = []
 
 immigration_grid: ImmigrationGrid = make_immigration_grid(ROWS, COLS)
-immigration_history: list[tuple[ImmigrationGrid, int]] = []
 immigration_generation = 0
 active_species = SPECIES_A
 immigration_rng = random.Random()
 
 brain_grid: BrainGrid = make_brain_grid(ROWS, COLS)
-brain_history: list[tuple[BrainGrid, int]] = []
 brain_generation = 0
 brain_rng = random.Random()
 
 ant_grid: AntGrid = make_ant_grid(ROWS, COLS)
 ant_state = centered_ant(ROWS, COLS)
-ant_history: list[tuple[AntGrid, AntState, int, AntStepReport]] = []
 ant_generation = 0
 ant_last_report = AntStepReport()
 ant_rng = random.Random()
 
 wireworld_grid: WireworldGrid = make_wireworld_grid(ROWS, COLS)
-wireworld_history: list[tuple[WireworldGrid, int]] = []
 wireworld_generation = 0
 wireworld_brush = CONDUCTOR
 wireworld_rng = random.Random()
 WIRE_BRUSH_STATES = (CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL)
 
 cyclic_grid: CyclicGrid = make_cyclic_grid(ROWS, COLS)
-cyclic_history: list[tuple[CyclicGrid, int]] = []
 cyclic_generation = 0
 cyclic_brush = 1
 cyclic_threshold = CYCLIC_DEFAULT_THRESHOLD
@@ -231,6 +228,7 @@ simulation_active = False
 single_step_requested = False
 speed = 10
 generation = 0
+two_d_timelines: dict[str, TimelineBinding] = {}
 
 show_grid = True
 show_heatmap = False
@@ -285,8 +283,21 @@ main_menu: Menu
 
 def grid_viewport() -> pygame.Rect:
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
-    height = max(1, WINDOW_HEIGHT - INFO_BAR_HEIGHT - STATS_HEIGHT)
+    height = max(
+        1,
+        WINDOW_HEIGHT - INFO_BAR_HEIGHT - STATS_HEIGHT - TIMELINE_HEIGHT,
+    )
     return pygame.Rect(0, INFO_BAR_HEIGHT, width, height)
+
+
+def timeline_rect() -> pygame.Rect:
+    """Return the shared history strip between the workspace and stats bar."""
+    return pygame.Rect(
+        0,
+        WINDOW_HEIGHT - STATS_HEIGHT - TIMELINE_HEIGHT,
+        max(1, WINDOW_WIDTH - MENU_WIDTH),
+        TIMELINE_HEIGHT,
+    )
 
 
 def grid_origin() -> tuple[int, int]:
@@ -372,45 +383,7 @@ def mark_stats_dirty() -> None:
 
 
 def _save_2d_history() -> None:
-    if simulation_mode == "cyclic_automaton":
-        if len(cyclic_history) >= HISTORY_LIMIT:
-            cyclic_history.pop(0)
-        cyclic_history.append((deepcopy(cyclic_grid), cyclic_generation))
-        return
-
-    if simulation_mode == "wireworld":
-        if len(wireworld_history) >= HISTORY_LIMIT:
-            wireworld_history.pop(0)
-        wireworld_history.append((deepcopy(wireworld_grid), wireworld_generation))
-        return
-
-    if simulation_mode == "langtons_ant":
-        if len(ant_history) >= HISTORY_LIMIT:
-            ant_history.pop(0)
-        ant_history.append(
-            (deepcopy(ant_grid), ant_state, ant_generation, ant_last_report)
-        )
-        return
-
-    if simulation_mode == "brians_brain":
-        if len(brain_history) >= HISTORY_LIMIT:
-            brain_history.pop(0)
-        brain_history.append((deepcopy(brain_grid), brain_generation))
-        return
-
-    if simulation_mode == "immigration":
-        if len(immigration_history) >= HISTORY_LIMIT:
-            immigration_history.pop(0)
-        immigration_history.append(
-            (deepcopy(immigration_grid), immigration_generation)
-        )
-        return
-
-    if len(grid_history) >= HISTORY_LIMIT:
-        grid_history.pop(0)
-    grid_history.append(
-        (deepcopy(grid), deepcopy(trail_grid), deepcopy(activity_grid), generation)
-    )
+    two_d_timelines[simulation_mode].prepare_change()
 
 
 def save_history() -> None:
@@ -419,76 +392,84 @@ def save_history() -> None:
 
 
 def _step_back_2d() -> None:
-    global grid, trail_grid, activity_grid, generation, simulation_active
-    global immigration_grid, immigration_generation
-    global brain_grid, brain_generation
-    global ant_grid, ant_state, ant_generation, ant_last_report
-    global wireworld_grid, wireworld_generation
-    global cyclic_grid, cyclic_generation
-    if simulation_mode == "cyclic_automaton":
-        if not cyclic_history:
-            set_status("No earlier Cyclic Automaton generation is available.")
-            return
-        cyclic_grid, cyclic_generation = cyclic_history.pop()
-        simulation_active = False
-        invalidate_render_cache("cyclic_automaton")
-        set_status(f"Returned to Cyclic generation {cyclic_generation}.")
-        return
+    _step_2d_history(-1)
 
-    if simulation_mode == "wireworld":
-        if not wireworld_history:
-            set_status("No earlier Wireworld generation is available.")
-            return
-        wireworld_grid, wireworld_generation = wireworld_history.pop()
-        simulation_active = False
-        invalidate_render_cache("wireworld")
-        set_status(f"Returned to Wireworld generation {wireworld_generation}.")
-        return
 
-    if simulation_mode == "langtons_ant":
-        if not ant_history:
-            set_status("No earlier Langton's Ant step is available.")
-            return
-        ant_grid, ant_state, ant_generation, ant_last_report = ant_history.pop()
-        simulation_active = False
-        invalidate_render_cache("langtons_ant")
-        set_status(f"Returned to Langton step {ant_generation}.")
-        return
+def _step_forward_2d() -> None:
+    _step_2d_history(1)
 
-    if simulation_mode == "brians_brain":
-        if not brain_history:
-            set_status("No earlier Brian's Brain generation is available.")
-            return
-        brain_grid, brain_generation = brain_history.pop()
-        simulation_active = False
-        invalidate_render_cache("brians_brain")
-        set_status(f"Returned to Brian's Brain generation {brain_generation}.")
-        return
 
-    if simulation_mode == "immigration":
-        if not immigration_history:
-            set_status("No earlier Immigration generation is available.")
-            return
-        immigration_grid, immigration_generation = immigration_history.pop()
-        simulation_active = False
-        invalidate_render_cache("immigration")
-        set_status(f"Returned to Immigration generation {immigration_generation}.")
+def _step_2d_history(amount: int) -> None:
+    global simulation_active
+    if not two_d_timelines[simulation_mode].step(amount):
+        direction = "earlier" if amount < 0 else "later"
+        mode_name = MODE_BY_KEY[simulation_mode].name
+        set_status(f"No {direction} {mode_name} state is available.")
         return
-
-    if not grid_history:
-        set_status("No earlier generation is available.")
-        return
-
-    grid, trail_grid, activity_grid, generation = grid_history.pop()
     simulation_active = False
-    cell_transition.transitions.clear()
-    mark_stats_dirty()
-    set_status(f"Returned to generation {generation}.")
+    set_status(f"Timeline generation: {_two_d_generation()}.")
+
+
+def _seek_2d_history(index: int) -> bool:
+    global simulation_active
+    moved = two_d_timelines[simulation_mode].seek(index)
+    if moved:
+        simulation_active = False
+    return moved
+
+
+def _seek_2d_generation(target_generation: int) -> bool:
+    global simulation_active
+    moved = two_d_timelines[simulation_mode].seek_generation(target_generation)
+    if moved:
+        simulation_active = False
+    return moved
+
+
+def _sync_2d_history() -> bool:
+    return two_d_timelines[simulation_mode].sync()
+
+
+def _two_d_history_status() -> TimelineStatus:
+    return two_d_timelines[simulation_mode].status()
+
+
+def _reset_2d_history() -> None:
+    two_d_timelines[simulation_mode].reset()
 
 
 def step_back() -> None:
     """Undo through the active workspace controller."""
     active_workspace().controller.step_back()
+
+
+def step_forward() -> None:
+    """Move forward through the active workspace's existing timeline."""
+    active_workspace().controller.step_forward()
+
+
+def active_history_status() -> TimelineStatus:
+    """Return timeline information for the active workspace."""
+    return active_workspace().controller.history_status()
+
+
+def seek_active_history(index: int) -> bool:
+    """Move the active workspace to an exact chronological frame."""
+    return active_workspace().controller.seek_history(index)
+
+
+def seek_active_generation(target_generation: int) -> bool:
+    """Move to the most recent exact generation label in active history."""
+    return active_workspace().controller.seek_generation(target_generation)
+
+
+def step_active_timeline(amount: int) -> bool:
+    """Move a relative number of frames and report whether movement occurred."""
+    status = active_history_status()
+    target = status.cursor + amount
+    if not 0 <= target < status.frame_count:
+        return False
+    return seek_active_history(target)
 
 
 def normalize_pattern_cell(value: int, mode: str) -> int:
@@ -783,6 +764,7 @@ def place_selected_pattern(row: int, col: int) -> None:
             ant_state = next_ant
         if simulation_mode != "life":
             invalidate_render_cache()
+        _sync_2d_history()
 
     selected_pattern = None
     if changes or ant_changed:
@@ -991,11 +973,13 @@ def cycle_rule() -> None:
             message = "Langton's Ant uses right-on-white and left-on-black."
         set_status(message)
         return
+    save_history()
     rules = list(RULES)
     current_rule = rules[(rules.index(current_rule) + 1) % len(rules)]
     show_rule_overlay_until = time.time() + 2.5
     mark_stats_dirty()
     rebuild_context_menu()
+    _sync_2d_history()
 
 
 def set_active_dimension(dimension: str) -> bool:
@@ -1009,6 +993,10 @@ def set_active_dimension(dimension: str) -> bool:
         set_status(f"{definition.name}: {definition.status_hint}", 4.0)
         return False
 
+    if "timeline_panel" in globals():
+        timeline_panel.stop()
+
+    active_workspace().controller.sync_history()
     active_workspace().controller.deactivate()
     active_dimension = dimension
     simulation_active = False
@@ -1081,7 +1069,10 @@ def set_simulation_mode(mode: str) -> None:
     global single_step_requested, dimension_menu_active
     global selected_pattern, pattern_menu_active, mode_menu_active, drawing
     definition = get_mode_definition(mode)
+    if "timeline_panel" in globals():
+        timeline_panel.stop()
     if "workspace_registry" in globals():
+        active_workspace().controller.sync_history()
         active_workspace().controller.deactivate()
     active_dimension = "2d"
     simulation_mode = mode
@@ -1134,8 +1125,10 @@ def toggle_active_species() -> None:
         set_status(f"Wireworld brush: {WIRE_STATE_NAMES[wireworld_brush]}")
         return
     if simulation_mode == "langtons_ant":
+        save_history()
         ant_state = rotate_ant_clockwise(ant_state)
         invalidate_render_cache("langtons_ant")
+        _sync_2d_history()
         direction = DIRECTION_NAMES[ant_state.direction]
         set_status(f"Ant direction: {direction}")
         return
@@ -1187,8 +1180,10 @@ def cycle_cyclic_threshold() -> None:
     global cyclic_threshold
     if simulation_mode != "cyclic_automaton":
         return
+    save_history()
     cyclic_threshold = cyclic_threshold % CYCLIC_MAX_THRESHOLD + 1
     rebuild_context_menu()
+    _sync_2d_history()
     set_status(f"Cyclic contact threshold: {cyclic_threshold}.")
 
 
@@ -1203,6 +1198,7 @@ def place_ant(row: int, col: int) -> None:
     ant_state = AntState(row, col, ant_state.direction)
     simulation_active = False
     invalidate_render_cache("langtons_ant")
+    _sync_2d_history()
     set_status(f"Ant moved to ({row}, {col}).")
 
 
@@ -1317,6 +1313,25 @@ def get_text_input(prompt_text: str) -> str | None:
 
 def get_pattern_name() -> str | None:
     return get_text_input("Pattern name")
+
+
+def request_timeline_generation() -> None:
+    """Prompt for and seek an exact generation in the active timeline."""
+    value = get_text_input("Go to generation")
+    if value is None:
+        return
+    try:
+        target = int(value)
+    except ValueError:
+        set_status("Generation must be a non-negative integer.", 3.0)
+        return
+    if target < 0:
+        set_status("Generation must be a non-negative integer.", 3.0)
+        return
+    if seek_active_generation(target):
+        set_status(f"Moved to generation {target}.")
+    else:
+        set_status(f"Generation {target} is not present in this timeline.", 3.0)
 
 
 def save_current_pattern() -> None:
@@ -1728,6 +1743,11 @@ GENERATION_HANDLERS = {
 
 def _two_d_generation() -> int:
     """Return the counter belonging to the selected 2D mode."""
+    return _generation_for_2d_mode(simulation_mode)
+
+
+def _generation_for_2d_mode(mode: str) -> int:
+    """Return a generation counter without changing the selected mode."""
     return {
         "life": generation,
         "immigration": immigration_generation,
@@ -1735,7 +1755,108 @@ def _two_d_generation() -> int:
         "langtons_ant": ant_generation,
         "wireworld": wireworld_generation,
         "cyclic_automaton": cyclic_generation,
-    }[simulation_mode]
+    }[mode]
+
+
+def _snapshot_2d_mode(mode: str) -> dict[str, Any]:
+    """Capture one mode's simulation state for its independent timeline."""
+    if mode == "life":
+        return {
+            "rule": current_rule,
+            "grid": deepcopy(grid),
+            "trail": deepcopy(trail_grid),
+            "activity": deepcopy(activity_grid),
+            "generation": generation,
+        }
+    if mode == "immigration":
+        return {
+            "grid": deepcopy(immigration_grid),
+            "generation": immigration_generation,
+        }
+    if mode == "brians_brain":
+        return {"grid": deepcopy(brain_grid), "generation": brain_generation}
+    if mode == "langtons_ant":
+        return {
+            "grid": deepcopy(ant_grid),
+            "generation": ant_generation,
+            "ant": {
+                "row": ant_state.row,
+                "col": ant_state.col,
+                "direction": ant_state.direction,
+                "active": ant_state.active,
+            },
+            "report": {
+                "turned": ant_last_report.turned,
+                "painted_black": ant_last_report.painted_black,
+                "exited": ant_last_report.exited,
+            },
+        }
+    if mode == "wireworld":
+        return {"grid": deepcopy(wireworld_grid), "generation": wireworld_generation}
+    if mode == "cyclic_automaton":
+        return {
+            "grid": deepcopy(cyclic_grid),
+            "generation": cyclic_generation,
+            "threshold": cyclic_threshold,
+        }
+    raise ValueError(f"Unknown 2D mode: {mode}")
+
+
+def _restore_2d_mode(mode: str, snapshot: Mapping[str, Any]) -> None:
+    """Restore one trusted internal timeline frame and preserve its camera."""
+    global grid, trail_grid, activity_grid, generation, current_rule
+    global immigration_grid, immigration_generation
+    global brain_grid, brain_generation
+    global ant_grid, ant_state, ant_generation, ant_last_report
+    global wireworld_grid, wireworld_generation
+    global cyclic_grid, cyclic_generation, cyclic_threshold
+
+    if mode == "life":
+        current_rule = str(snapshot["rule"])
+        grid = deepcopy(snapshot["grid"])
+        trail_grid = deepcopy(snapshot["trail"])
+        activity_grid = deepcopy(snapshot["activity"])
+        generation = int(snapshot["generation"])
+        cell_transition.transitions.clear()
+        mark_stats_dirty()
+    elif mode == "immigration":
+        immigration_grid = deepcopy(snapshot["grid"])
+        immigration_generation = int(snapshot["generation"])
+        invalidate_render_cache(mode)
+    elif mode == "brians_brain":
+        brain_grid = deepcopy(snapshot["grid"])
+        brain_generation = int(snapshot["generation"])
+        invalidate_render_cache(mode)
+    elif mode == "langtons_ant":
+        ant_grid = deepcopy(snapshot["grid"])
+        ant_generation = int(snapshot["generation"])
+        saved_ant = snapshot["ant"]
+        ant_state = AntState(
+            int(saved_ant["row"]),
+            int(saved_ant["col"]),
+            int(saved_ant["direction"]),
+            bool(saved_ant["active"]),
+        )
+        report = snapshot["report"]
+        ant_last_report = AntStepReport(
+            str(report["turned"]),
+            bool(report["painted_black"]),
+            bool(report["exited"]),
+        )
+        invalidate_render_cache(mode)
+    elif mode == "wireworld":
+        wireworld_grid = deepcopy(snapshot["grid"])
+        wireworld_generation = int(snapshot["generation"])
+        invalidate_render_cache(mode)
+    elif mode == "cyclic_automaton":
+        cyclic_grid = deepcopy(snapshot["grid"])
+        cyclic_generation = int(snapshot["generation"])
+        cyclic_threshold = int(snapshot["threshold"])
+        invalidate_render_cache(mode)
+    else:
+        raise ValueError(f"Unknown 2D mode: {mode}")
+    if "main_menu" in globals():
+        rebuild_context_menu()
 
 
 def _snapshot_2d() -> dict[str, Any]:
@@ -1850,12 +1971,6 @@ def _restore_2d(snapshot: Mapping[str, Any]) -> None:
     cyclic_brush = int(cyclic_state["brush"])
     cyclic_threshold = int(cyclic_state["threshold"])
 
-    grid_history.clear()
-    immigration_history.clear()
-    brain_history.clear()
-    ant_history.clear()
-    wireworld_history.clear()
-    cyclic_history.clear()
     cell_transition.transitions.clear()
     recognized_pattern_cache = {}
     pattern_scan_generation = -1
@@ -1864,10 +1979,15 @@ def _restore_2d(snapshot: Mapping[str, Any]) -> None:
     stats_dirty = True
     for mode in SIMULATION_MODES:
         invalidate_render_cache(mode)
+    for binding in two_d_timelines.values():
+        binding.reset()
 
 
 def _apply_2d_generation() -> bool:
-    return GENERATION_HANDLERS[simulation_mode]()
+    advanced = GENERATION_HANDLERS[simulation_mode]()
+    if advanced:
+        _sync_2d_history()
+    return advanced
 
 
 def apply_generation() -> bool:
@@ -2560,6 +2680,8 @@ def _draw_2d_stats() -> None:
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
+    history = _two_d_history_status()
+    timeline_label = f"{history.cursor + 1}/{history.frame_count}"
 
     if simulation_mode == "cyclic_automaton":
         stats = cached_mode_stats(
@@ -2570,8 +2692,8 @@ def _draw_2d_stats() -> None:
             f"Colors present: {stats['diversity']}/{CYCLIC_STATE_COUNT}   "
             f"Dominant: {stats['dominant_state']} "
             f"({stats['dominant_share']:.1f}%)   "
-            f"Normalized entropy: {stats['entropy']:.3f}   History: "
-            f"{len(cyclic_history)}/{HISTORY_LIMIT}"
+            f"Normalized entropy: {stats['entropy']:.3f}   Timeline: "
+            f"{timeline_label}"
         )
         second_line = (
             f"Color s advances to (s + 1) mod {CYCLIC_STATE_COUNT} when at least "
@@ -2589,8 +2711,7 @@ def _draw_2d_stats() -> None:
         first_line = (
             f"Heads: {stats['heads']}   Tails: {stats['tails']}   "
             f"Conductors: {stats['conductors']}   Empty: {stats['empty']}   "
-            f"Density: {stats['density']:.2f}%   History: "
-            f"{len(wireworld_history)}/{HISTORY_LIMIT}"
+            f"Density: {stats['density']:.2f}%   Timeline: {timeline_label}"
         )
         second_line = (
             "Head -> Tail   ·   Tail -> Conductor   ·   "
@@ -2608,8 +2729,7 @@ def _draw_2d_stats() -> None:
         first_line = (
             f"Black: {stats['black']}   White: {stats['white']}   "
             f"Black density: {stats['black_density']:.2f}%   "
-            f"Ant: ({ant_state.row}, {ant_state.col})   History: "
-            f"{len(ant_history)}/{HISTORY_LIMIT}"
+            f"Ant: ({ant_state.row}, {ant_state.col})   Timeline: {timeline_label}"
         )
         action = (
             f"Last action: turn {ant_last_report.turned}"
@@ -2632,8 +2752,7 @@ def _draw_2d_stats() -> None:
         first_line = (
             f"Active: {stats['active']}   Firing: {stats['firing']}   "
             f"Dying: {stats['dying']}   Off: {stats['off']}   "
-            f"Density: {stats['density']:.2f}%   History: "
-            f"{len(brain_history)}/{HISTORY_LIMIT}"
+            f"Density: {stats['density']:.2f}%   Timeline: {timeline_label}"
         )
         second_line = (
             "Off + exactly 2 firing neighbors → Firing   ·   "
@@ -2651,7 +2770,7 @@ def _draw_2d_stats() -> None:
         first_line = (
             f"Population: {stats['population']}   Species A: {stats['species_a']}   "
             f"Species B: {stats['species_b']}   Density: {stats['density']:.2f}%   "
-            f"History: {len(immigration_history)}/{HISTORY_LIMIT}"
+            f"Timeline: {timeline_label}"
         )
         second_line = (
             f"A share: {stats['balance']:.1f}%   B share: "
@@ -2666,7 +2785,7 @@ def _draw_2d_stats() -> None:
 
     first_line = (
         f"Alive: {stats['alive']}   Dead: {stats['dead']}   "
-        f"Density: {stats['density']:.2f}%   History: {len(grid_history)}/{HISTORY_LIMIT}"
+        f"Density: {stats['density']:.2f}%   Timeline: {timeline_label}"
     )
     screen.blit(
         small_font.render(first_line, True, theme["text"]),
@@ -3085,7 +3204,7 @@ def draw_status() -> None:
     box = text_surface.get_rect()
     box.inflate_ip(20, 14)
     box.centerx = max(1, WINDOW_WIDTH - MENU_WIDTH) // 2
-    box.bottom = WINDOW_HEIGHT - STATS_HEIGHT - 10
+    box.bottom = timeline_rect().top - 8
 
     overlay = pygame.Surface(box.size, pygame.SRCALPHA)
     overlay.fill((20, 25, 35, 220))
@@ -3167,6 +3286,7 @@ def draw_scene() -> None:
     draw_active_grid()
     renderer = active_workspace().renderer
     renderer.draw_bars()
+    timeline_panel.draw()
     main_menu.draw(screen, tiny_font)
     renderer.draw_decorations()
     draw_status()
@@ -3452,7 +3572,11 @@ def handle_keydown(event: pygame.event.Event) -> None:
         load_quick_session()
     elif event.key == pygame.K_p:
         activate_session_menu()
+    elif event.key == pygame.K_j:
+        timeline_panel.stop()
+        request_timeline_generation()
     elif event.key == pygame.K_SPACE:
+        timeline_panel.stop()
         simulation_active = not simulation_active
     elif event.key == pygame.K_d:
         activate_dimension_menu()
@@ -3513,6 +3637,7 @@ def _handle_2d_pointer_event(event: pygame.event.Event) -> bool:
     if event.type == pygame.MOUSEBUTTONUP:
         drawing = False
         drawing_history_pending = False
+        _sync_2d_history()
         return True
 
     if event.type == pygame.MOUSEMOTION:
@@ -3546,6 +3671,9 @@ def handle_event(event: pygame.event.Event) -> bool:
     controller = active_workspace().controller
     if controller.overlay_active:
         controller.handle_overlay_event(event)
+        return True
+
+    if timeline_panel.handle_event(event):
         return True
 
     if main_menu.handle_event(event):
@@ -3618,6 +3746,16 @@ session_manager = SessionMenu(
     )
 )
 
+two_d_timelines = {
+    mode: TimelineBinding(
+        lambda mode=mode: _snapshot_2d_mode(mode),
+        lambda snapshot, mode=mode: _restore_2d_mode(mode, snapshot),
+        lambda mode=mode: _generation_for_2d_mode(mode),
+        max_frames=TIMELINE_MAX_FRAMES,
+    )
+    for mode in SIMULATION_MODES
+}
+
 elementary_state = ElementaryWorkspaceState()
 elementary_services = ElementaryWorkspaceServices(
     viewport=grid_viewport,
@@ -3644,7 +3782,7 @@ elementary_services = ElementaryWorkspaceServices(
     info_bar_height=INFO_BAR_HEIGHT,
     stats_height=STATS_HEIGHT,
     grid_top_margin=GRID_TOP_MARGIN,
-    history_limit=HISTORY_LIMIT,
+    timeline_max_frames=TIMELINE_MAX_FRAMES,
 )
 elementary_controller = ElementaryWorkspaceController(
     elementary_services,
@@ -3661,6 +3799,12 @@ two_dimensional_controller = TwoDimensionalWorkspaceController(
         advance=_apply_2d_generation,
         save_history=_save_2d_history,
         step_back=_step_back_2d,
+        step_forward=_step_forward_2d,
+        seek_history=_seek_2d_history,
+        seek_generation=_seek_2d_generation,
+        sync_history=_sync_2d_history,
+        history_status=_two_d_history_status,
+        reset_history=_reset_2d_history,
         clear=_clear_2d_grid,
         randomize=_randomize_2d_grid,
         snapshot=_snapshot_2d,
@@ -3694,10 +3838,27 @@ workspace_registry.register(
 )
 workspace_registry.register(WorkspaceBundle(elementary_controller, elementary_renderer))
 
+timeline_panel = TimelinePanel(
+    TimelinePanelServices(
+        rect=timeline_rect,
+        screen=lambda: screen,
+        theme=lambda: THEMES[current_theme],
+        tiny_font=lambda: tiny_font,
+        status=active_history_status,
+        seek=seek_active_history,
+        step=step_active_timeline,
+        request_generation=request_timeline_generation,
+        pause_simulation=lambda: _set_simulation_running(False),
+    )
+)
+
 main_menu = setup_menu()
 rebuild_context_menu()
 center_view()
-set_status("D: dimension · M: 2D mode · P: sessions · Space: run/pause", 5.0)
+set_status(
+    "D: dimension · M: 2D mode · P: sessions · J: generation · Space: run/pause",
+    5.0,
+)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""
@@ -3718,6 +3879,15 @@ def run() -> None:
 
             if not running:
                 break
+
+            if (
+                not session_manager.active
+                and not dimension_menu_active
+                and not active_workspace().controller.overlay_active
+            ):
+                timeline_panel.update(delta_time)
+            else:
+                timeline_panel.stop()
 
             if simulation_active:
                 simulation_accumulator += delta_time

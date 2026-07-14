@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping
 import pygame
 
 from themes import Menu
+from timeline_history import TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
 
 
@@ -19,6 +20,12 @@ class TwoDimensionalControllerCallbacks:
     advance: Callable[[], bool]
     save_history: Callable[[], None]
     step_back: Callable[[], None]
+    step_forward: Callable[[], None]
+    seek_history: Callable[[int], bool]
+    seek_generation: Callable[[int], bool]
+    sync_history: Callable[[], bool]
+    history_status: Callable[[], TimelineStatus]
+    reset_history: Callable[[], None]
     clear: Callable[[], None]
     randomize: Callable[[float], None]
     snapshot: Callable[[], dict[str, Any]]
@@ -64,11 +71,31 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
     def step_back(self) -> None:
         self.callbacks.step_back()
 
+    def step_forward(self) -> None:
+        self.callbacks.step_forward()
+
+    def seek_history(self, index: int) -> bool:
+        return self.callbacks.seek_history(index)
+
+    def seek_generation(self, generation: int) -> bool:
+        return self.callbacks.seek_generation(generation)
+
+    def sync_history(self) -> bool:
+        return self.callbacks.sync_history()
+
+    def history_status(self) -> TimelineStatus:
+        return self.callbacks.history_status()
+
+    def reset_history(self) -> None:
+        self.callbacks.reset_history()
+
     def clear(self) -> None:
         self.callbacks.clear()
+        self.callbacks.sync_history()
 
     def randomize(self, density: float = 0.20) -> None:
         self.callbacks.randomize(density)
+        self.callbacks.sync_history()
 
     def snapshot(self) -> dict[str, Any]:
         return self.callbacks.snapshot()

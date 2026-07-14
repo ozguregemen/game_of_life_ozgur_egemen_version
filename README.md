@@ -30,7 +30,8 @@ satırı yine `import pygame` olarak kalır.
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
-- 50 nesillik geri alma geçmişi
+- Sürüklenebilir generation timeline, doğrudan nesle gitme ve ileri/geri oynatma
+- Tam grid kopyaları yerine periyodik checkpoint + hücre/satır deltaları kullanan geçmiş
 - Her oyun moduna özel, durumları koruyan hazır ve kullanıcı patternleri
 - Pattern döndürme, yatay/dikey çevirme ve yerleştirme önizlemesi
 - Otomatik pattern recognition
@@ -58,6 +59,7 @@ satırı yine `import pygame` olarak kalır.
 | T | Immigration türünü, Wireworld fırçasını veya Cyclic renk fırçasını değiştir; Langton karıncasını döndür |
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
+| J | Timeline içinde kayıtlı bir generation'a doğrudan git |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
 | H | Heatmap aç/kapat |
@@ -106,6 +108,8 @@ satırı yine `import pygame` olarak kalır.
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `session_storage.py`: Sürümlü oturum/profile şeması, doğrulama ve güvenli JSON depolama
 - `session_ui.py`: Oturum kataloğu, 1D profil menüsü ve modal input/render akışı
+- `timeline_history.py`: Checkpoint/delta geçmiş motoru, dallanma ve doğrudan frame/nesil erişimi
+- `timeline_ui.py`: Sürüklenebilir ortak timeline, ileri/geri oynatma ve checkpoint göstergeleri
 - `themes.py`: Temalar ve menü bileşenleri
 - `visuals.py`: Animasyon ve görsel yardımcılar
 - `life3d.py`: Deneysel 3D slice sürümü
@@ -126,6 +130,23 @@ davranışları değiştirilmeden bir workspace adaptörüyle aynı akışa bağ
 ayrım, ileride 3D workspace eklenirken ana event loop'a yeni boyut dalları ekleme
 zorunluluğunu ortadan kaldırır.
 
+## Timeline ve gelişmiş geçmiş
+
+Viewport ile istatistik çubuğu arasındaki ortak timeline, 1D çalışma alanı ile altı
+2D modun tamamında aynı kontrolleri sunar. Tek oklar bir frame geri/ileri gider;
+çift oklar kayıtlı geçmişi iki yönde oynatır, orta düğme oynatmayı durdurur. Çubuk
+sürüklenerek herhangi bir kronolojik frame'e gidilebilir. Dikey işaretler tam-state
+checkpoint'lerini gösterir. `J` veya `Go to gen`, timeline içinde bulunan kesin bir
+generation numarasına gider; clear/randomize nedeniyle aynı numara birden çok kez
+bulunuyorsa en yeni kayıt seçilir.
+
+Geçmiş motoru her adımda bütün grid'i kopyalamaz. Periyodik checkpoint'ler arasında
+yalnızca değişen hücreler; 1D diyagramlarda ise eklenen/kısaltılan satırlar delta
+olarak tutulur. Bir checkpoint'e atlamak en yakın önceki checkpoint'ten sınırlı sayıda
+delta uygulayarak gerçekleştirilir. Varsayılan üst sınır workspace/mod başına 2000
+frame'dir. Kullanıcı geçmişteki bir frame'e dönüp düzenleme yaparsa yalnız o
+workspace'in ileri dalı atılır; diğer boyut ve 2D mod timeline'ları korunur.
+
 ## Test
 
 ```powershell
@@ -137,6 +158,7 @@ pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
 depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Automaton
 kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod registry ve
 bağlamsal menü davranışını; workspace registry/controller/renderer sözleşmesini;
+checkpoint/delta round-trip, timeline dallanması, ileri/geri gezinme ve sürükleme davranışını;
 oturum/profile güvenliğini ve tam-state round-trip davranışını; altı 2D mod ile 1D
 alanın SDL dummy video driver ile başlangıcını kapsar.
 
@@ -151,7 +173,8 @@ Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünü
 seçenekleri, 1D/2D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
 generation değerleri, Life rule'u, moda özel fırçalar ve 1D Elementary CA'nın rule,
 boundary, seed, tam diyagram ve generation durumunu içerir. Yükleme simülasyonu
-güvenli biçimde duraklatır ve undo geçmişlerini temizler. Dosya tamamen doğrulanmadan
+güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
+başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
 
 1D çalışma alanında oturum yöneticisi ayrıca `Save 1D Experiment Profile` ve

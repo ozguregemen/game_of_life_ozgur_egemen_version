@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import pygame
 
 from themes import Menu
+from timeline_history import TimelineStatus
 
 
 class WorkspaceController(ABC):
@@ -38,11 +39,35 @@ class WorkspaceController(ABC):
 
     @abstractmethod
     def save_history(self) -> None:
-        """Store the current state before a mutation."""
+        """Mark the beginning of a logical state mutation."""
 
     @abstractmethod
     def step_back(self) -> None:
-        """Restore the most recent history entry when available."""
+        """Restore the preceding timeline frame when available."""
+
+    @abstractmethod
+    def step_forward(self) -> None:
+        """Restore the next existing history frame when available."""
+
+    @abstractmethod
+    def seek_history(self, index: int) -> bool:
+        """Restore a chronological history frame by its timeline index."""
+
+    @abstractmethod
+    def seek_generation(self, generation: int) -> bool:
+        """Restore the most recent frame with an exact generation label."""
+
+    @abstractmethod
+    def sync_history(self) -> bool:
+        """Commit a pending workspace mutation to its timeline."""
+
+    @abstractmethod
+    def history_status(self) -> TimelineStatus:
+        """Return timeline navigation and storage information."""
+
+    @abstractmethod
+    def reset_history(self) -> None:
+        """Discard timeline frames and checkpoint the current state."""
 
     @abstractmethod
     def clear(self) -> None:

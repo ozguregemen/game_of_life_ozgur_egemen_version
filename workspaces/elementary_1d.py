@@ -27,6 +27,7 @@ from elementary_ca import (
     validate_rule,
 )
 from themes import THEMES, Menu
+from timeline_history import TimelineBinding, TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
 
 ECA_RENDER_KEY = "elementary_ca"
@@ -34,16 +35,6 @@ ECA_EDITOR_HEIGHT = 44
 ECA_DIAGRAM_LIMIT = 512
 ECA_MIN_CELL_SIZE = 2
 ECA_MAX_CELL_SIZE = 16
-
-ElementarySnapshot = tuple[
-    list[ElementaryRow],
-    int,
-    int,
-    str,
-    int,
-    ElementaryRow,
-]
-
 
 @dataclass
 class ElementaryWorkspaceState:
@@ -60,7 +51,6 @@ class ElementaryWorkspaceState:
         default_factory=lambda: [single_cell_seed(DEFAULT_WIDTH)]
     )
     generation: int = 0
-    undo_history: list[ElementarySnapshot] = field(default_factory=list)
     rng: random.Random = field(default_factory=random.Random)
     cell_size: int = 6
     view_offset_x: int = 0
@@ -100,7 +90,7 @@ class ElementaryWorkspaceServices:
     info_bar_height: int
     stats_height: int
     grid_top_margin: int
-    history_limit: int
+    timeline_max_frames: int
 
 
 class ElementaryWorkspaceController(WorkspaceController):
@@ -115,6 +105,12 @@ class ElementaryWorkspaceController(WorkspaceController):
     ) -> None:
         self.services = services
         self.state = state if state is not None else ElementaryWorkspaceState()
+        self.timeline = TimelineBinding(
+            self._timeline_snapshot,
+            self._restore_timeline_snapshot,
+            lambda: self.state.generation,
+            max_frames=self.services.timeline_max_frames,
+        )
 
     def _status(self, message: str, duration: float = 2.0) -> None:
         self.services.set_status(message, duration)
@@ -191,36 +187,42 @@ class ElementaryWorkspaceController(WorkspaceController):
         self._status(f"Elementary cell size: {self.state.cell_size}px")
 
     def save_history(self) -> None:
-        if len(self.state.undo_history) >= self.services.history_limit:
-            self.state.undo_history.pop(0)
-        self.state.undo_history.append(
-            (
-                list(self.state.rows),
-                self.state.generation,
-                self.state.rule,
-                self.state.boundary,
-                self.state.background,
-                self.state.seed,
-            )
-        )
+        self.timeline.prepare_change()
 
     def step_back(self) -> None:
-        if not self.state.undo_history:
+        if not self.timeline.step(-1):
             self._status("No earlier elementary CA state is available.")
             return
-        (
-            self.state.rows,
-            self.state.generation,
-            self.state.rule,
-            self.state.boundary,
-            self.state.background,
-            self.state.seed,
-        ) = self.state.undo_history.pop()
         self.services.set_running(False)
-        self.follow_latest()
-        self._invalidate()
-        self.services.rebuild_sidebar()
         self._status(f"Returned to elementary generation {self.state.generation}.")
+
+    def step_forward(self) -> None:
+        if not self.timeline.step(1):
+            self._status("No later elementary CA state is available.")
+            return
+        self.services.set_running(False)
+        self._status(f"Advanced to elementary generation {self.state.generation}.")
+
+    def seek_history(self, index: int) -> bool:
+        moved = self.timeline.seek(index)
+        if moved:
+            self.services.set_running(False)
+        return moved
+
+    def seek_generation(self, generation: int) -> bool:
+        moved = self.timeline.seek_generation(generation)
+        if moved:
+            self.services.set_running(False)
+        return moved
+
+    def sync_history(self) -> bool:
+        return self.timeline.sync()
+
+    def history_status(self) -> TimelineStatus:
+        return self.timeline.status()
+
+    def reset_history(self) -> None:
+        self.timeline.reset()
 
     def advance(self) -> bool:
         current_row = self.state.rows[-1]
@@ -259,6 +261,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.state.generation += 1
         self.follow_latest()
         self._invalidate()
+        self.sync_history()
         return True
 
     def reset_seed(self, seed: ElementaryRow, message: str) -> None:
@@ -278,6 +281,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.services.set_running(False)
         self.center_view()
         self._invalidate()
+        self.sync_history()
         self._status(message)
 
     def clear(self) -> None:
@@ -317,6 +321,34 @@ class ElementaryWorkspaceController(WorkspaceController):
             },
         }
 
+    def _timeline_snapshot(self) -> dict[str, Any]:
+        """Capture simulation state without camera or transient controls."""
+        return {
+            "rule": self.state.rule,
+            "boundary": self.state.boundary,
+            "background": self.state.background,
+            "rule_change_reset": self.state.rule_change_reset,
+            "seed": list(self.state.seed),
+            "rows": [list(row) for row in self.state.rows],
+            "generation": self.state.generation,
+        }
+
+    def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        """Restore a trusted frame and keep its latest row visible."""
+        self.state.rule = validate_rule(snapshot["rule"])
+        self.state.boundary = str(snapshot["boundary"])
+        self.state.background = int(snapshot["background"])
+        self.state.rule_change_reset = bool(snapshot["rule_change_reset"])
+        self.state.seed = normalize_row(snapshot["seed"])
+        self.state.rows = [normalize_row(row) for row in snapshot["rows"]]
+        self.state.generation = int(snapshot["generation"])
+        self.state.rule_menu_active = False
+        self.state.drawing = False
+        self.state.stroke_history_pending = False
+        self.follow_latest()
+        self._invalidate()
+        self.services.rebuild_sidebar()
+
     def restore(self, snapshot: Mapping[str, Any]) -> None:
         """Restore a prevalidated complete elementary workspace snapshot."""
         rows = [normalize_row(row) for row in snapshot["rows"]]
@@ -355,13 +387,13 @@ class ElementaryWorkspaceController(WorkspaceController):
         )
         self.state.view_offset_x = int(offset_x)
         self.state.view_offset_y = int(offset_y)
-        self.state.undo_history.clear()
         self.state.rule_menu_active = False
         self.state.rule_menu_input = ""
         self.state.drawing = False
         self.state.stroke_history_pending = False
         self.services.set_running(False)
         self._invalidate()
+        self.reset_history()
 
     def experiment_snapshot(self) -> dict[str, Any]:
         """Return a reusable rule/boundary/current-row experiment setup."""
@@ -399,6 +431,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.center_view()
         self._invalidate()
         self.services.rebuild_sidebar()
+        self.sync_history()
 
     @staticmethod
     def boundary_label(boundary: str) -> str:
@@ -432,6 +465,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.center_view()
         self._invalidate()
         self.services.rebuild_sidebar()
+        self.sync_history()
         self._status(
             f"Rule {self.state.rule} selected; restarted from {restart_label}.",
             4.0,
@@ -450,6 +484,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.set_rule(self.next_featured_rule())
 
     def toggle_rule_change_reset(self) -> None:
+        self.save_history()
         self.state.rule_change_reset = not self.state.rule_change_reset
         self.services.rebuild_sidebar()
         label = (
@@ -457,6 +492,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             if self.state.rule_change_reset
             else "Keep Current Row"
         )
+        self.sync_history()
         self._status(f"Rule-change behavior: {label}.")
 
     def toggle_boundary(self) -> None:
@@ -472,6 +508,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.center_view()
         self._invalidate()
         self.services.rebuild_sidebar()
+        self.sync_history()
         self._status(
             f"Elementary boundary: {self.boundary_label(self.state.boundary)}; "
             "diagram restarted."
@@ -615,6 +652,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         if event.type == pygame.MOUSEBUTTONUP:
             self.state.drawing = False
             self.state.stroke_history_pending = False
+            self.sync_history()
             return True
         if event.type == pygame.MOUSEMOTION:
             if self.state.drawing:
@@ -856,12 +894,13 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             },
         )
         current_width = len(self.state.rows[-1])
+        history = self.controller.history_status()
         first_line = (
             f"Current row: {stats['active']}/{current_width} active   "
             f"Density: {stats['density']:.2f}%   Rows shown: "
             f"{len(self.state.rows)}   Diagram active cells: "
             f"{stats['diagram_active']}   Outside state: {self.state.background}   "
-            f"Undo: {len(self.state.undo_history)}/{self.services.history_limit}"
+            f"Timeline: {history.cursor + 1}/{history.frame_count}"
         )
         outputs = "".join(str(value) for value in rule_bits(self.state.rule))
         second_line = (

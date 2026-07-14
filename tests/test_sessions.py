@@ -128,6 +128,17 @@ class ApplicationSessionTests(unittest.TestCase):
         self.assertEqual(eca.generation, 37)
         self.assertEqual(eca.cell_size, 9)
         self.assertEqual((eca.view_offset_x, eca.view_offset_y), (41, -73))
+        self.assertEqual(
+            eca.generation,
+            life.elementary_controller.history_status().generation,
+        )
+        self.assertEqual(life.elementary_controller.history_status().frame_count, 1)
+        self.assertTrue(
+            all(
+                binding.status().frame_count == 1
+                for binding in life.two_d_timelines.values()
+            )
+        )
         self.assertFalse(life.simulation_active)
 
     def test_invalid_session_does_not_partially_mutate_live_state(self) -> None:

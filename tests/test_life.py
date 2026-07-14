@@ -11,13 +11,23 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import life
 
 
+def reset_mode_timeline(mode: str) -> None:
+    life.two_d_timelines[mode].reset()
+
+
+def timeline_change_count(mode: str) -> int:
+    binding = life.two_d_timelines[mode]
+    binding.sync()
+    return binding.status().frame_count - 1
+
+
 class PatternPlacementTests(unittest.TestCase):
     def setUp(self) -> None:
         life.simulation_mode = "life"
         life.grid = life.make_grid()
         life.trail_grid = life.make_grid()
         life.activity_grid = life.make_float_grid()
-        life.grid_history.clear()
+        reset_mode_timeline("life")
         life.selected_pattern = {
             "name": "Block",
             "pattern": [[1, 1], [1, 1]],
@@ -26,18 +36,19 @@ class PatternPlacementTests(unittest.TestCase):
     def test_out_of_bounds_pattern_is_not_partially_placed(self) -> None:
         life.place_selected_pattern(life.ROWS - 1, life.COLS - 1)
         self.assertFalse(any(cell for row in life.grid for cell in row))
-        self.assertEqual(life.grid_history, [])
+        self.assertEqual(timeline_change_count("life"), 0)
 
     def test_noop_pattern_does_not_add_history(self) -> None:
         for row in (2, 3):
             for col in (2, 3):
                 life.grid[row][col] = 1
+        reset_mode_timeline("life")
         life.place_selected_pattern(2, 2)
-        self.assertEqual(life.grid_history, [])
+        self.assertEqual(timeline_change_count("life"), 0)
 
     def test_changed_pattern_adds_one_history_entry(self) -> None:
         life.place_selected_pattern(2, 2)
-        self.assertEqual(len(life.grid_history), 1)
+        self.assertEqual(timeline_change_count("life"), 1)
 
 
 class ApplicationSmokeTests(unittest.TestCase):
@@ -91,6 +102,7 @@ class DimensionUITests(unittest.TestCase):
         self.eca = life.ElementaryWorkspaceState()
         life.elementary_controller.state = self.eca
         life.elementary_state = self.eca
+        life.elementary_controller.reset_history()
         life.dimension_menu_active = False
         life.mode_menu_active = False
         life.pattern_menu_active = False
@@ -171,11 +183,14 @@ class DimensionUITests(unittest.TestCase):
         self.assertTrue(life.apply_generation())
         self.assertEqual(self.eca.generation, 1)
         self.assertNotEqual(self.eca.rows[-1], seed)
-        self.assertEqual(len(self.eca.undo_history), 1)
+        self.assertEqual(life.elementary_controller.history_status().frame_count, 2)
 
         life.step_back()
         self.assertEqual(self.eca.generation, 0)
         self.assertEqual(self.eca.rows, [seed])
+
+        life.step_forward()
+        self.assertEqual(self.eca.generation, 1)
 
     def test_rule_4_keeps_recording_identical_rows_like_reference_diagram(self) -> None:
         life.set_active_dimension("1d")
@@ -306,6 +321,7 @@ class DimensionUITests(unittest.TestCase):
     def test_infinite_background_state_is_restored_by_step_back(self) -> None:
         life.set_active_dimension("1d")
         self.eca.rule = 1
+        life.elementary_controller.reset_history()
         self.assertTrue(life.apply_generation())
         self.assertEqual(self.eca.background, 1)
         life.step_back()
@@ -324,12 +340,14 @@ class DimensionUITests(unittest.TestCase):
     def test_one_eca_brush_stroke_creates_one_undo_snapshot(self) -> None:
         life.set_active_dimension("1d")
         self.eca.rows = [tuple(0 for _ in range(life.ECA_WIDTH))]
+        life.elementary_controller.reset_history()
         life.drawing_value = 1
         life.drawing_history_pending = True
         life.draw_eca_cell(4)
         life.draw_eca_cell(5)
+        life.elementary_controller.sync_history()
         self.assertEqual(self.eca.rows[-1][4:6], (1, 1))
-        self.assertEqual(len(self.eca.undo_history), 1)
+        self.assertEqual(life.elementary_controller.history_status().frame_count, 2)
 
     def test_elementary_render_reuses_cached_viewport(self) -> None:
         life.set_active_dimension("1d")
@@ -655,10 +673,9 @@ class ImmigrationIntegrationTests(unittest.TestCase):
         life.simulation_mode = "immigration"
         life.simulation_active = False
         life.immigration_grid = life.make_immigration_grid(life.ROWS, life.COLS)
-        life.immigration_history.clear()
-        life.grid_history.clear()
         life.immigration_generation = 0
         life.active_species = life.SPECIES_A
+        reset_mode_timeline("immigration")
 
     def tearDown(self) -> None:
         life.simulation_mode = "life"
@@ -670,12 +687,12 @@ class ImmigrationIntegrationTests(unittest.TestCase):
             life.SPECIES_A,
             life.SPECIES_B,
         ]
+        reset_mode_timeline("immigration")
 
         self.assertTrue(life.apply_generation())
 
         self.assertEqual(life.immigration_generation, 1)
-        self.assertEqual(len(life.immigration_history), 1)
-        self.assertEqual(life.grid_history, [])
+        self.assertEqual(timeline_change_count("immigration"), 1)
 
     def test_mode_switch_preserves_both_grids(self) -> None:
         life.grid = life.make_grid()
@@ -698,7 +715,7 @@ class ImmigrationIntegrationTests(unittest.TestCase):
 
         life.place_selected_pattern(2, 2)
 
-        self.assertEqual(len(life.immigration_history), 1)
+        self.assertEqual(timeline_change_count("immigration"), 1)
         self.assertTrue(
             all(
                 life.immigration_grid[row][col] == life.SPECIES_B
@@ -713,8 +730,8 @@ class BriansBrainIntegrationTests(unittest.TestCase):
         life.simulation_mode = "brians_brain"
         life.simulation_active = False
         life.brain_grid = life.make_brain_grid(life.ROWS, life.COLS)
-        life.brain_history.clear()
         life.brain_generation = 0
+        reset_mode_timeline("brians_brain")
 
     def tearDown(self) -> None:
         life.simulation_mode = "life"
@@ -722,11 +739,12 @@ class BriansBrainIntegrationTests(unittest.TestCase):
 
     def test_generation_uses_separate_brain_history(self) -> None:
         life.brain_grid[5][4:6] = [life.FIRING, life.FIRING]
+        reset_mode_timeline("brians_brain")
 
         self.assertTrue(life.apply_generation())
 
         self.assertEqual(life.brain_generation, 1)
-        self.assertEqual(len(life.brain_history), 1)
+        self.assertEqual(timeline_change_count("brians_brain"), 1)
         self.assertEqual(life.brain_grid[5][4], life.DYING)
 
     def test_pattern_places_firing_cells(self) -> None:
@@ -737,7 +755,7 @@ class BriansBrainIntegrationTests(unittest.TestCase):
 
         life.place_selected_pattern(2, 2)
 
-        self.assertEqual(len(life.brain_history), 1)
+        self.assertEqual(timeline_change_count("brians_brain"), 1)
         self.assertTrue(
             all(
                 life.brain_grid[row][col] == life.FIRING
@@ -753,9 +771,9 @@ class LangtonsAntIntegrationTests(unittest.TestCase):
         life.simulation_active = False
         life.ant_grid = life.make_ant_grid(life.ROWS, life.COLS)
         life.ant_state = life.centered_ant(life.ROWS, life.COLS)
-        life.ant_history.clear()
         life.ant_generation = 0
         life.ant_last_report = life.AntStepReport()
+        reset_mode_timeline("langtons_ant")
 
     def tearDown(self) -> None:
         life.simulation_mode = "life"
@@ -767,7 +785,7 @@ class LangtonsAntIntegrationTests(unittest.TestCase):
         self.assertTrue(life.apply_generation())
 
         self.assertEqual(life.ant_generation, 1)
-        self.assertEqual(len(life.ant_history), 1)
+        self.assertEqual(timeline_change_count("langtons_ant"), 1)
         self.assertEqual(life.ant_grid[original.row][original.col], life.ANT_BLACK)
         self.assertNotEqual(life.ant_state, original)
 
@@ -779,7 +797,7 @@ class LangtonsAntIntegrationTests(unittest.TestCase):
 
         life.place_selected_pattern(2, 2)
 
-        self.assertEqual(len(life.ant_history), 1)
+        self.assertEqual(timeline_change_count("langtons_ant"), 1)
         self.assertTrue(
             all(
                 life.ant_grid[row][col] == life.ANT_BLACK
@@ -795,7 +813,7 @@ class LangtonsAntIntegrationTests(unittest.TestCase):
 
         self.assertEqual((life.ant_state.row, life.ant_state.col), (4, 7))
         self.assertEqual(life.ant_state.direction, original_direction)
-        self.assertEqual(len(life.ant_history), 1)
+        self.assertEqual(timeline_change_count("langtons_ant"), 1)
 
 
 class WireworldIntegrationTests(unittest.TestCase):
@@ -803,9 +821,9 @@ class WireworldIntegrationTests(unittest.TestCase):
         life.simulation_mode = "wireworld"
         life.simulation_active = False
         life.wireworld_grid = life.make_wireworld_grid(life.ROWS, life.COLS)
-        life.wireworld_history.clear()
         life.wireworld_generation = 0
         life.wireworld_brush = life.CONDUCTOR
+        reset_mode_timeline("wireworld")
 
     def tearDown(self) -> None:
         life.simulation_mode = "life"
@@ -817,11 +835,12 @@ class WireworldIntegrationTests(unittest.TestCase):
             life.ELECTRON_HEAD,
             life.CONDUCTOR,
         ]
+        reset_mode_timeline("wireworld")
 
         self.assertTrue(life.apply_generation())
 
         self.assertEqual(life.wireworld_generation, 1)
-        self.assertEqual(len(life.wireworld_history), 1)
+        self.assertEqual(timeline_change_count("wireworld"), 1)
         self.assertEqual(
             life.wireworld_grid[5][4:7],
             [life.CONDUCTOR, life.ELECTRON_TAIL, life.ELECTRON_HEAD],
@@ -835,7 +854,7 @@ class WireworldIntegrationTests(unittest.TestCase):
 
         life.place_selected_pattern(2, 2)
 
-        self.assertEqual(len(life.wireworld_history), 1)
+        self.assertEqual(timeline_change_count("wireworld"), 1)
         self.assertTrue(
             all(
                 life.wireworld_grid[row][col] == life.CONDUCTOR
@@ -857,13 +876,14 @@ class WireworldIntegrationTests(unittest.TestCase):
 
     def test_right_brush_erases_and_adds_one_history_entry(self) -> None:
         life.wireworld_grid[2][2] = life.CONDUCTOR
+        reset_mode_timeline("wireworld")
         life.drawing_value = 0
         life.drawing_history_pending = True
 
         life.draw_cell(2, 2)
 
         self.assertEqual(life.wireworld_grid[2][2], life.WIRE_EMPTY)
-        self.assertEqual(len(life.wireworld_history), 1)
+        self.assertEqual(timeline_change_count("wireworld"), 1)
 
 
 class ModeSpecificPatternIntegrationTests(unittest.TestCase):
@@ -874,18 +894,14 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
         life.flip_h = False
         life.flip_v = False
         life.grid = life.make_grid()
-        life.grid_history.clear()
         life.immigration_grid = life.make_immigration_grid(life.ROWS, life.COLS)
-        life.immigration_history.clear()
         life.brain_grid = life.make_brain_grid(life.ROWS, life.COLS)
-        life.brain_history.clear()
         life.ant_grid = life.make_ant_grid(life.ROWS, life.COLS)
         life.ant_state = life.centered_ant(life.ROWS, life.COLS)
-        life.ant_history.clear()
         life.wireworld_grid = life.make_wireworld_grid(life.ROWS, life.COLS)
-        life.wireworld_history.clear()
         life.cyclic_grid = life.make_cyclic_grid(life.ROWS, life.COLS)
-        life.cyclic_history.clear()
+        for mode in life.SIMULATION_MODES:
+            reset_mode_timeline(mode)
 
     def tearDown(self) -> None:
         life.rotation = 0
@@ -920,7 +936,7 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
             life.wireworld_grid[3][4:8],
             [life.ELECTRON_TAIL, life.ELECTRON_HEAD, life.CONDUCTOR, life.CONDUCTOR],
         )
-        self.assertEqual(len(life.wireworld_history), 1)
+        self.assertEqual(timeline_change_count("wireworld"), 1)
 
     def test_brain_pattern_preserves_dying_cells(self) -> None:
         life.set_simulation_mode("brians_brain")
@@ -929,7 +945,7 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
         life.place_selected_pattern(3, 4)
 
         self.assertEqual(life.brain_grid[4][5:7], [life.DYING, life.DYING])
-        self.assertEqual(len(life.brain_history), 1)
+        self.assertEqual(timeline_change_count("brians_brain"), 1)
 
     def test_immigration_pattern_preserves_both_species(self) -> None:
         life.set_simulation_mode("immigration")
@@ -952,7 +968,7 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
 
         self.assertEqual((life.ant_state.row, life.ant_state.col), (4, 7))
         self.assertEqual(life.DIRECTION_NAMES[life.ant_state.direction], "East")
-        self.assertEqual(len(life.ant_history), 1)
+        self.assertEqual(timeline_change_count("langtons_ant"), 1)
 
     def test_pattern_from_other_mode_is_rejected(self) -> None:
         life.set_simulation_mode("life")
@@ -965,7 +981,7 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
         life.place_selected_pattern(2, 2)
 
         self.assertFalse(any(cell for row in life.grid for cell in row))
-        self.assertEqual(life.grid_history, [])
+        self.assertEqual(timeline_change_count("life"), 0)
 
     def test_cropping_preserves_wireworld_states(self) -> None:
         life.wireworld_grid[2][3:6] = [
@@ -986,13 +1002,14 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
             life.COLS,
             fill_state=7,
         )
+        reset_mode_timeline("cyclic_automaton")
         life.selected_pattern = self.pattern_named("Concentric Color Rings")
 
         life.place_selected_pattern(2, 3)
 
         self.assertEqual(life.cyclic_grid[2][3], 0)
         self.assertEqual(life.cyclic_grid[6][7], 4)
-        self.assertEqual(len(life.cyclic_history), 1)
+        self.assertEqual(timeline_change_count("cyclic_automaton"), 1)
 
     def test_blank_langton_board_can_save_ant_state(self) -> None:
         life.ant_state = life.AntState(6, 9, 3)
@@ -1025,33 +1042,35 @@ class CyclicAutomatonIntegrationTests(unittest.TestCase):
         life.simulation_mode = "cyclic_automaton"
         life.simulation_active = False
         life.cyclic_grid = life.make_cyclic_grid(life.ROWS, life.COLS)
-        life.cyclic_history.clear()
         life.cyclic_generation = 0
         life.cyclic_brush = 1
         life.cyclic_threshold = 1
+        reset_mode_timeline("cyclic_automaton")
 
     def tearDown(self) -> None:
         life.set_simulation_mode("life")
 
     def test_generation_uses_separate_grid_and_history(self) -> None:
         life.cyclic_grid[5][5] = 1
+        reset_mode_timeline("cyclic_automaton")
 
         self.assertTrue(life.apply_generation())
 
         self.assertEqual(life.cyclic_grid[5][4], 1)
         self.assertEqual(life.cyclic_generation, 1)
-        self.assertEqual(len(life.cyclic_history), 1)
+        self.assertEqual(timeline_change_count("cyclic_automaton"), 1)
 
     def test_homogeneous_grid_stops_without_history_entry(self) -> None:
         self.assertFalse(life.apply_generation())
 
         self.assertFalse(life.simulation_active)
         self.assertEqual(life.cyclic_generation, 0)
-        self.assertEqual(life.cyclic_history, [])
+        self.assertEqual(timeline_change_count("cyclic_automaton"), 0)
 
     def test_step_back_restores_previous_cyclic_generation(self) -> None:
         life.cyclic_grid[5][5] = 1
         original = [row[:] for row in life.cyclic_grid]
+        reset_mode_timeline("cyclic_automaton")
         life.apply_generation()
 
         life.step_back()
@@ -1073,13 +1092,201 @@ class CyclicAutomatonIntegrationTests(unittest.TestCase):
 
     def test_right_brush_paints_color_zero(self) -> None:
         life.cyclic_grid[2][2] = 5
+        reset_mode_timeline("cyclic_automaton")
         life.drawing_value = 0
         life.drawing_history_pending = True
 
         life.draw_cell(2, 2)
 
         self.assertEqual(life.cyclic_grid[2][2], 0)
-        self.assertEqual(len(life.cyclic_history), 1)
+        self.assertEqual(timeline_change_count("cyclic_automaton"), 1)
+
+
+class TimelineIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.set_simulation_mode("life")
+        life.current_rule = "conway"
+        life.grid = life.make_grid()
+        life.trail_grid = life.make_grid()
+        life.activity_grid = life.make_float_grid()
+        life.generation = 0
+        life.simulation_active = False
+        life.timeline_panel.stop()
+        life.grid[8][7:10] = [1, 1, 1]
+        reset_mode_timeline("life")
+
+    def tearDown(self) -> None:
+        life.timeline_panel.stop()
+        life.set_simulation_mode("life")
+
+    def test_workspace_can_seek_and_step_forward_after_undo(self) -> None:
+        initial = [row[:] for row in life.grid]
+        self.assertTrue(life.apply_generation())
+        generation_one = [row[:] for row in life.grid]
+        self.assertTrue(life.apply_generation())
+
+        self.assertTrue(life.seek_active_history(0))
+        self.assertEqual(life.grid, initial)
+        self.assertEqual(life.generation, 0)
+        life.step_forward()
+        self.assertEqual(life.grid, generation_one)
+        self.assertEqual(life.generation, 1)
+
+    def test_editing_a_past_frame_discards_only_its_future(self) -> None:
+        self.assertTrue(life.apply_generation())
+        self.assertTrue(life.apply_generation())
+        self.assertTrue(life.seek_active_history(1))
+
+        life.drawing_value = 1
+        life.drawing_history_pending = True
+        life.draw_cell(2, 2)
+        life.two_dimensional_controller.sync_history()
+
+        status = life.active_history_status()
+        self.assertEqual(status.frame_count, 3)
+        self.assertEqual(status.cursor, 2)
+        self.assertFalse(status.can_step_forward)
+        self.assertEqual(life.grid[2][2], 1)
+
+    def test_each_2d_mode_keeps_an_independent_timeline(self) -> None:
+        self.assertTrue(life.apply_generation())
+        life.set_simulation_mode("immigration")
+        life.immigration_grid = life.make_immigration_grid(life.ROWS, life.COLS)
+        life.immigration_generation = 0
+        life.immigration_grid[5][4:7] = [
+            life.SPECIES_A,
+            life.SPECIES_A,
+            life.SPECIES_B,
+        ]
+        reset_mode_timeline("immigration")
+        self.assertTrue(life.apply_generation())
+
+        self.assertEqual(timeline_change_count("immigration"), 1)
+        self.assertEqual(timeline_change_count("life"), 1)
+
+    def test_dragging_timeline_track_seeks_to_first_frame(self) -> None:
+        self.assertTrue(life.apply_generation())
+        self.assertTrue(life.apply_generation())
+        _, _, track, _ = life.timeline_panel.geometry()
+
+        consumed = life.timeline_panel.handle_event(
+            life.pygame.event.Event(
+                life.pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=(track.left, track.centery),
+            )
+        )
+        life.timeline_panel.handle_event(
+            life.pygame.event.Event(
+                life.pygame.MOUSEBUTTONUP,
+                button=1,
+                pos=(track.left, track.centery),
+            )
+        )
+
+        self.assertTrue(consumed)
+        self.assertEqual(life.generation, 0)
+        self.assertEqual(life.active_history_status().cursor, 0)
+
+    def test_timeline_playback_runs_forward_and_reverse_over_existing_frames(self) -> None:
+        self.assertTrue(life.apply_generation())
+        self.assertTrue(life.apply_generation())
+        self.assertTrue(life.seek_active_history(0))
+
+        life.timeline_panel.play_direction = 1
+        life.timeline_panel.update(1.0)
+        self.assertEqual(life.generation, 2)
+        self.assertEqual(life.timeline_panel.play_direction, 0)
+
+        life.timeline_panel.play_direction = -1
+        life.timeline_panel.update(1.0)
+        self.assertEqual(life.generation, 0)
+        self.assertEqual(life.timeline_panel.play_direction, 0)
+
+    def test_j_prompt_seeks_an_exact_generation(self) -> None:
+        self.assertTrue(life.apply_generation())
+        self.assertTrue(life.apply_generation())
+
+        with patch("life.get_text_input", return_value="1"):
+            life.request_timeline_generation()
+
+        self.assertEqual(life.generation, 1)
+        self.assertEqual(life.active_history_status().generation, 1)
+
+    def test_every_2d_mode_restores_backward_and_forward(self) -> None:
+        for mode in life.SIMULATION_MODES:
+            with self.subTest(mode=mode):
+                life.set_simulation_mode(mode)
+                if mode == "life":
+                    life.grid = life.make_grid()
+                    life.trail_grid = life.make_grid()
+                    life.activity_grid = life.make_float_grid()
+                    life.grid[5][4:7] = [1, 1, 1]
+                    life.generation = 0
+                elif mode == "immigration":
+                    life.immigration_grid = life.make_immigration_grid(
+                        life.ROWS, life.COLS
+                    )
+                    life.immigration_grid[5][4:7] = [
+                        life.SPECIES_A,
+                        life.SPECIES_A,
+                        life.SPECIES_B,
+                    ]
+                    life.immigration_generation = 0
+                elif mode == "brians_brain":
+                    life.brain_grid = life.make_brain_grid(life.ROWS, life.COLS)
+                    life.brain_grid[5][4:6] = [life.FIRING, life.FIRING]
+                    life.brain_generation = 0
+                elif mode == "langtons_ant":
+                    life.ant_grid = life.make_ant_grid(life.ROWS, life.COLS)
+                    life.ant_state = life.centered_ant(life.ROWS, life.COLS)
+                    life.ant_generation = 0
+                    life.ant_last_report = life.AntStepReport()
+                elif mode == "wireworld":
+                    life.wireworld_grid = life.make_wireworld_grid(
+                        life.ROWS, life.COLS
+                    )
+                    life.wireworld_grid[5][4:7] = [
+                        life.ELECTRON_TAIL,
+                        life.ELECTRON_HEAD,
+                        life.CONDUCTOR,
+                    ]
+                    life.wireworld_generation = 0
+                else:
+                    life.cyclic_grid = life.make_cyclic_grid(life.ROWS, life.COLS)
+                    life.cyclic_grid[5][5] = 1
+                    life.cyclic_generation = 0
+                    life.cyclic_threshold = 1
+                reset_mode_timeline(mode)
+
+                self.assertTrue(life.apply_generation())
+                self.assertEqual(life._two_d_generation(), 1)
+                life.step_back()
+                self.assertEqual(life._two_d_generation(), 0)
+                life.step_forward()
+                self.assertEqual(life._two_d_generation(), 1)
+
+    def test_rule_parameters_are_part_of_timeline_state(self) -> None:
+        original_rule = life.current_rule
+        life.cycle_rule()
+        changed_rule = life.current_rule
+        self.assertNotEqual(changed_rule, original_rule)
+        life.step_back()
+        self.assertEqual(life.current_rule, original_rule)
+        life.step_forward()
+        self.assertEqual(life.current_rule, changed_rule)
+
+        life.set_simulation_mode("cyclic_automaton")
+        life.cyclic_grid = life.make_cyclic_grid(life.ROWS, life.COLS)
+        life.cyclic_generation = 0
+        life.cyclic_threshold = 1
+        reset_mode_timeline("cyclic_automaton")
+        life.cycle_cyclic_threshold()
+        self.assertEqual(life.cyclic_threshold, 2)
+        life.step_back()
+        self.assertEqual(life.cyclic_threshold, 1)
+        life.step_forward()
+        self.assertEqual(life.cyclic_threshold, 2)
 
 
 if __name__ == "__main__":

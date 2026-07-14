@@ -7,6 +7,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 import life
 from themes import Menu
+from timeline_history import TimelineStatus
 from workspaces.base import (
     WorkspaceBundle,
     WorkspaceController,
@@ -38,6 +39,24 @@ class StubController(WorkspaceController):
         pass
 
     def step_back(self) -> None:
+        pass
+
+    def step_forward(self) -> None:
+        pass
+
+    def seek_history(self, index: int) -> bool:
+        return False
+
+    def seek_generation(self, generation: int) -> bool:
+        return False
+
+    def sync_history(self) -> bool:
+        return False
+
+    def history_status(self) -> TimelineStatus:
+        return TimelineStatus(0, 1, 0, (0,), (0,), False, False, 1, 0, 0)
+
+    def reset_history(self) -> None:
         pass
 
     def clear(self) -> None:
@@ -112,6 +131,7 @@ class ApplicationWorkspaceTests(unittest.TestCase):
         self.eca = ElementaryWorkspaceState()
         life.elementary_controller.state = self.eca
         life.elementary_state = self.eca
+        life.elementary_controller.reset_history()
 
     def tearDown(self) -> None:
         life.generation = self.original_generation
@@ -192,7 +212,7 @@ class ApplicationWorkspaceTests(unittest.TestCase):
         )
 
         self.assertEqual(self.eca.rows[-1][0], 1)
-        self.assertEqual(len(self.eca.undo_history), 1)
+        self.assertEqual(life.elementary_controller.history_status().frame_count, 2)
 
 
 if __name__ == "__main__":
