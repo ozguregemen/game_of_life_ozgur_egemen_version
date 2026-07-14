@@ -77,6 +77,9 @@ class ApplicationSmokeTests(unittest.TestCase):
     def test_wireworld_dummy_video_driver_startup(self) -> None:
         self.run_smoke_test("wireworld")
 
+    def test_cyclic_automaton_dummy_video_driver_startup(self) -> None:
+        self.run_smoke_test("cyclic_automaton")
+
 
 class ContextualModeUITests(unittest.TestCase):
     def setUp(self) -> None:
@@ -107,6 +110,14 @@ class ContextualModeUITests(unittest.TestCase):
         self.assertEqual(life.simulation_mode, "wireworld")
         self.assertFalse(life.mode_menu_active)
 
+    def test_six_selects_cyclic_mode_from_chooser(self) -> None:
+        life.activate_mode_menu()
+        event = life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_6)
+
+        self.assertTrue(life.handle_mode_menu_event(event))
+
+        self.assertEqual(life.simulation_mode, "cyclic_automaton")
+
     def test_card_click_selects_mode_from_chooser(self) -> None:
         life.activate_mode_menu()
         _, cards = life.mode_menu_geometry()
@@ -135,6 +146,12 @@ class ContextualModeUITests(unittest.TestCase):
         self.assertIn("Brush: Electron Tail", wireworld_labels)
         self.assertFalse(any(label.startswith("Rule:") for label in wireworld_labels))
         self.assertFalse(any(label.startswith("Heatmap:") for label in wireworld_labels))
+
+        life.set_simulation_mode("cyclic_automaton")
+        cyclic_labels = self.menu_labels()
+        self.assertTrue(any(label.startswith("Brush: Color") for label in cyclic_labels))
+        self.assertTrue(any(label.startswith("Threshold:") for label in cyclic_labels))
+        self.assertFalse(any("Electron" in label for label in cyclic_labels))
 
     def test_direct_context_brush_selection_refreshes_active_state(self) -> None:
         life.set_simulation_mode("wireworld")
@@ -181,13 +198,15 @@ class ContextualModeUITests(unittest.TestCase):
         original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
         try:
             life.update_window_size(760, 560)
-            life.set_simulation_mode("immigration")
-            self.assertTrue(
-                all(
-                    data["button"].rect.bottom <= life.main_menu.rect.bottom
-                    for data in life.main_menu.buttons
-                )
-            )
+            for mode in life.SIMULATION_MODES:
+                with self.subTest(mode=mode):
+                    life.set_simulation_mode(mode)
+                    self.assertTrue(
+                        all(
+                            data["button"].rect.bottom <= life.main_menu.rect.bottom
+                            for data in life.main_menu.buttons
+                        )
+                    )
         finally:
             life.update_window_size(*original_size)
 
@@ -224,11 +243,8 @@ class ImmigrationIntegrationTests(unittest.TestCase):
         life.grid[2][2] = 4
         life.immigration_grid[3][3] = life.SPECIES_B
 
-        life.toggle_simulation_mode()
-        life.toggle_simulation_mode()
-        life.toggle_simulation_mode()
-        life.toggle_simulation_mode()
-        life.toggle_simulation_mode()
+        for _ in life.SIMULATION_MODES:
+            life.toggle_simulation_mode()
 
         self.assertEqual(life.simulation_mode, "immigration")
         self.assertEqual(life.grid[2][2], 4)
@@ -429,6 +445,8 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
         life.ant_history.clear()
         life.wireworld_grid = life.make_wireworld_grid(life.ROWS, life.COLS)
         life.wireworld_history.clear()
+        life.cyclic_grid = life.make_cyclic_grid(life.ROWS, life.COLS)
+        life.cyclic_history.clear()
 
     def tearDown(self) -> None:
         life.rotation = 0
@@ -522,6 +540,21 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
         self.assertEqual(cropped, [[2, 1, 3]])
         self.assertIsNone(ant)
 
+    def test_cyclic_pattern_preserves_zero_as_a_real_color(self) -> None:
+        life.set_simulation_mode("cyclic_automaton")
+        life.cyclic_grid = life.make_cyclic_grid(
+            life.ROWS,
+            life.COLS,
+            fill_state=7,
+        )
+        life.selected_pattern = self.pattern_named("Concentric Color Rings")
+
+        life.place_selected_pattern(2, 3)
+
+        self.assertEqual(life.cyclic_grid[2][3], 0)
+        self.assertEqual(life.cyclic_grid[6][7], 4)
+        self.assertEqual(len(life.cyclic_history), 1)
+
     def test_blank_langton_board_can_save_ant_state(self) -> None:
         life.ant_state = life.AntState(6, 9, 3)
 
@@ -546,6 +579,68 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
             mode="langtons_ant",
             ant={"row": 0, "col": 0, "direction": 3},
         )
+
+
+class CyclicAutomatonIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.simulation_mode = "cyclic_automaton"
+        life.simulation_active = False
+        life.cyclic_grid = life.make_cyclic_grid(life.ROWS, life.COLS)
+        life.cyclic_history.clear()
+        life.cyclic_generation = 0
+        life.cyclic_brush = 1
+        life.cyclic_threshold = 1
+
+    def tearDown(self) -> None:
+        life.set_simulation_mode("life")
+
+    def test_generation_uses_separate_grid_and_history(self) -> None:
+        life.cyclic_grid[5][5] = 1
+
+        self.assertTrue(life.apply_generation())
+
+        self.assertEqual(life.cyclic_grid[5][4], 1)
+        self.assertEqual(life.cyclic_generation, 1)
+        self.assertEqual(len(life.cyclic_history), 1)
+
+    def test_homogeneous_grid_stops_without_history_entry(self) -> None:
+        self.assertFalse(life.apply_generation())
+
+        self.assertFalse(life.simulation_active)
+        self.assertEqual(life.cyclic_generation, 0)
+        self.assertEqual(life.cyclic_history, [])
+
+    def test_step_back_restores_previous_cyclic_generation(self) -> None:
+        life.cyclic_grid[5][5] = 1
+        original = [row[:] for row in life.cyclic_grid]
+        life.apply_generation()
+
+        life.step_back()
+
+        self.assertEqual(life.cyclic_grid, original)
+        self.assertEqual(life.cyclic_generation, 0)
+
+    def test_t_cycles_through_all_color_brushes(self) -> None:
+        for _ in range(life.CYCLIC_STATE_COUNT):
+            life.toggle_active_species()
+
+        self.assertEqual(life.cyclic_brush, 1)
+
+    def test_threshold_control_cycles_through_moore_range(self) -> None:
+        for _ in range(life.CYCLIC_MAX_THRESHOLD):
+            life.cycle_cyclic_threshold()
+
+        self.assertEqual(life.cyclic_threshold, 1)
+
+    def test_right_brush_paints_color_zero(self) -> None:
+        life.cyclic_grid[2][2] = 5
+        life.drawing_value = 0
+        life.drawing_history_pending = True
+
+        life.draw_cell(2, 2)
+
+        self.assertEqual(life.cyclic_grid[2][2], 0)
+        self.assertEqual(len(life.cyclic_history), 1)
 
 
 if __name__ == "__main__":

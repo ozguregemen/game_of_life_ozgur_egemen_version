@@ -60,6 +60,14 @@ MODE_DEFINITIONS = (
         contextual_actions=("wire_conductor", "wire_head", "wire_tail"),
         status_hint="Choose a circuit brush and propagate electron signals.",
     ),
+    ModeDefinition(
+        key="cyclic_automaton",
+        name="Cyclic Cellular Automaton",
+        summary="Colors consume their predecessor and self-organize into waves.",
+        accent=(195, 80, 245),
+        contextual_actions=("cyclic_brush", "cyclic_threshold"),
+        status_hint="Randomize, tune the threshold, and watch color fronts organize.",
+    ),
 )
 
 MODE_BY_KEY = {definition.key: definition for definition in MODE_DEFINITIONS}

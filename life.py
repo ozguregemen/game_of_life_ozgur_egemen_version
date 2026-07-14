@@ -20,6 +20,16 @@ from brians_brain import (
     make_brain_grid,
     randomize_brain_grid,
 )
+from cyclic_automaton import (
+    DEFAULT_STATE_COUNT as CYCLIC_STATE_COUNT,
+    DEFAULT_THRESHOLD as CYCLIC_DEFAULT_THRESHOLD,
+    MOORE_NEIGHBOR_COUNT as CYCLIC_MAX_THRESHOLD,
+    CyclicGrid,
+    apply_cyclic_rules,
+    cyclic_stats,
+    make_cyclic_grid,
+    randomize_cyclic_grid,
+)
 from immigration import (
     SPECIES_A,
     SPECIES_B,
@@ -89,6 +99,16 @@ TRAIL_MAX = 10
 PATTERN_ROW_HEIGHT = 30
 
 BLACK = (0, 0, 0)
+CYCLIC_PALETTE = (
+    (62, 45, 125),
+    (45, 85, 195),
+    (35, 165, 225),
+    (35, 205, 145),
+    (180, 220, 55),
+    (245, 190, 45),
+    (240, 90, 55),
+    (195, 55, 180),
+)
 
 pygame.init()
 pygame.display.set_caption("Özgür Egemen's Cellular Automata Lab")
@@ -140,6 +160,13 @@ wireworld_generation = 0
 wireworld_brush = CONDUCTOR
 wireworld_rng = random.Random()
 WIRE_BRUSH_STATES = (CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL)
+
+cyclic_grid: CyclicGrid = make_cyclic_grid(ROWS, COLS)
+cyclic_history: list[tuple[CyclicGrid, int]] = []
+cyclic_generation = 0
+cyclic_brush = 1
+cyclic_threshold = CYCLIC_DEFAULT_THRESHOLD
+cyclic_rng = random.Random()
 
 SIMULATION_MODES = MODE_KEYS
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
@@ -230,6 +257,12 @@ def mark_stats_dirty() -> None:
 
 
 def save_history() -> None:
+    if simulation_mode == "cyclic_automaton":
+        if len(cyclic_history) >= HISTORY_LIMIT:
+            cyclic_history.pop(0)
+        cyclic_history.append((deepcopy(cyclic_grid), cyclic_generation))
+        return
+
     if simulation_mode == "wireworld":
         if len(wireworld_history) >= HISTORY_LIMIT:
             wireworld_history.pop(0)
@@ -271,6 +304,16 @@ def step_back() -> None:
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation
+    global cyclic_grid, cyclic_generation
+    if simulation_mode == "cyclic_automaton":
+        if not cyclic_history:
+            set_status("No earlier Cyclic Automaton generation is available.")
+            return
+        cyclic_grid, cyclic_generation = cyclic_history.pop()
+        simulation_active = False
+        set_status(f"Returned to Cyclic generation {cyclic_generation}.")
+        return
+
     if simulation_mode == "wireworld":
         if not wireworld_history:
             set_status("No earlier Wireworld generation is available.")
@@ -433,6 +476,16 @@ def set_cell(row: int, col: int, value: int) -> bool:
 def draw_cell(row: int, col: int) -> None:
     """Apply the active brush and save one history entry per changed stroke."""
     global drawing_history_pending
+    if simulation_mode == "cyclic_automaton":
+        target_value = cyclic_brush if drawing_value else 0
+        if cyclic_grid[row][col] == target_value:
+            return
+        if drawing_history_pending:
+            save_history()
+            drawing_history_pending = False
+        cyclic_grid[row][col] = target_value
+        return
+
     if simulation_mode == "wireworld":
         target_value = wireworld_brush if drawing_value else WIRE_EMPTY
         if wireworld_grid[row][col] == target_value:
@@ -495,6 +548,8 @@ def pattern_target_value(value: int, pattern_mode: str | None) -> int:
     """Map a pattern cell to the current mode, including legacy binary data."""
     if pattern_mode is not None:
         return value
+    if simulation_mode == "cyclic_automaton":
+        return cyclic_brush
     if simulation_mode == "immigration":
         return active_species
     if simulation_mode == "brians_brain":
@@ -508,6 +563,8 @@ def pattern_target_value(value: int, pattern_mode: str | None) -> int:
 
 def current_pattern_cell(row: int, col: int) -> int:
     """Return the current cell state normalized for pattern comparison."""
+    if simulation_mode == "cyclic_automaton":
+        return cyclic_grid[row][col]
     if simulation_mode == "immigration":
         return species_of(immigration_grid[row][col])
     if simulation_mode == "brians_brain":
@@ -521,7 +578,9 @@ def current_pattern_cell(row: int, col: int) -> int:
 
 def set_pattern_cell(row: int, col: int, value: int) -> None:
     """Write one already-validated state to the selected mode grid."""
-    if simulation_mode == "immigration":
+    if simulation_mode == "cyclic_automaton":
+        cyclic_grid[row][col] = value
+    elif simulation_mode == "immigration":
         immigration_grid[row][col] = value
     elif simulation_mode == "brians_brain":
         brain_grid[row][col] = value
@@ -553,7 +612,7 @@ def place_selected_pattern(row: int, col: int) -> None:
     changes: list[tuple[int, int, int]] = []
     for delta_row, pattern_row in enumerate(data):
         for delta_col, value in enumerate(pattern_row):
-            if not value:
+            if not value and pattern_mode != "cyclic_automaton":
                 continue
             target_row = row + delta_row
             target_col = col + delta_col
@@ -594,6 +653,15 @@ def clear_grid() -> None:
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation
+    global cyclic_grid, cyclic_generation
+    if simulation_mode == "cyclic_automaton":
+        save_history()
+        cyclic_grid = make_cyclic_grid(ROWS, COLS)
+        cyclic_generation = 0
+        simulation_active = False
+        set_status("Cyclic Automaton reset to color 0.")
+        return
+
     if simulation_mode == "wireworld":
         save_history()
         wireworld_grid = make_wireworld_grid(ROWS, COLS)
@@ -645,6 +713,20 @@ def randomize_grid(density: float = 0.20) -> None:
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation
+    global cyclic_grid, cyclic_generation
+    if simulation_mode == "cyclic_automaton":
+        save_history()
+        cyclic_grid = randomize_cyclic_grid(
+            ROWS,
+            COLS,
+            state_count=CYCLIC_STATE_COUNT,
+            rng=cyclic_rng,
+        )
+        cyclic_generation = 0
+        simulation_active = False
+        set_status("Random eight-color Cyclic Automaton state created.")
+        return
+
     if simulation_mode == "wireworld":
         save_history()
         wireworld_grid = randomize_wireworld_grid(
@@ -732,6 +814,10 @@ def cycle_rule() -> None:
             message = "Brian's Brain uses the fixed 2-neighbor firing rule."
         elif simulation_mode == "wireworld":
             message = "Wireworld conductors activate beside exactly 1 or 2 heads."
+        elif simulation_mode == "cyclic_automaton":
+            message = (
+                "Cyclic cells advance when enough neighbors have the next color."
+            )
         else:
             message = "Langton's Ant uses right-on-white and left-on-black."
         set_status(message)
@@ -777,7 +863,14 @@ def activate_mode_menu() -> None:
 
 def toggle_active_species() -> None:
     """Change the mode-specific drawing state or rotate the Langton ant."""
-    global active_species, ant_state, wireworld_brush
+    global active_species, ant_state, wireworld_brush, cyclic_brush
+    if simulation_mode == "cyclic_automaton":
+        cyclic_brush = (cyclic_brush + 1) % CYCLIC_STATE_COUNT
+        if "main_menu" in globals():
+            rebuild_context_menu()
+        set_status(f"Cyclic brush: color {cyclic_brush}.")
+        return
+
     if simulation_mode == "wireworld":
         index = WIRE_BRUSH_STATES.index(wireworld_brush)
         wireworld_brush = WIRE_BRUSH_STATES[(index + 1) % len(WIRE_BRUSH_STATES)]
@@ -819,6 +912,28 @@ def set_wireworld_brush(value: int) -> None:
     wireworld_brush = value
     rebuild_context_menu()
     set_status(f"Wireworld brush: {WIRE_STATE_NAMES[value]}")
+
+
+def set_cyclic_brush(value: int) -> None:
+    """Select one of the cyclic mode's color states."""
+    global cyclic_brush
+    if simulation_mode != "cyclic_automaton":
+        return
+    if not 0 <= value < CYCLIC_STATE_COUNT:
+        raise ValueError(f"Cyclic brush must be between 0 and {CYCLIC_STATE_COUNT - 1}.")
+    cyclic_brush = value
+    rebuild_context_menu()
+    set_status(f"Cyclic brush: color {cyclic_brush}.")
+
+
+def cycle_cyclic_threshold() -> None:
+    """Cycle the contact threshold through the Moore-neighborhood range."""
+    global cyclic_threshold
+    if simulation_mode != "cyclic_automaton":
+        return
+    cyclic_threshold = cyclic_threshold % CYCLIC_MAX_THRESHOLD + 1
+    rebuild_context_menu()
+    set_status(f"Cyclic contact threshold: {cyclic_threshold}.")
 
 
 def place_ant(row: int, col: int) -> None:
@@ -935,7 +1050,9 @@ def get_pattern_name() -> str | None:
 
 
 def save_current_pattern() -> None:
-    if simulation_mode == "immigration":
+    if simulation_mode == "cyclic_automaton":
+        source = cyclic_grid
+    elif simulation_mode == "immigration":
         source = immigration_grid
     elif simulation_mode == "brians_brain":
         source = brain_grid
@@ -1074,12 +1191,32 @@ def apply_wireworld_generation() -> bool:
     return True
 
 
+def apply_cyclic_generation() -> bool:
+    """Advance the cyclic color field by one synchronous generation."""
+    global cyclic_grid, cyclic_generation, simulation_active
+    next_grid = apply_cyclic_rules(
+        cyclic_grid,
+        state_count=CYCLIC_STATE_COUNT,
+        threshold=cyclic_threshold,
+    )
+    if next_grid == cyclic_grid:
+        simulation_active = False
+        set_status("Cyclic Automaton stopped: no color can advance.")
+        return False
+
+    save_history()
+    cyclic_grid = next_grid
+    cyclic_generation += 1
+    return True
+
+
 GENERATION_HANDLERS = {
     "life": apply_life_generation,
     "immigration": apply_immigration_generation,
     "brians_brain": apply_brain_generation,
     "langtons_ant": apply_ant_generation,
     "wireworld": apply_wireworld_generation,
+    "cyclic_automaton": apply_cyclic_generation,
 }
 
 
@@ -1314,6 +1451,11 @@ def wireworld_state_color(value: int) -> tuple[int, int, int]:
     return colors[value]
 
 
+def cyclic_state_color(value: int) -> tuple[int, int, int]:
+    """Return the fixed eight-state cyclic color wheel."""
+    return CYCLIC_PALETTE[value]
+
+
 def draw_immigration_grid() -> None:
     """Render both Immigration species while preserving encoded ages."""
     viewport = grid_viewport()
@@ -1482,6 +1624,58 @@ def draw_wireworld_grid() -> None:
     screen.set_clip(old_clip)
 
 
+def draw_cyclic_grid() -> None:
+    """Render every cyclic state as one color in a continuous wheel."""
+    viewport = grid_viewport()
+    origin_x, origin_y = grid_origin()
+    old_clip = screen.get_clip()
+    screen.set_clip(viewport)
+    pygame.draw.rect(screen, cyclic_state_color(0), viewport)
+    line_color = (42, 45, 58)
+
+    for row in range(ROWS):
+        y = origin_y + row * CELL_SIZE
+        if y + CELL_SIZE < viewport.top or y > viewport.bottom:
+            continue
+        for col in range(COLS):
+            x = origin_x + col * CELL_SIZE
+            if x + CELL_SIZE < viewport.left or x > viewport.right:
+                continue
+            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+            pygame.draw.rect(screen, cyclic_state_color(cyclic_grid[row][col]), rect)
+            if show_grid and CELL_SIZE >= 6:
+                pygame.draw.rect(screen, line_color, rect, 1)
+
+    if show_quadrants:
+        center_x = origin_x + COLS * CELL_SIZE // 2
+        center_y = origin_y + ROWS * CELL_SIZE // 2
+        pygame.draw.line(
+            screen,
+            (235, 235, 240),
+            (center_x, origin_y),
+            (center_x, origin_y + ROWS * CELL_SIZE),
+            2,
+        )
+        pygame.draw.line(
+            screen,
+            (235, 235, 240),
+            (origin_x, center_y),
+            (origin_x + COLS * CELL_SIZE, center_y),
+            2,
+        )
+
+    if show_coordinates and CELL_SIZE >= 10:
+        for col in range(0, COLS, 5):
+            label = tiny_font.render(str(col), True, (245, 245, 248))
+            screen.blit(label, (origin_x + col * CELL_SIZE + 2, origin_y + 2))
+        for row in range(0, ROWS, 5):
+            label = tiny_font.render(str(row), True, (245, 245, 248))
+            screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
+
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
 def ant_triangle_points(
     rect: pygame.Rect,
     direction: int,
@@ -1581,6 +1775,8 @@ def pattern_preview_color(
         return (20, 20, 25)
     if pattern_mode == "wireworld":
         return wireworld_state_color(value)
+    if pattern_mode == "cyclic_automaton":
+        return cyclic_state_color(value)
     if pattern_mode == "life":
         color = get_enhanced_age_color(1, current_theme)
     elif simulation_mode == "immigration":
@@ -1591,6 +1787,8 @@ def pattern_preview_color(
         color = (20, 20, 25)
     elif simulation_mode == "wireworld":
         color = wireworld_state_color(CONDUCTOR)
+    elif simulation_mode == "cyclic_automaton":
+        color = cyclic_state_color(cyclic_brush)
     else:
         color = get_enhanced_age_color(1, current_theme)
     if hasattr(color, "r"):
@@ -1619,7 +1817,7 @@ def draw_pattern_preview() -> None:
 
     for delta_row, pattern_row in enumerate(data):
         for delta_col, value in enumerate(pattern_row):
-            if not value:
+            if not value and pattern_mode != "cyclic_automaton":
                 continue
             preview_color = (
                 pattern_preview_color(value, pattern_mode) + (135,)
@@ -1662,7 +1860,13 @@ def draw_info_bar() -> None:
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    if simulation_mode == "wireworld":
+    if simulation_mode == "cyclic_automaton":
+        text = (
+            f"{state}   Mode: Cyclic Cellular Automaton   Speed: {speed} gen/s   "
+            f"Generation: {cyclic_generation}   Brush: Color {cyclic_brush}   "
+            f"Threshold: {cyclic_threshold}"
+        )
+    elif simulation_mode == "wireworld":
         brush_label = WIRE_STATE_NAMES[wireworld_brush]
         text = (
             f"{state}   Mode: Wireworld   Speed: {speed} gen/s   "
@@ -1700,6 +1904,23 @@ def draw_stats() -> None:
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
+
+    if simulation_mode == "cyclic_automaton":
+        stats = cyclic_stats(cyclic_grid, state_count=CYCLIC_STATE_COUNT)
+        first_line = (
+            f"Colors present: {stats['diversity']}/{CYCLIC_STATE_COUNT}   "
+            f"Dominant: {stats['dominant_state']} "
+            f"({stats['dominant_share']:.1f}%)   "
+            f"Normalized entropy: {stats['entropy']:.3f}   History: "
+            f"{len(cyclic_history)}/{HISTORY_LIMIT}"
+        )
+        second_line = (
+            f"Color s advances to (s + 1) mod {CYCLIC_STATE_COUNT} when at least "
+            f"{cyclic_threshold} Moore neighbors already have the next color."
+        )
+        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
+        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
+        return
 
     if simulation_mode == "wireworld":
         stats = wireworld_stats(wireworld_grid)
@@ -1994,7 +2215,7 @@ def draw_mode_menu() -> None:
                 (card.right - current_label.get_width() - 12, card.y + 16),
             )
 
-    footer = "Click a card or press 1-5   ·   Esc closes"
+    footer = f"Click a card or press 1-{len(MODE_DEFINITIONS)}   ·   Esc closes"
     footer_surface = tiny_font.render(footer, True, (190, 195, 205))
     screen.blit(
         footer_surface,
@@ -2052,6 +2273,7 @@ DRAW_HANDLERS = {
     "brians_brain": draw_brain_grid,
     "langtons_ant": draw_ant_grid,
     "wireworld": draw_wireworld_grid,
+    "cyclic_automaton": draw_cyclic_grid,
 }
 
 
@@ -2134,6 +2356,19 @@ def add_context_action(menu: Menu, action: str) -> None:
             lambda: set_wireworld_brush(ELECTRON_TAIL),
             accent=wireworld_state_color(ELECTRON_TAIL),
             active=wireworld_brush == ELECTRON_TAIL,
+        )
+    elif action == "cyclic_brush":
+        menu.add_button(
+            f"Brush: Color {cyclic_brush} (T)",
+            toggle_active_species,
+            accent=cyclic_state_color(cyclic_brush),
+            active=True,
+        )
+    elif action == "cyclic_threshold":
+        menu.add_button(
+            f"Threshold: {cyclic_threshold} (click to cycle)",
+            cycle_cyclic_threshold,
+            accent=MODE_BY_KEY["cyclic_automaton"].accent,
         )
     else:
         raise ValueError(f"Unknown contextual action: {action}")

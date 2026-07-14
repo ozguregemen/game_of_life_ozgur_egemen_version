@@ -26,7 +26,14 @@ class ModeRegistryTests(unittest.TestCase):
     def test_expected_modes_are_registered(self) -> None:
         self.assertEqual(
             set(MODE_BY_KEY),
-            {"life", "immigration", "brians_brain", "langtons_ant", "wireworld"},
+            {
+                "life",
+                "immigration",
+                "brians_brain",
+                "langtons_ant",
+                "wireworld",
+                "cyclic_automaton",
+            },
         )
 
     def test_unknown_mode_raises_value_error(self) -> None:
