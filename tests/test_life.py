@@ -73,6 +73,9 @@ class ApplicationSmokeTests(unittest.TestCase):
     def test_langtons_ant_dummy_video_driver_startup(self) -> None:
         self.run_smoke_test("langtons_ant")
 
+    def test_wireworld_dummy_video_driver_startup(self) -> None:
+        self.run_smoke_test("wireworld")
+
 
 class ImmigrationIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -106,6 +109,7 @@ class ImmigrationIntegrationTests(unittest.TestCase):
         life.grid[2][2] = 4
         life.immigration_grid[3][3] = life.SPECIES_B
 
+        life.toggle_simulation_mode()
         life.toggle_simulation_mode()
         life.toggle_simulation_mode()
         life.toggle_simulation_mode()
@@ -222,6 +226,74 @@ class LangtonsAntIntegrationTests(unittest.TestCase):
         self.assertEqual((life.ant_state.row, life.ant_state.col), (4, 7))
         self.assertEqual(life.ant_state.direction, original_direction)
         self.assertEqual(len(life.ant_history), 1)
+
+
+class WireworldIntegrationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.simulation_mode = "wireworld"
+        life.simulation_active = False
+        life.wireworld_grid = life.make_wireworld_grid(life.ROWS, life.COLS)
+        life.wireworld_history.clear()
+        life.wireworld_generation = 0
+        life.wireworld_brush = life.CONDUCTOR
+
+    def tearDown(self) -> None:
+        life.simulation_mode = "life"
+        life.simulation_active = False
+
+    def test_generation_propagates_signal_and_tracks_history(self) -> None:
+        life.wireworld_grid[5][4:7] = [
+            life.ELECTRON_TAIL,
+            life.ELECTRON_HEAD,
+            life.CONDUCTOR,
+        ]
+
+        self.assertTrue(life.apply_generation())
+
+        self.assertEqual(life.wireworld_generation, 1)
+        self.assertEqual(len(life.wireworld_history), 1)
+        self.assertEqual(
+            life.wireworld_grid[5][4:7],
+            [life.CONDUCTOR, life.ELECTRON_TAIL, life.ELECTRON_HEAD],
+        )
+
+    def test_pattern_places_conductors(self) -> None:
+        life.selected_pattern = {
+            "name": "Block",
+            "pattern": [[1, 1], [1, 1]],
+        }
+
+        life.place_selected_pattern(2, 2)
+
+        self.assertEqual(len(life.wireworld_history), 1)
+        self.assertTrue(
+            all(
+                life.wireworld_grid[row][col] == life.CONDUCTOR
+                for row in (2, 3)
+                for col in (2, 3)
+            )
+        )
+
+    def test_t_cycles_through_three_wireworld_brushes(self) -> None:
+        brushes = []
+        for _ in range(3):
+            life.toggle_active_species()
+            brushes.append(life.wireworld_brush)
+
+        self.assertEqual(
+            brushes,
+            [life.ELECTRON_HEAD, life.ELECTRON_TAIL, life.CONDUCTOR],
+        )
+
+    def test_right_brush_erases_and_adds_one_history_entry(self) -> None:
+        life.wireworld_grid[2][2] = life.CONDUCTOR
+        life.drawing_value = 0
+        life.drawing_history_pending = True
+
+        life.draw_cell(2, 2)
+
+        self.assertEqual(life.wireworld_grid[2][2], life.WIRE_EMPTY)
+        self.assertEqual(len(life.wireworld_history), 1)
 
 
 if __name__ == "__main__":

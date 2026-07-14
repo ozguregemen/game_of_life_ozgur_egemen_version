@@ -48,6 +48,18 @@ from patterns import get_all_patterns, flip_pattern, rotate_pattern, save_patter
 from rules import RULES, apply_rules_2d, find_patterns
 from themes import THEMES, Menu
 from visuals import CellTransition, get_enhanced_age_color
+from wireworld import (
+    CONDUCTOR,
+    ELECTRON_HEAD,
+    ELECTRON_TAIL,
+    EMPTY as WIRE_EMPTY,
+    STATE_NAMES as WIRE_STATE_NAMES,
+    WireworldGrid,
+    apply_wireworld_rules,
+    make_wireworld_grid,
+    randomize_wireworld_grid,
+    wireworld_stats,
+)
 
 # ---------------------------------------------------------------------------
 # Application configuration
@@ -116,7 +128,20 @@ ant_generation = 0
 ant_last_report = AntStepReport()
 ant_rng = random.Random()
 
-SIMULATION_MODES = ("life", "immigration", "brians_brain", "langtons_ant")
+wireworld_grid: WireworldGrid = make_wireworld_grid(ROWS, COLS)
+wireworld_history: list[tuple[WireworldGrid, int]] = []
+wireworld_generation = 0
+wireworld_brush = CONDUCTOR
+wireworld_rng = random.Random()
+WIRE_BRUSH_STATES = (CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL)
+
+SIMULATION_MODES = (
+    "life",
+    "immigration",
+    "brians_brain",
+    "langtons_ant",
+    "wireworld",
+)
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
 simulation_mode = (
     requested_start_mode if requested_start_mode in SIMULATION_MODES else "life"
@@ -204,6 +229,12 @@ def mark_stats_dirty() -> None:
 
 
 def save_history() -> None:
+    if simulation_mode == "wireworld":
+        if len(wireworld_history) >= HISTORY_LIMIT:
+            wireworld_history.pop(0)
+        wireworld_history.append((deepcopy(wireworld_grid), wireworld_generation))
+        return
+
     if simulation_mode == "langtons_ant":
         if len(ant_history) >= HISTORY_LIMIT:
             ant_history.pop(0)
@@ -238,6 +269,16 @@ def step_back() -> None:
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
+    global wireworld_grid, wireworld_generation
+    if simulation_mode == "wireworld":
+        if not wireworld_history:
+            set_status("No earlier Wireworld generation is available.")
+            return
+        wireworld_grid, wireworld_generation = wireworld_history.pop()
+        simulation_active = False
+        set_status(f"Returned to Wireworld generation {wireworld_generation}.")
+        return
+
     if simulation_mode == "langtons_ant":
         if not ant_history:
             set_status("No earlier Langton's Ant step is available.")
@@ -341,6 +382,16 @@ def set_cell(row: int, col: int, value: int) -> bool:
 def draw_cell(row: int, col: int) -> None:
     """Apply the active brush and save one history entry per changed stroke."""
     global drawing_history_pending
+    if simulation_mode == "wireworld":
+        target_value = wireworld_brush if drawing_value else WIRE_EMPTY
+        if wireworld_grid[row][col] == target_value:
+            return
+        if drawing_history_pending:
+            save_history()
+            drawing_history_pending = False
+        wireworld_grid[row][col] = target_value
+        return
+
     if simulation_mode == "langtons_ant":
         target_value = ANT_BLACK if drawing_value else 0
         if ant_grid[row][col] == target_value:
@@ -416,6 +467,8 @@ def place_selected_pattern(row: int, col: int) -> None:
                 changed = brain_grid[target_row][target_col] != FIRING
             elif simulation_mode == "langtons_ant":
                 changed = ant_grid[target_row][target_col] != ANT_BLACK
+            elif simulation_mode == "wireworld":
+                changed = wireworld_grid[target_row][target_col] != CONDUCTOR
             else:
                 changed = grid[target_row][target_col] <= 0
             if changed:
@@ -429,6 +482,8 @@ def place_selected_pattern(row: int, col: int) -> None:
                 brain_grid[target_row][target_col] = FIRING
             elif simulation_mode == "langtons_ant":
                 ant_grid[target_row][target_col] = ANT_BLACK
+            elif simulation_mode == "wireworld":
+                wireworld_grid[target_row][target_col] = CONDUCTOR
             else:
                 set_cell(target_row, target_col, 1)
 
@@ -449,6 +504,15 @@ def clear_grid() -> None:
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
+    global wireworld_grid, wireworld_generation
+    if simulation_mode == "wireworld":
+        save_history()
+        wireworld_grid = make_wireworld_grid(ROWS, COLS)
+        wireworld_generation = 0
+        simulation_active = False
+        set_status("Wireworld grid cleared.")
+        return
+
     if simulation_mode == "langtons_ant":
         save_history()
         ant_grid = make_ant_grid(ROWS, COLS)
@@ -491,6 +555,21 @@ def randomize_grid(density: float = 0.20) -> None:
     global immigration_grid, immigration_generation
     global brain_grid, brain_generation
     global ant_grid, ant_state, ant_generation, ant_last_report
+    global wireworld_grid, wireworld_generation
+    if simulation_mode == "wireworld":
+        save_history()
+        wireworld_grid = randomize_wireworld_grid(
+            ROWS,
+            COLS,
+            conductor_density=density,
+            signal_fraction=0.08,
+            rng=wireworld_rng,
+        )
+        wireworld_generation = 0
+        simulation_active = False
+        set_status("Random Wireworld conductors and signals created.")
+        return
+
     if simulation_mode == "langtons_ant":
         save_history()
         ant_grid = randomize_ant_grid(
@@ -563,6 +642,8 @@ def cycle_rule() -> None:
             message = "Immigration Game uses Conway B3/S23 for both species."
         elif simulation_mode == "brians_brain":
             message = "Brian's Brain uses the fixed 2-neighbor firing rule."
+        elif simulation_mode == "wireworld":
+            message = "Wireworld conductors activate beside exactly 1 or 2 heads."
         else:
             message = "Langton's Ant uses right-on-white and left-on-black."
         set_status(message)
@@ -591,20 +672,27 @@ def toggle_simulation_mode() -> None:
         set_status("Brian's Brain: firing cells leave a one-step dying trail.", 4.0)
     elif simulation_mode == "langtons_ant":
         set_status("Langton's Ant: T rotates, Shift+click moves the ant.", 4.0)
+    elif simulation_mode == "wireworld":
+        set_status("Wireworld: T changes the conductor/signal brush.", 4.0)
     else:
         set_status("Life-like cellular automata mode.", 3.0)
 
 
 def toggle_active_species() -> None:
-    """Change the active species or rotate the Langton ant."""
-    global active_species, ant_state
+    """Change the mode-specific drawing state or rotate the Langton ant."""
+    global active_species, ant_state, wireworld_brush
+    if simulation_mode == "wireworld":
+        index = WIRE_BRUSH_STATES.index(wireworld_brush)
+        wireworld_brush = WIRE_BRUSH_STATES[(index + 1) % len(WIRE_BRUSH_STATES)]
+        set_status(f"Wireworld brush: {WIRE_STATE_NAMES[wireworld_brush]}")
+        return
     if simulation_mode == "langtons_ant":
         ant_state = rotate_ant_clockwise(ant_state)
         direction = DIRECTION_NAMES[ant_state.direction]
         set_status(f"Ant direction: {direction}")
         return
     if simulation_mode != "immigration":
-        set_status("Species selection is available in Immigration mode.")
+        set_status("This mode has no alternate drawing state.")
         return
     active_species = SPECIES_B if active_species == SPECIES_A else SPECIES_A
     label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
@@ -714,6 +802,8 @@ def save_current_pattern() -> None:
         source = brain_grid
     elif simulation_mode == "langtons_ant":
         source = ant_grid
+    elif simulation_mode == "wireworld":
+        source = wireworld_grid
     else:
         source = grid
     cropped = crop_live_pattern(source)
@@ -821,8 +911,29 @@ def apply_ant_generation() -> bool:
     return True
 
 
+def apply_wireworld_generation() -> bool:
+    """Advance Wireworld by one synchronous signal propagation step."""
+    global wireworld_grid, wireworld_generation, simulation_active
+    has_signal = any(
+        cell in (ELECTRON_HEAD, ELECTRON_TAIL)
+        for row in wireworld_grid
+        for cell in row
+    )
+    if not has_signal:
+        simulation_active = False
+        set_status("Wireworld stopped: no electron signal remains.")
+        return False
+
+    save_history()
+    wireworld_grid = apply_wireworld_rules(wireworld_grid)
+    wireworld_generation += 1
+    return True
+
+
 def apply_generation() -> bool:
     """Advance the selected simulation mode."""
+    if simulation_mode == "wireworld":
+        return apply_wireworld_generation()
     if simulation_mode == "langtons_ant":
         return apply_ant_generation()
     if simulation_mode == "brians_brain":
@@ -1047,6 +1158,17 @@ def brain_state_color(value: int) -> tuple[int, int, int]:
     return (75, 55, 155)
 
 
+def wireworld_state_color(value: int) -> tuple[int, int, int]:
+    """Return conventional colors for the four Wireworld states."""
+    colors = {
+        WIRE_EMPTY: (10, 12, 18),
+        ELECTRON_HEAD: (65, 170, 255),
+        ELECTRON_TAIL: (235, 65, 55),
+        CONDUCTOR: (245, 190, 35),
+    }
+    return colors[value]
+
+
 def draw_immigration_grid() -> None:
     """Render both Immigration species while preserving encoded ages."""
     viewport = grid_viewport()
@@ -1161,6 +1283,60 @@ def draw_brain_grid() -> None:
     screen.set_clip(old_clip)
 
 
+def draw_wireworld_grid() -> None:
+    """Render Wireworld conductors and electron signals."""
+    viewport = grid_viewport()
+    origin_x, origin_y = grid_origin()
+    old_clip = screen.get_clip()
+    screen.set_clip(viewport)
+    pygame.draw.rect(screen, wireworld_state_color(WIRE_EMPTY), viewport)
+    line_color = (55, 62, 72)
+
+    for row in range(ROWS):
+        y = origin_y + row * CELL_SIZE
+        if y + CELL_SIZE < viewport.top or y > viewport.bottom:
+            continue
+        for col in range(COLS):
+            x = origin_x + col * CELL_SIZE
+            if x + CELL_SIZE < viewport.left or x > viewport.right:
+                continue
+            rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+            value = wireworld_grid[row][col]
+            if value != WIRE_EMPTY:
+                pygame.draw.rect(screen, wireworld_state_color(value), rect)
+            if show_grid and CELL_SIZE >= 6:
+                pygame.draw.rect(screen, line_color, rect, 1)
+
+    if show_quadrants:
+        center_x = origin_x + COLS * CELL_SIZE // 2
+        center_y = origin_y + ROWS * CELL_SIZE // 2
+        pygame.draw.line(
+            screen,
+            (150, 155, 165),
+            (center_x, origin_y),
+            (center_x, origin_y + ROWS * CELL_SIZE),
+            2,
+        )
+        pygame.draw.line(
+            screen,
+            (150, 155, 165),
+            (origin_x, center_y),
+            (origin_x + COLS * CELL_SIZE, center_y),
+            2,
+        )
+
+    if show_coordinates and CELL_SIZE >= 10:
+        for col in range(0, COLS, 5):
+            label = tiny_font.render(str(col), True, (205, 210, 220))
+            screen.blit(label, (origin_x + col * CELL_SIZE + 2, origin_y + 2))
+        for row in range(0, ROWS, 5):
+            label = tiny_font.render(str(row), True, (205, 210, 220))
+            screen.blit(label, (origin_x + 2, origin_y + row * CELL_SIZE + 2))
+
+    draw_pattern_preview()
+    screen.set_clip(old_clip)
+
+
 def ant_triangle_points(
     rect: pygame.Rect,
     direction: int,
@@ -1266,6 +1442,8 @@ def draw_pattern_preview() -> None:
             base_color = brain_state_color(FIRING)
         elif simulation_mode == "langtons_ant":
             base_color = (20, 20, 25)
+        elif simulation_mode == "wireworld":
+            base_color = wireworld_state_color(CONDUCTOR)
         else:
             base_color = get_enhanced_age_color(1, current_theme)
         if hasattr(base_color, "r"):
@@ -1306,7 +1484,13 @@ def draw_info_bar() -> None:
     pygame.draw.rect(screen, theme["info_bar"], (0, 0, width, INFO_BAR_HEIGHT))
 
     state = "Running" if simulation_active else "Paused"
-    if simulation_mode == "langtons_ant":
+    if simulation_mode == "wireworld":
+        brush_label = WIRE_STATE_NAMES[wireworld_brush]
+        text = (
+            f"{state}   Mode: Wireworld   Speed: {speed} gen/s   "
+            f"Generation: {wireworld_generation}   Brush: {brush_label}"
+        )
+    elif simulation_mode == "langtons_ant":
         direction = DIRECTION_NAMES[ant_state.direction]
         ant_status = "active" if ant_state.active else "stopped"
         text = (
@@ -1338,6 +1522,22 @@ def draw_stats() -> None:
     width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     y = WINDOW_HEIGHT - STATS_HEIGHT
     pygame.draw.rect(screen, theme["stats_bar"], (0, y, width, STATS_HEIGHT))
+
+    if simulation_mode == "wireworld":
+        stats = wireworld_stats(wireworld_grid)
+        first_line = (
+            f"Heads: {stats['heads']}   Tails: {stats['tails']}   "
+            f"Conductors: {stats['conductors']}   Empty: {stats['empty']}   "
+            f"Density: {stats['density']:.2f}%   History: "
+            f"{len(wireworld_history)}/{HISTORY_LIMIT}"
+        )
+        second_line = (
+            "Head -> Tail   ·   Tail -> Conductor   ·   "
+            "Conductor + exactly 1 or 2 neighboring heads -> Head"
+        )
+        screen.blit(small_font.render(first_line, True, theme["text"]), (10, y + 8))
+        screen.blit(tiny_font.render(second_line, True, theme["text"]), (10, y + 38))
+        return
 
     if simulation_mode == "langtons_ant":
         stats = ant_stats(ant_grid)
@@ -1531,7 +1731,9 @@ def draw_status() -> None:
 
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    if simulation_mode == "langtons_ant":
+    if simulation_mode == "wireworld":
+        draw_wireworld_grid()
+    elif simulation_mode == "langtons_ant":
         draw_ant_grid()
     elif simulation_mode == "brians_brain":
         draw_brain_grid()
@@ -1561,7 +1763,7 @@ def setup_menu() -> Menu:
         current_theme,
     )
     menu.add_button("Change Mode", toggle_simulation_mode)
-    menu.add_button("Species / Ant Direction", toggle_active_species)
+    menu.add_button("Brush / Species / Direction", toggle_active_species)
     menu.add_button("Clear Grid", clear_grid)
     menu.add_button("Randomize", randomize_grid)
     menu.add_button("Step Back", step_back)
@@ -1772,7 +1974,7 @@ def handle_event(event: pygame.event.Event) -> bool:
 
 main_menu = setup_menu()
 center_view()
-set_status("M: mode · T: species/direction · Space: run/pause · Mouse: draw", 5.0)
+set_status("M: mode · T: brush/species/direction · Space: run/pause · Mouse: draw", 5.0)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""
