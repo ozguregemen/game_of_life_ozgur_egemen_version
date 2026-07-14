@@ -253,6 +253,7 @@ PATTERN_STATE_VALUES = {
     "brians_brain": frozenset((0, 1, 2)),
     "langtons_ant": frozenset((0, 1)),
     "wireworld": frozenset((0, 1, 2, 3)),
+    "cyclic_automaton": frozenset(range(8)),
 }
 
 PATTERN_DIRECTORY = Path(__file__).resolve().with_name("patterns")

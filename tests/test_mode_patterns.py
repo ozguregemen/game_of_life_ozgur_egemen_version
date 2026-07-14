@@ -1,6 +1,7 @@
 import unittest
 
 from brians_brain import apply_brain_rules
+from cyclic_automaton import apply_cyclic_rules
 from immigration import apply_immigration_rules, species_of
 from mode_patterns import MODE_PATTERNS
 from wireworld import ELECTRON_HEAD, apply_wireworld_rules
@@ -44,6 +45,14 @@ class BuiltinModePatternBehaviorTests(unittest.TestCase):
         for _ in range(25):
             generation = apply_wireworld_rules(generation)
         self.assertTrue(any(ELECTRON_HEAD in row for row in generation))
+
+    def test_cyclic_phase_gradient_advances_synchronously(self) -> None:
+        initial = MODE_PATTERNS["cyclic_phase_gradient"]["pattern"]
+        generation = apply_cyclic_rules(initial)
+        expected = [[(cell + 1) % 8 for cell in row] for row in initial]
+        expected[-1][-1] = initial[-1][-1]
+
+        self.assertEqual(generation, expected)
 
 
 if __name__ == "__main__":

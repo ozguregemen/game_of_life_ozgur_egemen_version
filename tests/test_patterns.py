@@ -110,6 +110,19 @@ class PatternStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "Wireworld"):
             patterns.save_pattern([[4]], "Invalid Wire", mode="wireworld")
 
+    def test_cyclic_pattern_accepts_all_eight_states(self) -> None:
+        saved = patterns.save_pattern(
+            [list(range(8))],
+            "Color Cycle",
+            mode="cyclic_automaton",
+        )
+
+        self.assertEqual(saved["pattern"], [list(range(8))])
+
+    def test_cyclic_pattern_rejects_ninth_state(self) -> None:
+        with self.assertRaisesRegex(TypeError, "Cyclic Cellular Automaton"):
+            patterns.save_pattern([[8]], "Invalid Color", mode="cyclic_automaton")
+
     def test_langton_ant_metadata_must_fit_pattern(self) -> None:
         with self.assertRaisesRegex(TypeError, "inside"):
             patterns.save_pattern(

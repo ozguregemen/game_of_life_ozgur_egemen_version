@@ -2,7 +2,46 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
+
+
+CYCLIC_STATE_COUNT = 8
+
+
+def _cyclic_phase_gradient(size: int = 8) -> list[list[int]]:
+    """Build a diagonal phase gradient across every cyclic state."""
+    return [
+        [(row + col) % CYCLIC_STATE_COUNT for col in range(size)]
+        for row in range(size)
+    ]
+
+
+def _cyclic_concentric_rings(size: int = 9) -> list[list[int]]:
+    """Build nested successor-color fronts."""
+    return [
+        [min(row, col, size - 1 - row, size - 1 - col) for col in range(size)]
+        for row in range(size)
+    ]
+
+
+def _cyclic_color_wheel(size: int = 11) -> list[list[int]]:
+    """Build eight angular phase sectors meeting at a spiral core."""
+    center = (size - 1) / 2
+    return [
+        [
+            int(
+                (
+                    math.atan2(row - center, col - center) + math.pi
+                )
+                / (2 * math.pi)
+                * CYCLIC_STATE_COUNT
+            )
+            % CYCLIC_STATE_COUNT
+            for col in range(size)
+        ]
+        for row in range(size)
+    ]
 
 
 MODE_PATTERNS: dict[str, dict[str, Any]] = {
@@ -114,5 +153,23 @@ MODE_PATTERNS: dict[str, dict[str, Any]] = {
             [0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 3, 3, 3, 3, 0, 0, 0, 0, 0, 0, 0],
             [0, 0, 0, 3, 3, 3, 3, 3, 3, 3, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         ],
+    },
+    "cyclic_phase_gradient": {
+        "name": "Diagonal Phase Gradient",
+        "mode": "cyclic_automaton",
+        "description": "All eight colors arranged as repeating diagonal fronts.",
+        "pattern": _cyclic_phase_gradient(),
+    },
+    "cyclic_concentric_rings": {
+        "name": "Concentric Color Rings",
+        "mode": "cyclic_automaton",
+        "description": "Nested successor states that launch inward and outward fronts.",
+        "pattern": _cyclic_concentric_rings(),
+    },
+    "cyclic_color_wheel": {
+        "name": "Eight-State Color Wheel",
+        "mode": "cyclic_automaton",
+        "description": "Eight phase sectors joined around a compact spiral core.",
+        "pattern": _cyclic_color_wheel(),
     },
 }
