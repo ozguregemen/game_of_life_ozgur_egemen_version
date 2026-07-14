@@ -34,6 +34,7 @@ satırı yine `import pygame` olarak kalır.
 - Tam grid kopyaları yerine periyodik checkpoint + hücre/satır deltaları kullanan geçmiş
 - Population, density, entropy ve değişim oranı zaman serilerini gösteren bilimsel panel
 - Periyot/stabilizasyon algılama ve ortak koşullarda 1D Wolfram rule karşılaştırması
+- 1D space-time PNG, 2D grid PNG, timeline GIF/MP4, ölçüm CSV ve deney JSON dışa aktarma
 - Her oyun moduna özel, durumları koruyan hazır ve kullanıcı patternleri
 - Pattern döndürme, yatay/dikey çevirme ve yerleştirme önizlemesi
 - Otomatik pattern recognition
@@ -63,6 +64,7 @@ satırı yine `import pygame` olarak kalır.
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | J | Timeline içinde kayıtlı bir generation'a doğrudan git |
 | I | Bilimsel analiz ve 1D rule karşılaştırma panelini aç / kapat |
+| X | Bağlamsal dışa aktarma panelini aç / kapat |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
 | H | Heatmap aç/kapat |
@@ -115,6 +117,9 @@ satırı yine `import pygame` olarak kalır.
 - `timeline_ui.py`: Sürüklenebilir ortak timeline, ileri/geri oynatma ve checkpoint göstergeleri
 - `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
 - `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
+- `exporting.py`: Güvenli raster, GIF/MP4, CSV/JSON kodlama ve arka plan export motoru
+- `experiment_exports.py`: Workspace snapshot'larını bağlamsal çıktı formatlarına dönüştüren coordinator
+- `export_ui.py`: Aktif workspace'e göre değişen dışa aktarma paneli
 - `themes.py`: Temalar ve menü bileşenleri
 - `visuals.py`: Animasyon ve görsel yardımcılar
 - `life3d.py`: Deneysel 3D slice sürümü
@@ -175,6 +180,31 @@ sonsuz-arka-plan penceresini kullanır. Tablo ortalama/final population, ortalam
 density, entropy, değişim oranı, periyot ve stabilizasyon generation'ını birlikte
 gösterir.
 
+## Dışa aktarma
+
+Sağ menüdeki `Export Results` düğmesi veya `X`, aktif workspace'i duraklatıp güncel
+düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar:
+
+- `PNG Diagram`: 1D'de tüm space-time diyagramını, 2D'de güncel durum grid'ini
+  kayıpsız ve nearest-neighbor ölçeklemeyle yazar.
+- `Animated GIF`: Timeline'ın ilk ve son frame'i dahil en fazla 120 eşit aralıklı
+  frame'ini döngüsel animasyon olarak üretir.
+- `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar.
+- `Generation Metrics CSV`: Population, density, normalize entropy, değişim oranı,
+  algılanan periyot ve stabilizasyon generation'ını UTF-8 CSV olarak verir.
+- `Shareable Experiment JSON`: Bütün 1D/2D durumlarını taşıyan yüklenebilir session
+  belgesine aktif timeline ve bilimsel ölçüm metadatasını ekler.
+
+Kodlama işlemleri Pygame event thread'i dışında sırayla çalışır; tamamlanma veya hata
+durumu alt barda gösterilir. Uzun timeline'larda kontrollü dosya boyutu için animasyon
+örneklenir, fakat ilk ve son kayıt daima korunur. 1D satırları genişlik değiştiğinde
+merkez hizalıdır; Life ve Immigration yaş sayaçları gerçek hücre durumlarına normalize
+edilir ve Langton karıncası frame üzerinde ayrıca işaretlenir.
+
+Dosyalar otomatik, güvenli ve zaman damgalı adlarla `exports/` klasörüne atomik olarak
+yazılır. Bu klasör Git tarafından izlenmez. Paylaşılabilir JSON, `sessions/` klasörüne
+kopyalandığında mevcut `Browse Saved Sessions` ekranından yüklenebilir.
+
 ## Test
 
 ```powershell
@@ -188,6 +218,7 @@ kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod re
 bağlamsal menü davranışını; workspace registry/controller/renderer sözleşmesini;
 checkpoint/delta round-trip, timeline dallanması, ileri/geri gezinme ve sürükleme davranışını;
 bilimsel metrikleri, periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
+PNG/GIF/MP4 raster kodlamayı, CSV/JSON güvenliğini ve export menü entegrasyonunu;
 oturum/profile güvenliğini ve tam-state round-trip davranışını; altı 2D mod ile 1D
 alanın SDL dummy video driver ile başlangıcını kapsar.
 

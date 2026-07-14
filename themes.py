@@ -159,14 +159,25 @@ class Menu:
             ),
             "callback": callback
         })
+        self.relayout()
 
     def relayout(self):
         top = self.rect.y + (self.header_height if self.header_text else 10)
+        count = len(self.buttons)
+        if not count:
+            return
+        available_height = max(1, self.rect.bottom - top - 8)
+        margin = self.button_margin
+        fitted_height = min(
+            self.button_height,
+            max(18, (available_height - margin * (count - 1)) // count),
+        )
         for index, button_data in enumerate(self.buttons):
             button = button_data["button"]
             button.rect.x = self.rect.x + 10
-            button.rect.y = top + index * (self.button_height + self.button_margin)
+            button.rect.y = top + index * (fitted_height + margin)
             button.rect.width = self.rect.width - 20
+            button.rect.height = fitted_height
 
     def draw(self, screen, font):
         if not self.visible:

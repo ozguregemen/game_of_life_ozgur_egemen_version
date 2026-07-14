@@ -253,6 +253,8 @@ def main() -> None:
         print(json.dumps(results, indent=2))
     finally:
         life.pattern_scan_executor.shutdown(wait=True, cancel_futures=True)
+        life.comparison_runner.shutdown()
+        life.export_runner.shutdown()
         life.pygame.quit()
 
 

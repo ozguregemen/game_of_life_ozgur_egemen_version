@@ -46,6 +46,16 @@ from elementary_ca import (
     RULE_PRESETS as ECA_RULE_PRESETS,
     single_cell_seed as single_eca_seed,
 )
+from experiment_exports import (
+    ExperimentExportCoordinator,
+    ExperimentExportServices,
+)
+from export_ui import ExportMenu, ExportMenuServices
+from exporting import (
+    ExportRunner,
+    RasterFrame,
+    sampled_indices,
+)
 from immigration import (
     SPECIES_A,
     SPECIES_B,
@@ -239,6 +249,7 @@ generation = 0
 two_d_timelines: dict[str, TimelineBinding] = {}
 analysis_registry = ScientificAnalysisRegistry(max_samples=TIMELINE_MAX_FRAMES)
 comparison_runner = ElementaryComparisonRunner()
+export_runner = ExportRunner()
 
 show_grid = True
 show_heatmap = False
@@ -1456,6 +1467,8 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
     session_manager.close()
     if "analysis_panel" in globals():
         analysis_panel.close()
+    if "export_manager" in globals():
+        export_manager.close()
     drawing = False
     drawing_history_pending = False
     main_menu.theme = current_theme
@@ -1877,6 +1890,65 @@ def toggle_analysis_panel() -> None:
     """Open or close the non-blocking scientific dashboard."""
     timeline_panel.stop()
     analysis_panel.toggle()
+
+
+def _active_export_timeline_snapshots() -> tuple[Mapping[str, Any], ...]:
+    """Reconstruct sampled frames without moving the visible timeline cursor."""
+    binding = (
+        elementary_controller.timeline
+        if active_dimension == "1d"
+        else two_d_timelines[simulation_mode]
+    )
+    timeline = binding.timeline
+    return tuple(
+        timeline.reconstruct(index)
+        for index in sampled_indices(len(timeline.frames))
+    )
+
+
+def capture_current_raster() -> RasterFrame:
+    """Return the active workspace's normalized PNG source."""
+    return export_coordinator.capture_current_raster()
+
+
+def capture_timeline_rasters() -> tuple[RasterFrame, ...]:
+    """Return sampled, normalized animation frames without moving history."""
+    return export_coordinator.capture_timeline_rasters()
+
+
+def capture_shareable_experiment_document() -> dict[str, Any]:
+    """Return a reloadable session enriched with active experiment metadata."""
+    return export_coordinator.capture_shareable_document()
+
+
+def _prepare_export_menu() -> None:
+    """Pause and commit the current edit boundary before showing exports."""
+    global simulation_active, single_step_requested
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    global drawing, drawing_history_pending
+
+    simulation_active = False
+    single_step_requested = False
+    timeline_panel.stop()
+    session_manager.close()
+    analysis_panel.close()
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    drawing = False
+    drawing_history_pending = False
+    active_workspace().controller.deactivate()
+    active_workspace().controller.sync_history()
+
+
+def activate_export_menu() -> None:
+    """Open the contextual result export menu."""
+    export_manager.open()
+
+
+def toggle_export_menu() -> None:
+    """Open or close result exports with the global X shortcut."""
+    export_manager.toggle()
 
 
 def _snapshot_2d_mode(mode: str) -> dict[str, Any]:
@@ -3417,6 +3489,7 @@ def draw_scene() -> None:
     analysis_panel.draw()
     draw_dimension_menu()
     draw_session_menu()
+    export_manager.draw()
 
 
 # ---------------------------------------------------------------------------
@@ -3523,6 +3596,11 @@ def _build_2d_sidebar(menu: Menu) -> None:
         "Scientific Analysis (I)",
         toggle_analysis_panel,
         accent=(90, 195, 255),
+    )
+    menu.add_button(
+        "Export Results (X)",
+        activate_export_menu,
+        accent=(235, 155, 70),
     )
     menu.add_button(
         "Select Mode (M)",
@@ -3702,6 +3780,8 @@ def handle_keydown(event: pygame.event.Event) -> None:
         activate_session_menu()
     elif event.key == pygame.K_i:
         toggle_analysis_panel()
+    elif event.key == pygame.K_x:
+        toggle_export_menu()
     elif event.key == pygame.K_j:
         timeline_panel.stop()
         request_timeline_generation()
@@ -3788,6 +3868,10 @@ def handle_event(event: pygame.event.Event) -> bool:
 
     if event.type == pygame.VIDEORESIZE:
         update_window_size(event.w, event.h)
+        return True
+
+    if export_manager.active:
+        export_manager.handle_event(event)
         return True
 
     if session_manager.active:
@@ -3905,6 +3989,7 @@ elementary_services = ElementaryWorkspaceServices(
     activate_dimension_menu=activate_dimension_menu,
     activate_session_menu=activate_session_menu,
     activate_analysis=toggle_analysis_panel,
+    activate_export=activate_export_menu,
     toggle_grid=toggle_grid_lines,
     cycle_theme=cycle_theme,
     cached_stats=cached_mode_stats,
@@ -4011,11 +4096,49 @@ timeline_panel = TimelinePanel(
     )
 )
 
+export_coordinator = ExperimentExportCoordinator(
+    ExperimentExportServices(
+        active_dimension=lambda: active_dimension,
+        active_mode=lambda: simulation_mode,
+        theme_name=lambda: current_theme,
+        current_generation=lambda: active_workspace().controller.generation,
+        elementary_rule=lambda: elementary_controller.state.rule,
+        elementary_boundary=lambda: elementary_controller.state.boundary,
+        elementary_snapshot=elementary_controller.snapshot,
+        two_d_snapshot=_snapshot_2d_mode,
+        timeline_snapshots=_active_export_timeline_snapshots,
+        analysis_series=active_analysis_series,
+        history_status=active_history_status,
+        session_document=capture_session_document,
+        set_status=set_status,
+    ),
+    export_runner,
+)
+
+export_manager = ExportMenu(
+    ExportMenuServices(
+        prepare_open=_prepare_export_menu,
+        context_label=export_coordinator.context_label,
+        export_png=export_coordinator.export_png,
+        export_gif=export_coordinator.export_gif,
+        export_mp4=export_coordinator.export_mp4,
+        export_csv=export_coordinator.export_csv,
+        export_json=export_coordinator.export_json,
+        set_status=set_status,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        screen=lambda: screen,
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+    ),
+    export_runner,
+)
+
 main_menu = setup_menu()
 rebuild_context_menu()
 center_view()
 set_status(
-    "D: dimension · M: mode · I: analysis · J: generation · Space: run/pause",
+    "D: dimension · M: mode · I: analysis · X: export · Space: run/pause",
     5.0,
 )
 
@@ -4041,6 +4164,7 @@ def run() -> None:
 
             if (
                 not session_manager.active
+                and not export_manager.active
                 and not dimension_menu_active
                 and not active_workspace().controller.overlay_active
             ):
@@ -4074,6 +4198,7 @@ def run() -> None:
     finally:
         pattern_scan_executor.shutdown(wait=True, cancel_futures=True)
         comparison_runner.shutdown()
+        export_runner.shutdown()
         pygame.quit()
 
 

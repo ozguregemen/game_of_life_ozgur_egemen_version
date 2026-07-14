@@ -81,6 +81,7 @@ class ElementaryWorkspaceServices:
     activate_dimension_menu: Callable[[], None]
     activate_session_menu: Callable[[], None]
     activate_analysis: Callable[[], None]
+    activate_export: Callable[[], None]
     toggle_grid: Callable[[], None]
     cycle_theme: Callable[[], None]
     cached_stats: Callable[[str, Callable[[], dict[str, Any]]], dict[str, Any]]
@@ -709,6 +710,11 @@ class ElementaryWorkspaceController(WorkspaceController):
             "Scientific Analysis (I)",
             self.services.activate_analysis,
             accent=(90, 195, 255),
+        )
+        menu.add_button(
+            "Export Results (X)",
+            self.services.activate_export,
+            accent=(235, 155, 70),
         )
         menu.add_button(
             "Browse Rules 0–255 (E)",
