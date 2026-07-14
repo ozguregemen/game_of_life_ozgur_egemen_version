@@ -22,6 +22,7 @@ satırı yine `import pygame` olarak kalır.
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
 - Basit dönüş kurallarından karmaşık izler üreten Langton's Ant modu
 - İletken hatlar üzerinde elektron sinyalleri çalıştıran Wireworld modu
+- Sekiz rengin eşik tabanlı olarak birbirini tükettiği Cyclic Cellular Automaton modu
 - Açıklamalı mod seçme paneli ve moda göre değişen bağlamsal sağ menü
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
@@ -44,7 +45,7 @@ satırı yine `import pygame` olarak kalır.
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
 | M | Açıklamalı mod seçme panelini aç / kapat |
-| T | Immigration türünü değiştir / Langton karıncasını döndür / Wireworld fırçasını değiştir |
+| T | Immigration türünü, Wireworld fırçasını veya Cyclic renk fırçasını değiştir; Langton karıncasını döndür |
 | Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
@@ -83,8 +84,9 @@ satırı yine `import pygame` olarak kalır.
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
 - `wireworld.py`: Dört durumlu Wireworld kural ve istatistik çekirdeği
+- `cyclic_automaton.py`: Çok renkli, eşik tabanlı Cyclic Cellular Automaton çekirdeği
 - `mode_registry.py`: Mod adları, açıklamaları, renkleri ve bağlamsal kontrol tanımları
-- `mode_patterns.py`: Immigration, Brian's Brain, Langton ve Wireworld hazır patternleri
+- `mode_patterns.py`: Life dışındaki modların hazır pattern ve başlangıç durumları
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -100,20 +102,21 @@ python -m unittest discover -s tests
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
 pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
-depolamayı; Immigration, Brian's Brain, Langton's Ant ve Wireworld kurallarını;
-mod registry ve bağlamsal menü davranışını; beş modun SDL dummy video driver ile
+depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Automaton
+kurallarını; mod registry ve bağlamsal menü davranışını; altı modun SDL dummy video driver ile
 başlangıcını kapsar.
 
 ## Bağlamsal arayüz
 
-`M` tuşu veya sağ menüdeki `Select Mode` düğmesi, beş simülasyonu açıklamalı
-kartlar halinde gösterir. Kartlar fareyle ya da `1`–`5` tuşlarıyla seçilebilir.
+`M` tuşu veya sağ menüdeki `Select Mode` düğmesi, altı simülasyonu açıklamalı
+kartlar halinde gösterir. Kartlar fareyle ya da `1`–`6` tuşlarıyla seçilebilir.
 Bir mod seçildiğinde çalışan simülasyon duraklatılır; diğer modların grid ve geri
 alma geçmişleri korunur.
 
 Sağ menünün ilk bölümü seçilen moda göre yeniden kurulur. Life-like modunda kural,
 heatmap ve yaş kontrolleri; Immigration'da iki tür fırçası; Langton's Ant'te dönüş
-kontrolü; Wireworld'de renkli iletken, elektron başı ve elektron kuyruğu fırçaları
+kontrolü; Wireworld'de renkli iletken, elektron başı ve elektron kuyruğu fırçaları;
+Cyclic Automaton'da renk fırçası ve temas eşiği
 gösterilir. Seçili tür veya fırça renkli çerçeveyle belirtilir. Ortak temizleme,
 randomize, geri alma, pattern, tema ve görünüm kontrolleri her modda erişilebilir
 kalır.
@@ -131,6 +134,10 @@ Wireworld menüsünde hareket eden düz sinyal, ileri/ters diyot çifti ve clock
 devresi bulunur. Bu patternlerde iletken, elektron başı ve elektron kuyruğu ayrı
 durumlar olarak korunur. Pattern döndürme ve çevirme işlemleri çok durumlu hücreleri;
 Langton modunda ayrıca karıncanın konum ve yönünü dönüştürür.
+
+Cyclic Automaton menüsü diagonal faz gradyanı, iç içe renk halkaları ve sekiz
+durumlu renk çarkı başlangıçlarını içerir. Bu modda renk `0` boşluk değil gerçek bir
+faz olduğu için pattern yerleştirilirken şeffaf sayılmaz.
 
 Kaydedilen özel pattern JSON'ları seçili modun adını içerir ve yalnızca o modun
 menüsünde görünür. Eski, `mode` alanı bulunmayan JSON dosyaları geriye uyumluluk için
@@ -184,3 +191,18 @@ elektron başı ve elektron kuyruğu fırçaları arasında geçer. Hazır devre
 üç durumu da doğrudan yerleştirir. Elle bir devreyi çalıştırmak için iletken hat
 üzerine en az bir elektron başı; yönlü bir başlangıç için başın arkasına bir
 elektron kuyruğu çizilebilir.
+
+## Cyclic Cellular Automaton
+
+Cyclic Cellular Automaton sekiz renk durumu kullanır. `s` durumundaki bir hücre,
+sekiz hücreli Moore komşuluğunda en az seçili eşik kadar `(s + 1) mod 8` rengi
+bulunuyorsa bu sonraki renge geçer; aksi halde rengini korur. Tüm hücreler aynı
+anda güncellenir ve grid sınırları diğer modlarda olduğu gibi sonludur. Bu temas
+tabanlı renk ilerleme tanımı, Fisch, Gravner ve Griffeath'in
+[CCA çerçevesini](https://arxiv.org/abs/patt-sol/9304001) izler.
+
+`Randomize` sekiz rengi eşit olasılıkla dağıtarak dalga ve spiral oluşumu için
+uygun bir başlangıç sağlar. Sol tık seçili rengi, sağ tık renk `0`'ı çizer; `T`
+renk fırçasını ilerletir. Sağ menüdeki threshold düğmesi temas eşiğini `1`–`8`
+arasında döndürür. Düşük eşikler hareketli renk cepheleri üretirken yüksek eşikler
+daha kolay kilitlenen veya durağan düzenlere yol açabilir.
