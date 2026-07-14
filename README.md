@@ -20,6 +20,7 @@ satırı yine `import pygame` olarak kalır.
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
+- Basit dönüş kurallarından karmaşık izler üreten Langton's Ant modu
 - Hücre yaşı ve yaşa bağlı renkler
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
@@ -40,8 +41,9 @@ satırı yine `import pygame` olarak kalır.
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
 | Space | Başlat / durdur |
-| M | Life-like / Immigration / Brian's Brain modları arasında geç |
-| T | Immigration modunda aktif türü değiştir |
+| M | Life-like / Immigration / Brian's Brain / Langton modları arasında geç |
+| T | Immigration türünü değiştir / Langton karıncasını döndür |
+| Shift + Sol tık | Langton karıncasını seçilen hücreye taşı |
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
@@ -77,6 +79,7 @@ satırı yine `import pygame` olarak kalır.
 - `life.py`: Güncel 2D uygulama
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
+- `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -91,8 +94,8 @@ python -m unittest discover -s tests
 ```
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
-pattern yerleştirmeyi, Immigration ve Brian's Brain kurallarını ve üç modun SDL
-dummy video driver ile başlangıcını kapsar.
+pattern yerleştirmeyi, Immigration, Brian's Brain ve Langton's Ant kurallarını ve
+dört modun SDL dummy video driver ile başlangıcını kapsar.
 
 ## Immigration Game
 
@@ -116,3 +119,15 @@ Ateşlenen hücreler açık camgöbeği, ölmekte olan hücreler koyu mor çizil
 tık ateşlenen hücre yerleştirir, sağ tık siler. Hazır patternler ateşlenen
 hücrelerden oluşan başlangıç durumları olarak kullanılabilir. Brian's Brain de
 kendi grid, generation ve geri alma geçmişini korur.
+
+## Langton's Ant
+
+Langton karıncası beyaz hücrede sağa döner ve hücreyi siyaha boyar; siyah hücrede
+sola döner ve hücreyi beyaza boyar. Ardından yeni yönünde bir hücre ilerler. Bu
+iki basit kural önce düzensiz izler, yeterince uzun koşularda ise düzenli bir
+"otoyol" davranışı oluşturabilir.
+
+Sol tık siyah, sağ tık beyaz hücre çizer. `T` karıncayı bulunduğu yerde saat
+yönünde döndürür; `Shift + Sol tık` karıncayı yeni bir hücreye taşır. `Clear Grid`
+beyaz bir tahta ve kuzeye bakan merkez karıncası oluşturur. Mevcut grid politikası
+wrap kullanmadığı için karınca sınırdan çıkarsa simülasyon kontrollü biçimde durur.
