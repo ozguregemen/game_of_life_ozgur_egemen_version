@@ -67,6 +67,58 @@ class PatternStorageTests(unittest.TestCase):
     def test_get_all_patterns_reuses_same_cache(self) -> None:
         self.assertIs(patterns.get_all_patterns(), patterns.get_all_patterns())
 
+    def test_builtin_patterns_are_grouped_by_simulation_mode(self) -> None:
+        for mode in patterns.MODE_KEYS:
+            with self.subTest(mode=mode):
+                mode_patterns = patterns.get_patterns_for_mode(mode)
+                self.assertTrue(mode_patterns)
+                self.assertTrue(
+                    all(pattern["mode"] == mode for pattern in mode_patterns.values())
+                )
+
+        self.assertIn("glider", patterns.get_patterns_for_mode("life"))
+        self.assertNotIn("glider", patterns.get_patterns_for_mode("wireworld"))
+
+    def test_mode_cache_is_reused_without_disk_reads(self) -> None:
+        self.assertIs(
+            patterns.get_patterns_for_mode("wireworld"),
+            patterns.get_patterns_for_mode("wireworld"),
+        )
+
+    def test_legacy_json_without_mode_defaults_to_life(self) -> None:
+        self.pattern_directory.mkdir(exist_ok=True)
+        (self.pattern_directory / "legacy.json").write_text(
+            json.dumps({"name": "Legacy", "pattern": [[1]]}),
+            encoding="utf-8",
+        )
+
+        patterns.refresh_pattern_cache()
+
+        self.assertEqual(patterns.load_pattern("Legacy")["mode"], "life")
+        self.assertIn("legacy", patterns.get_patterns_for_mode("life"))
+
+    def test_same_display_name_can_be_saved_for_different_modes(self) -> None:
+        life_pattern = patterns.save_pattern([[1]], "Example", mode="life")
+        wire_pattern = patterns.save_pattern([[2, 1, 3]], "Example", mode="wireworld")
+
+        self.assertEqual(life_pattern["mode"], "life")
+        self.assertEqual(wire_pattern["mode"], "wireworld")
+        self.assertIsNotNone(patterns.load_pattern("Example", mode="life"))
+        self.assertIsNotNone(patterns.load_pattern("Example", mode="wireworld"))
+
+    def test_wireworld_rejects_invalid_cell_state(self) -> None:
+        with self.assertRaisesRegex(TypeError, "Wireworld"):
+            patterns.save_pattern([[4]], "Invalid Wire", mode="wireworld")
+
+    def test_langton_ant_metadata_must_fit_pattern(self) -> None:
+        with self.assertRaisesRegex(TypeError, "inside"):
+            patterns.save_pattern(
+                [[0]],
+                "Invalid Ant",
+                mode="langtons_ant",
+                ant={"row": 2, "col": 0, "direction": 0},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

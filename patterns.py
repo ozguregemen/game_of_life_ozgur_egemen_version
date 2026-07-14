@@ -7,6 +7,9 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Sequence
 
+from mode_patterns import MODE_PATTERNS
+from mode_registry import MODE_KEYS, get_mode_definition
+
 # Famous Game of Life patterns
 PATTERNS = {
     "glider": {
@@ -244,6 +247,14 @@ PATTERNS = {
     }
 }
 
+PATTERN_STATE_VALUES = {
+    "life": frozenset((0, 1)),
+    "immigration": frozenset((-1, 0, 1)),
+    "brians_brain": frozenset((0, 1, 2)),
+    "langtons_ant": frozenset((0, 1)),
+    "wireworld": frozenset((0, 1, 2, 3)),
+}
+
 PATTERN_DIRECTORY = Path(__file__).resolve().with_name("patterns")
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|]+')
 _WHITESPACE = re.compile(r"\s+")
@@ -256,6 +267,9 @@ _WINDOWS_RESERVED_NAMES = {
     *(f"LPT{number}" for number in range(1, 10)),
 }
 _PATTERN_CACHE: dict[str, dict[str, Any]] = {}
+_MODE_PATTERN_CACHE: dict[str, dict[str, dict[str, Any]]] = {
+    mode: {} for mode in MODE_KEYS
+}
 
 
 def safe_pattern_filename(name: str) -> str:
@@ -284,9 +298,12 @@ def _validate_pattern_data(data: Any) -> dict[str, Any]:
 
     name = data["name"]
     pattern = data["pattern"]
+    mode = data.get("mode", "life")
     if not isinstance(name, str) or not name.strip():
         raise TypeError("Pattern 'name' must be non-empty text.")
     safe_pattern_filename(name)
+    if not isinstance(mode, str) or mode not in PATTERN_STATE_VALUES:
+        raise TypeError("Pattern 'mode' must name a registered simulation mode.")
     if not isinstance(pattern, list) or not pattern:
         raise TypeError("Pattern must be a non-empty two-dimensional list.")
     if not all(isinstance(row, list) and row for row in pattern):
@@ -295,16 +312,45 @@ def _validate_pattern_data(data: Any) -> dict[str, Any]:
     width = len(pattern[0])
     if any(len(row) != width for row in pattern):
         raise TypeError("Pattern rows must all have the same length.")
+    allowed_states = PATTERN_STATE_VALUES[mode]
     if any(
-        not isinstance(cell, (int, bool)) or cell not in (0, 1)
+        not isinstance(cell, (int, bool)) or cell not in allowed_states
         for row in pattern
         for cell in row
     ):
-        raise TypeError("Pattern cells must be 0 or 1.")
+        states = ", ".join(str(state) for state in sorted(allowed_states))
+        mode_name = get_mode_definition(mode).name
+        raise TypeError(f"{mode_name} pattern cells must be {states}.")
 
     validated = dict(data)
     validated["name"] = name.strip()
+    validated["mode"] = mode
     validated["pattern"] = [[int(cell) for cell in row] for row in pattern]
+
+    ant = data.get("ant")
+    if ant is not None:
+        if mode != "langtons_ant" or not isinstance(ant, dict):
+            raise TypeError("Only Langton's Ant patterns may contain ant metadata.")
+        try:
+            ant_row = ant["row"]
+            ant_col = ant["col"]
+            ant_direction = ant["direction"]
+        except KeyError as exc:
+            raise TypeError("Ant metadata requires row, col, and direction.") from exc
+        if not all(
+            isinstance(value, int)
+            for value in (ant_row, ant_col, ant_direction)
+        ):
+            raise TypeError("Ant row, col, and direction must be integers.")
+        if not (0 <= ant_row < len(pattern) and 0 <= ant_col < width):
+            raise TypeError("Ant position must be inside its pattern.")
+        if ant_direction not in (0, 1, 2, 3):
+            raise TypeError("Ant direction must be between 0 and 3.")
+        validated["ant"] = {
+            "row": ant_row,
+            "col": ant_col,
+            "direction": ant_direction,
+        }
     return validated
 
 
@@ -323,17 +369,41 @@ def _read_pattern_file(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _pattern_cache_key(mode: str, name: str) -> str:
+    """Return a stable cache key while preserving legacy Life keys."""
+    normalized_name = name.casefold()
+    return normalized_name if mode == "life" else f"{mode}:{normalized_name}"
+
+
+def _pattern_filename(name: str, mode: str) -> str:
+    """Return a mode-aware filename without renaming legacy Life files."""
+    stem = safe_pattern_filename(name)
+    return f"{stem}.json" if mode == "life" else f"{mode}__{stem}.json"
+
+
 def refresh_pattern_cache() -> None:
     """Reload built-in and custom patterns into the shared cache."""
-    refreshed = deepcopy(PATTERNS)
+    refreshed: dict[str, dict[str, Any]] = {}
+    builtins = {**PATTERNS, **MODE_PATTERNS}
+    for key, pattern_data in builtins.items():
+        document = deepcopy(pattern_data)
+        document.setdefault("mode", "life")
+        refreshed[key] = _validate_pattern_data(document)
+
     if PATTERN_DIRECTORY.is_dir():
         for path in sorted(PATTERN_DIRECTORY.glob("*.json")):
             pattern_data = _read_pattern_file(path)
             if pattern_data is not None:
-                refreshed[pattern_data["name"].casefold()] = pattern_data
+                key = _pattern_cache_key(pattern_data["mode"], pattern_data["name"])
+                refreshed[key] = pattern_data
 
     _PATTERN_CACHE.clear()
     _PATTERN_CACHE.update(refreshed)
+    for mode in MODE_KEYS:
+        mode_cache = _MODE_PATTERN_CACHE.setdefault(mode, {})
+        mode_cache.clear()
+    for key, pattern_data in refreshed.items():
+        _MODE_PATTERN_CACHE[pattern_data["mode"]][key] = pattern_data
 
 
 def save_pattern(
@@ -341,6 +411,8 @@ def save_pattern(
     name: str,
     description: str = "",
     *,
+    mode: str = "life",
+    ant: dict[str, int] | None = None,
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Save a custom pattern and refresh the shared cache.
@@ -348,20 +420,24 @@ def save_pattern(
     Existing files are protected by default. Callers must explicitly pass
     ``overwrite=True`` to replace one.
     """
-    filename = f"{safe_pattern_filename(name)}.json"
-    pattern_data = _validate_pattern_data(
-        {
-            "name": name,
-            "description": description,
-            "pattern": [list(row) for row in pattern],
-            "date_created": datetime.datetime.now().isoformat(),
-        }
-    )
+    if mode not in PATTERN_STATE_VALUES:
+        raise ValueError(f"Unknown simulation mode: {mode}")
+    filename = _pattern_filename(name, mode)
+    document: dict[str, Any] = {
+        "name": name,
+        "mode": mode,
+        "description": description,
+        "pattern": [list(row) for row in pattern],
+        "date_created": datetime.datetime.now().isoformat(),
+    }
+    if ant is not None:
+        document["ant"] = dict(ant)
+    pattern_data = _validate_pattern_data(document)
     PATTERN_DIRECTORY.mkdir(parents=True, exist_ok=True)
     path = PATTERN_DIRECTORY / filename
-    mode = "w" if overwrite else "x"
+    file_mode = "w" if overwrite else "x"
     try:
-        with path.open(mode, encoding="utf-8") as pattern_file:
+        with path.open(file_mode, encoding="utf-8") as pattern_file:
             json.dump(pattern_data, pattern_file, ensure_ascii=False, indent=2)
     except FileExistsError as exc:
         raise FileExistsError(
@@ -372,9 +448,11 @@ def save_pattern(
     return pattern_data
 
 
-def delete_pattern(name: str) -> bool:
+def delete_pattern(name: str, *, mode: str = "life") -> bool:
     """Delete a custom pattern and refresh the cache when it changes."""
-    path = PATTERN_DIRECTORY / f"{safe_pattern_filename(name)}.json"
+    if mode not in PATTERN_STATE_VALUES:
+        raise ValueError(f"Unknown simulation mode: {mode}")
+    path = PATTERN_DIRECTORY / _pattern_filename(name, mode)
     try:
         path.unlink()
     except FileNotFoundError:
@@ -387,15 +465,24 @@ def delete_pattern(name: str) -> bool:
     return True
 
 
-def load_pattern(name: str) -> dict[str, Any] | None:
+def load_pattern(name: str, *, mode: str = "life") -> dict[str, Any] | None:
     """Load and validate one custom pattern without propagating file errors."""
-    path = PATTERN_DIRECTORY / f"{safe_pattern_filename(name)}.json"
+    if mode not in PATTERN_STATE_VALUES:
+        raise ValueError(f"Unknown simulation mode: {mode}")
+    path = PATTERN_DIRECTORY / _pattern_filename(name, mode)
     return _read_pattern_file(path)
 
 
 def get_all_patterns() -> dict[str, dict[str, Any]]:
     """Return the shared in-memory pattern cache without touching disk."""
     return _PATTERN_CACHE
+
+
+def get_patterns_for_mode(mode: str) -> dict[str, dict[str, Any]]:
+    """Return the cached built-in and custom patterns for one mode."""
+    if mode not in _MODE_PATTERN_CACHE:
+        raise ValueError(f"Unknown simulation mode: {mode}")
+    return _MODE_PATTERN_CACHE[mode]
 
 
 def rotate_pattern(
