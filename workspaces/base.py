@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 import pygame
 
@@ -51,6 +51,14 @@ class WorkspaceController(ABC):
     @abstractmethod
     def randomize(self, density: float = 0.20) -> None:
         """Create a random initial condition."""
+
+    @abstractmethod
+    def snapshot(self) -> dict[str, Any]:
+        """Return JSON-compatible persistent workspace state."""
+
+    @abstractmethod
+    def restore(self, snapshot: Mapping[str, Any]) -> None:
+        """Replace workspace state from a validated snapshot."""
 
     @abstractmethod
     def build_sidebar(self, menu: Menu) -> None:

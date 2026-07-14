@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import pygame
 
@@ -18,6 +18,7 @@ from elementary_ca import (
     RULE_PRESETS,
     ElementaryRow,
     next_background,
+    normalize_row,
     random_seed,
     row_stats,
     rule_bits,
@@ -34,7 +35,14 @@ ECA_DIAGRAM_LIMIT = 512
 ECA_MIN_CELL_SIZE = 2
 ECA_MAX_CELL_SIZE = 16
 
-ElementarySnapshot = tuple[list[ElementaryRow], int, int, str, int]
+ElementarySnapshot = tuple[
+    list[ElementaryRow],
+    int,
+    int,
+    str,
+    int,
+    ElementaryRow,
+]
 
 
 @dataclass
@@ -45,6 +53,9 @@ class ElementaryWorkspaceState:
     boundary: str = BOUNDARY_INFINITE
     background: int = 0
     rule_change_reset: bool = True
+    seed: ElementaryRow = field(
+        default_factory=lambda: single_cell_seed(DEFAULT_WIDTH)
+    )
     rows: list[ElementaryRow] = field(
         default_factory=lambda: [single_cell_seed(DEFAULT_WIDTH)]
     )
@@ -77,6 +88,7 @@ class ElementaryWorkspaceServices:
     invalidate: Callable[[str], None]
     rebuild_sidebar: Callable[[], None]
     activate_dimension_menu: Callable[[], None]
+    activate_session_menu: Callable[[], None]
     toggle_grid: Callable[[], None]
     cycle_theme: Callable[[], None]
     cached_stats: Callable[[str, Callable[[], dict[str, Any]]], dict[str, Any]]
@@ -188,6 +200,7 @@ class ElementaryWorkspaceController(WorkspaceController):
                 self.state.rule,
                 self.state.boundary,
                 self.state.background,
+                self.state.seed,
             )
         )
 
@@ -201,6 +214,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             self.state.rule,
             self.state.boundary,
             self.state.background,
+            self.state.seed,
         ) = self.state.undo_history.pop()
         self.services.set_running(False)
         self.follow_latest()
@@ -252,10 +266,12 @@ class ElementaryWorkspaceController(WorkspaceController):
             self.state.rows == [seed]
             and self.state.generation == 0
             and self.state.background == 0
+            and self.state.seed == seed
         ):
             self._status(message)
             return
         self.save_history()
+        self.state.seed = seed
         self.state.rows = [seed]
         self.state.generation = 0
         self.state.background = 0
@@ -282,6 +298,108 @@ class ElementaryWorkspaceController(WorkspaceController):
             "Centered single-cell seed created.",
         )
 
+    def snapshot(self) -> dict[str, Any]:
+        """Return the complete diagram and camera state for session storage."""
+        return {
+            "rule": self.state.rule,
+            "boundary": self.state.boundary,
+            "background": self.state.background,
+            "rule_change_reset": self.state.rule_change_reset,
+            "seed": list(self.state.seed),
+            "rows": [list(row) for row in self.state.rows],
+            "generation": self.state.generation,
+            "camera": {
+                "cell_size": self.state.cell_size,
+                "offset": [
+                    self.state.view_offset_x,
+                    self.state.view_offset_y,
+                ],
+            },
+        }
+
+    def restore(self, snapshot: Mapping[str, Any]) -> None:
+        """Restore a prevalidated complete elementary workspace snapshot."""
+        rows = [normalize_row(row) for row in snapshot["rows"]]
+        seed = normalize_row(snapshot["seed"])
+        if not rows:
+            raise ValueError("Elementary session must contain at least one row.")
+        rule = validate_rule(snapshot["rule"])
+        boundary = snapshot["boundary"]
+        if boundary not in (BOUNDARY_INFINITE, BOUNDARY_FIXED, BOUNDARY_WRAP):
+            raise ValueError(f"Unknown elementary boundary: {boundary}")
+        background = snapshot["background"]
+        if isinstance(background, bool) or background not in (0, 1):
+            raise ValueError("Elementary background must be 0 or 1.")
+        generation = snapshot["generation"]
+        if isinstance(generation, bool) or not isinstance(generation, int):
+            raise TypeError("Elementary generation must be an integer.")
+        if generation < 0:
+            raise ValueError("Elementary generation cannot be negative.")
+        rule_change_reset = snapshot["rule_change_reset"]
+        if not isinstance(rule_change_reset, bool):
+            raise TypeError("Rule-change behavior must be true or false.")
+        camera = snapshot["camera"]
+        cell_size = int(camera["cell_size"])
+        offset_x, offset_y = camera["offset"]
+
+        self.state.rule = rule
+        self.state.boundary = boundary
+        self.state.background = background
+        self.state.rule_change_reset = rule_change_reset
+        self.state.seed = seed
+        self.state.rows = rows
+        self.state.generation = generation
+        self.state.cell_size = max(
+            ECA_MIN_CELL_SIZE,
+            min(ECA_MAX_CELL_SIZE, cell_size),
+        )
+        self.state.view_offset_x = int(offset_x)
+        self.state.view_offset_y = int(offset_y)
+        self.state.undo_history.clear()
+        self.state.rule_menu_active = False
+        self.state.rule_menu_input = ""
+        self.state.drawing = False
+        self.state.stroke_history_pending = False
+        self.services.set_running(False)
+        self._invalidate()
+
+    def experiment_snapshot(self) -> dict[str, Any]:
+        """Return a reusable rule/boundary/current-row experiment setup."""
+        return {
+            "rule": self.state.rule,
+            "boundary": self.state.boundary,
+            "background": self.state.background,
+            "rule_change_reset": self.state.rule_change_reset,
+            "seed": list(self.state.rows[-1]),
+        }
+
+    def restore_experiment(self, experiment: Mapping[str, Any]) -> None:
+        """Restart the workspace from a validated experiment profile."""
+        seed = normalize_row(experiment["seed"])
+        rule = validate_rule(experiment["rule"])
+        boundary = experiment["boundary"]
+        if boundary not in (BOUNDARY_INFINITE, BOUNDARY_FIXED, BOUNDARY_WRAP):
+            raise ValueError(f"Unknown elementary boundary: {boundary}")
+        background = experiment["background"]
+        if isinstance(background, bool) or background not in (0, 1):
+            raise ValueError("Elementary background must be 0 or 1.")
+        rule_change_reset = experiment["rule_change_reset"]
+        if not isinstance(rule_change_reset, bool):
+            raise TypeError("Rule-change behavior must be true or false.")
+
+        self.save_history()
+        self.state.rule = rule
+        self.state.boundary = boundary
+        self.state.background = background
+        self.state.rule_change_reset = rule_change_reset
+        self.state.seed = seed
+        self.state.rows = [seed]
+        self.state.generation = 0
+        self.services.set_running(False)
+        self.center_view()
+        self._invalidate()
+        self.services.rebuild_sidebar()
+
     @staticmethod
     def boundary_label(boundary: str) -> str:
         return {
@@ -298,12 +416,14 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.save_history()
         self.state.rule = validated_rule
         if self.state.rule_change_reset:
-            self.state.rows = [single_cell_seed(DEFAULT_WIDTH)]
+            self.state.seed = single_cell_seed(DEFAULT_WIDTH)
+            self.state.rows = [self.state.seed]
             self.state.boundary = BOUNDARY_INFINITE
             self.state.background = 0
             restart_label = "canonical single-cell seed and infinite background"
         else:
-            self.state.rows = [self.state.rows[-1]]
+            self.state.seed = self.state.rows[-1]
+            self.state.rows = [self.state.seed]
             if self.state.boundary != BOUNDARY_INFINITE:
                 self.state.background = 0
             restart_label = "the current row"
@@ -345,7 +465,8 @@ class ElementaryWorkspaceController(WorkspaceController):
         current_index = boundaries.index(self.state.boundary)
         self.state.boundary = boundaries[(current_index + 1) % len(boundaries)]
         self.state.background = 0
-        self.state.rows = [self.state.rows[-1]]
+        self.state.seed = self.state.rows[-1]
+        self.state.rows = [self.state.seed]
         self.state.generation = 0
         self.services.set_running(False)
         self.center_view()
@@ -376,6 +497,8 @@ class ElementaryWorkspaceController(WorkspaceController):
         edited = list(current)
         edited[column] = target_value
         self.state.rows[-1] = tuple(edited)
+        if self.state.generation == 0 and len(self.state.rows) == 1:
+            self.state.seed = self.state.rows[-1]
         self.services.set_running(False)
         self._invalidate()
 
@@ -512,6 +635,11 @@ class ElementaryWorkspaceController(WorkspaceController):
             "Select Dimension (D)",
             self.services.activate_dimension_menu,
             accent=accent,
+        )
+        menu.add_button(
+            "Session & Profiles (P)",
+            self.services.activate_session_menu,
+            accent=(80, 190, 145),
         )
         menu.add_button(
             "Browse Rules 0–255 (E)",

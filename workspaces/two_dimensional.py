@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import pygame
 
@@ -21,6 +21,8 @@ class TwoDimensionalControllerCallbacks:
     step_back: Callable[[], None]
     clear: Callable[[], None]
     randomize: Callable[[float], None]
+    snapshot: Callable[[], dict[str, Any]]
+    restore: Callable[[Mapping[str, Any]], None]
     build_sidebar: Callable[[Menu], None]
     overlay_active: Callable[[], bool]
     close_overlays: Callable[[], None]
@@ -67,6 +69,12 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
 
     def randomize(self, density: float = 0.20) -> None:
         self.callbacks.randomize(density)
+
+    def snapshot(self) -> dict[str, Any]:
+        return self.callbacks.snapshot()
+
+    def restore(self, snapshot: Mapping[str, Any]) -> None:
+        self.callbacks.restore(snapshot)
 
     def build_sidebar(self, menu: Menu) -> None:
         self.callbacks.build_sidebar(menu)

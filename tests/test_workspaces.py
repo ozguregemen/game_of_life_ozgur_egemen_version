@@ -1,6 +1,7 @@
 import os
 import unittest
 from unittest.mock import patch
+from typing import Any, Mapping
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
@@ -43,6 +44,12 @@ class StubController(WorkspaceController):
         pass
 
     def randomize(self, density: float = 0.20) -> None:
+        pass
+
+    def snapshot(self) -> dict[str, Any]:
+        return {}
+
+    def restore(self, snapshot: Mapping[str, Any]) -> None:
         pass
 
     def build_sidebar(self, menu: Menu) -> None:

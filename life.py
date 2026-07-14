@@ -5,7 +5,7 @@ import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 os.environ["SDL_VIDEO_CENTERED"] = "1"
 
@@ -76,6 +76,23 @@ from mode_registry import (
 )
 from patterns import get_patterns_for_mode, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
+from session_storage import (
+    DOCUMENT_VERSION,
+    PROFILE_SCHEMA,
+    SESSION_SCHEMA,
+    DocumentValidationError,
+    SessionStorageError,
+    list_profiles,
+    list_sessions,
+    load_profile,
+    load_session,
+    save_profile,
+    save_session,
+    utc_timestamp,
+    validate_profile_document,
+    validate_session_document,
+)
+from session_ui import SessionMenu, SessionMenuServices
 from themes import THEMES, Menu
 from visuals import CellTransition, get_enhanced_age_color
 from wireworld import (
@@ -1255,7 +1272,8 @@ def toggle_grid_lines() -> None:
     set_status(f"Grid lines {'on' if show_grid else 'off'}.")
 
 
-def get_pattern_name() -> str | None:
+def get_text_input(prompt_text: str) -> str | None:
+    """Collect a short name with an in-application modal text field."""
     input_box = pygame.Rect(
         max(20, (WINDOW_WIDTH - MENU_WIDTH) // 2 - 150),
         max(70, WINDOW_HEIGHT // 2 - 25),
@@ -1276,7 +1294,7 @@ def get_pattern_name() -> str | None:
                     return text.strip()
                 if event.key == pygame.K_BACKSPACE:
                     text = text[:-1]
-                else:
+                elif event.unicode and event.unicode.isprintable() and len(text) < 80:
                     text += event.unicode
 
         draw_scene()
@@ -1284,7 +1302,7 @@ def get_pattern_name() -> str | None:
         overlay.fill((0, 0, 0, 150))
         screen.blit(overlay, (0, 0))
 
-        prompt = font.render("Pattern name", True, (255, 255, 255))
+        prompt = font.render(prompt_text, True, (255, 255, 255))
         screen.blit(prompt, (input_box.x, input_box.y - 34))
         pygame.draw.rect(screen, (20, 25, 35), input_box)
         pygame.draw.rect(screen, (70, 170, 255), input_box, 2)
@@ -1295,6 +1313,10 @@ def get_pattern_name() -> str | None:
         clock.tick(60)
 
     return None
+
+
+def get_pattern_name() -> str | None:
+    return get_text_input("Pattern name")
 
 
 def save_current_pattern() -> None:
@@ -1332,6 +1354,237 @@ def save_current_pattern() -> None:
         return
 
     set_status(f"Pattern '{name}' saved.")
+
+
+LAST_SESSION_IDENTIFIER = "last_session"
+
+
+def capture_session_document(name: str = "Last Session") -> dict[str, Any]:
+    """Capture every persistent workspace and shared application setting."""
+    return {
+        "schema": SESSION_SCHEMA,
+        "version": DOCUMENT_VERSION,
+        "name": name,
+        "saved_at": utc_timestamp(),
+        "application": {
+            "dimension": active_dimension,
+            "mode": simulation_mode,
+            "theme": current_theme,
+            "speed": speed,
+            "display": {
+                "grid": show_grid,
+                "heatmap": show_heatmap,
+                "ages": show_age_numbers,
+                "coordinates": show_coordinates,
+                "quadrants": show_quadrants,
+            },
+        },
+        "workspaces": {
+            key: workspace_registry.get(key).controller.snapshot()
+            for key in ("1d", "2d")
+        },
+    }
+
+
+def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate then atomically replace the application's persistent state."""
+    global active_dimension, simulation_mode, current_theme, speed
+    global show_grid, show_heatmap, show_age_numbers
+    global show_coordinates, show_quadrants, simulation_active
+    global single_step_requested, selected_pattern, pattern_menu_active
+    global mode_menu_active, dimension_menu_active
+    global drawing, drawing_history_pending
+
+    normalized = validate_session_document(document)
+    if normalized["workspaces"]["2d"]["shape"] != [ROWS, COLS]:
+        shape = normalized["workspaces"]["2d"]["shape"]
+        raise DocumentValidationError(
+            f"Session grid is {shape}; this build requires [{ROWS}, {COLS}]."
+        )
+
+    application = normalized["application"]
+    active_workspace().controller.deactivate()
+    workspace_registry.get("1d").controller.restore(normalized["workspaces"]["1d"])
+    workspace_registry.get("2d").controller.restore(normalized["workspaces"]["2d"])
+
+    active_dimension = application["dimension"]
+    simulation_mode = application["mode"]
+    current_theme = application["theme"]
+    speed = application["speed"]
+    display = application["display"]
+    show_grid = display["grid"]
+    show_heatmap = display["heatmap"]
+    show_age_numbers = display["ages"]
+    show_coordinates = display["coordinates"]
+    show_quadrants = display["quadrants"]
+
+    simulation_active = False
+    single_step_requested = False
+    selected_pattern = None
+    pattern_menu_active = False
+    mode_menu_active = False
+    dimension_menu_active = False
+    session_manager.close()
+    drawing = False
+    drawing_history_pending = False
+    main_menu.theme = current_theme
+    rebuild_context_menu()
+    return normalized
+
+
+def save_quick_session() -> bool:
+    """Overwrite the single keyboard-accessible recovery session."""
+    try:
+        save_session(
+            capture_session_document(),
+            LAST_SESSION_IDENTIFIER,
+            overwrite=True,
+        )
+    except (OSError, TypeError, ValueError, SessionStorageError) as exc:
+        set_status(f"Could not save session: {exc}", 5.0)
+        return False
+    set_status("Complete session saved as 'Last Session'.", 3.0)
+    return True
+
+
+def load_quick_session() -> bool:
+    """Load the keyboard-accessible recovery session when it exists."""
+    return load_saved_session(LAST_SESSION_IDENTIFIER)
+
+
+def save_named_session() -> bool:
+    """Prompt for a name and save a new complete session."""
+    name = get_text_input("Session name")
+    if not name:
+        set_status("Session save cancelled.")
+        return False
+    try:
+        save_session(capture_session_document(name), name)
+    except FileExistsError as exc:
+        set_status(f"Could not save session: {exc}", 5.0)
+        return False
+    except (OSError, TypeError, ValueError, SessionStorageError) as exc:
+        set_status(f"Could not save session: {exc}", 5.0)
+        return False
+    set_status(f"Complete session '{name}' saved.", 3.0)
+    return True
+
+
+def load_saved_session(identifier: str) -> bool:
+    """Load one named session without changing state on a validation error."""
+    try:
+        document = load_session(identifier)
+        normalized = restore_session_document(document)
+    except (OSError, TypeError, ValueError, SessionStorageError) as exc:
+        set_status(f"Could not load session: {exc}", 5.0)
+        return False
+    set_status(f"Session '{normalized['name']}' loaded; simulation paused.", 4.0)
+    return True
+
+
+def capture_experiment_profile(name: str) -> dict[str, Any]:
+    """Capture the current 1D rule, boundary, and latest row as a seed."""
+    return {
+        "schema": PROFILE_SCHEMA,
+        "version": DOCUMENT_VERSION,
+        "name": name,
+        "saved_at": utc_timestamp(),
+        "experiment": elementary_controller.experiment_snapshot(),
+    }
+
+
+def save_current_experiment_profile() -> bool:
+    """Prompt for and save a reusable Elementary CA experiment profile."""
+    if active_dimension != "1d":
+        set_status("Experiment profiles are available in the 1D workspace.")
+        return False
+    name = get_text_input("1D experiment profile name")
+    if not name:
+        set_status("Experiment profile save cancelled.")
+        return False
+    try:
+        save_profile(capture_experiment_profile(name), name)
+    except FileExistsError as exc:
+        set_status(f"Could not save experiment profile: {exc}", 5.0)
+        return False
+    except (OSError, TypeError, ValueError, SessionStorageError) as exc:
+        set_status(f"Could not save experiment profile: {exc}", 5.0)
+        return False
+    set_status(f"1D experiment profile '{name}' saved.", 3.0)
+    return True
+
+
+def restore_experiment_profile(document: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and restart 1D from an experiment profile."""
+    normalized = validate_profile_document(document)
+    if active_dimension != "1d":
+        set_active_dimension("1d")
+    elementary_controller.restore_experiment(normalized["experiment"])
+    return normalized
+
+
+def load_saved_experiment_profile(identifier: str) -> bool:
+    """Load one saved 1D experiment profile."""
+    try:
+        document = load_profile(identifier)
+        normalized = restore_experiment_profile(document)
+    except (OSError, TypeError, ValueError, SessionStorageError) as exc:
+        set_status(f"Could not load experiment profile: {exc}", 5.0)
+        return False
+    set_status(f"1D experiment '{normalized['name']}' loaded at generation 0.", 4.0)
+    return True
+
+
+def activate_session_menu() -> None:
+    """Open the application-level session and experiment manager."""
+    session_manager.open()
+
+
+def _prepare_session_menu() -> None:
+    """Pause and close competing overlays before the manager opens."""
+    global simulation_active
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    active_workspace().controller.deactivate()
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    simulation_active = False
+
+
+def show_saved_session_catalog() -> None:
+    """Display valid complete sessions without reading files every frame."""
+    session_manager.show_sessions()
+
+
+def show_experiment_profile_catalog() -> None:
+    """Display valid 1D profiles without reading files every frame."""
+    session_manager.show_profiles()
+
+
+def session_menu_entries() -> list[dict[str, str]]:
+    """Return cached rows for the current session-manager view."""
+    return session_manager.entries()
+
+
+def execute_session_menu_entry(key: str) -> None:
+    """Run one session-manager action selected by mouse or number key."""
+    session_manager.execute(key)
+
+
+def session_menu_geometry(
+) -> tuple[pygame.Rect, list[tuple[dict[str, str], pygame.Rect]], int]:
+    """Return modal geometry, visible rows, and total visible capacity."""
+    return session_manager.geometry()
+
+
+def draw_session_menu() -> None:
+    """Draw the full-session and Elementary profile manager."""
+    session_manager.draw()
+
+
+def handle_session_menu_event(event: pygame.event.Event) -> bool:
+    """Handle session manager navigation without leaking events to a workspace."""
+    return session_manager.handle_event(event)
 
 
 # ---------------------------------------------------------------------------
@@ -1483,6 +1736,134 @@ def _two_d_generation() -> int:
         "wireworld": wireworld_generation,
         "cyclic_automaton": cyclic_generation,
     }[simulation_mode]
+
+
+def _snapshot_2d() -> dict[str, Any]:
+    """Return all six 2D mode states and the shared 2D camera."""
+    return {
+        "shape": [ROWS, COLS],
+        "camera": {
+            "cell_size": CELL_SIZE,
+            "offset": [view_offset_x, view_offset_y],
+        },
+        "states": {
+            "life": {
+                "rule": current_rule,
+                "grid": deepcopy(grid),
+                "trail": deepcopy(trail_grid),
+                "activity": deepcopy(activity_grid),
+                "generation": generation,
+            },
+            "immigration": {
+                "grid": deepcopy(immigration_grid),
+                "generation": immigration_generation,
+                "active_species": active_species,
+            },
+            "brians_brain": {
+                "grid": deepcopy(brain_grid),
+                "generation": brain_generation,
+            },
+            "langtons_ant": {
+                "grid": deepcopy(ant_grid),
+                "generation": ant_generation,
+                "ant": {
+                    "row": ant_state.row,
+                    "col": ant_state.col,
+                    "direction": ant_state.direction,
+                    "active": ant_state.active,
+                },
+            },
+            "wireworld": {
+                "grid": deepcopy(wireworld_grid),
+                "generation": wireworld_generation,
+                "brush": wireworld_brush,
+            },
+            "cyclic_automaton": {
+                "grid": deepcopy(cyclic_grid),
+                "generation": cyclic_generation,
+                "brush": cyclic_brush,
+                "threshold": cyclic_threshold,
+            },
+        },
+    }
+
+
+def _restore_2d(snapshot: Mapping[str, Any]) -> None:
+    """Replace every 2D mode state from a validated session snapshot."""
+    global CELL_SIZE, view_offset_x, view_offset_y
+    global grid, trail_grid, activity_grid, generation, current_rule
+    global immigration_grid, immigration_generation, active_species
+    global brain_grid, brain_generation
+    global ant_grid, ant_state, ant_generation, ant_last_report
+    global wireworld_grid, wireworld_generation, wireworld_brush
+    global cyclic_grid, cyclic_generation, cyclic_brush, cyclic_threshold
+    global recognized_pattern_cache, pattern_scan_generation
+    global pattern_scan_revision, grid_revision, stats_dirty
+
+    if list(snapshot["shape"]) != [ROWS, COLS]:
+        raise ValueError(
+            f"Session grid is {snapshot['shape']}; this build requires "
+            f"[{ROWS}, {COLS}]."
+        )
+    camera = snapshot["camera"]
+    states = snapshot["states"]
+    life_state = states["life"]
+    immigration_state = states["immigration"]
+    brain_state = states["brians_brain"]
+    ant_mode_state = states["langtons_ant"]
+    wire_state = states["wireworld"]
+    cyclic_state = states["cyclic_automaton"]
+
+    CELL_SIZE = int(camera["cell_size"])
+    view_offset_x, view_offset_y = map(int, camera["offset"])
+
+    current_rule = str(life_state["rule"])
+    grid = deepcopy(life_state["grid"])
+    trail_grid = deepcopy(life_state["trail"])
+    activity_grid = deepcopy(life_state["activity"])
+    generation = int(life_state["generation"])
+
+    immigration_grid = deepcopy(immigration_state["grid"])
+    immigration_generation = int(immigration_state["generation"])
+    active_species = int(immigration_state["active_species"])
+
+    brain_grid = deepcopy(brain_state["grid"])
+    brain_generation = int(brain_state["generation"])
+
+    ant_grid = deepcopy(ant_mode_state["grid"])
+    ant_generation = int(ant_mode_state["generation"])
+    saved_ant = ant_mode_state["ant"]
+    ant_state = AntState(
+        int(saved_ant["row"]),
+        int(saved_ant["col"]),
+        int(saved_ant["direction"]),
+        bool(saved_ant["active"]),
+    )
+    ant_last_report = AntStepReport()
+
+    wireworld_grid = deepcopy(wire_state["grid"])
+    wireworld_generation = int(wire_state["generation"])
+    wireworld_brush = int(wire_state["brush"])
+
+    cyclic_grid = deepcopy(cyclic_state["grid"])
+    cyclic_generation = int(cyclic_state["generation"])
+    cyclic_brush = int(cyclic_state["brush"])
+    cyclic_threshold = int(cyclic_state["threshold"])
+
+    grid_history.clear()
+    immigration_history.clear()
+    brain_history.clear()
+    ant_history.clear()
+    wireworld_history.clear()
+    cyclic_history.clear()
+    cell_transition.transitions.clear()
+    recognized_pattern_cache = {}
+    pattern_scan_generation = -1
+    pattern_scan_revision = -1
+    grid_revision += 1
+    stats_dirty = True
+    for mode in SIMULATION_MODES:
+        invalidate_render_cache(mode)
 
 
 def _apply_2d_generation() -> bool:
@@ -2791,6 +3172,7 @@ def draw_scene() -> None:
     draw_status()
     renderer.draw_modal()
     draw_dimension_menu()
+    draw_session_menu()
 
 
 # ---------------------------------------------------------------------------
@@ -2887,6 +3269,11 @@ def _build_2d_sidebar(menu: Menu) -> None:
         "Select Dimension (D)",
         activate_dimension_menu,
         accent=DIMENSION_BY_KEY["2d"].accent,
+    )
+    menu.add_button(
+        "Session & Profiles (P)",
+        activate_session_menu,
+        accent=(80, 190, 145),
     )
     menu.add_button(
         "Select Mode (M)",
@@ -3058,7 +3445,14 @@ def handle_keydown(event: pygame.event.Event) -> None:
     """Handle app-wide commands before delegating workspace-specific keys."""
     global simulation_active, single_step_requested, speed
 
-    if event.key == pygame.K_SPACE:
+    modifiers = getattr(event, "mod", pygame.key.get_mods())
+    if event.key == pygame.K_s and modifiers & pygame.KMOD_CTRL:
+        save_quick_session()
+    elif event.key == pygame.K_o and modifiers & pygame.KMOD_CTRL:
+        load_quick_session()
+    elif event.key == pygame.K_p:
+        activate_session_menu()
+    elif event.key == pygame.K_SPACE:
         simulation_active = not simulation_active
     elif event.key == pygame.K_d:
         activate_dimension_menu()
@@ -3141,6 +3535,10 @@ def handle_event(event: pygame.event.Event) -> bool:
         update_window_size(event.w, event.h)
         return True
 
+    if session_manager.active:
+        handle_session_menu_event(event)
+        return True
+
     if dimension_menu_active:
         handle_dimension_menu_event(event)
         return True
@@ -3199,6 +3597,27 @@ def _set_simulation_running(value: bool) -> None:
     simulation_active = value
 
 
+session_manager = SessionMenu(
+    SessionMenuServices(
+        active_dimension=lambda: active_dimension,
+        prepare_open=_prepare_session_menu,
+        quick_save=save_quick_session,
+        quick_load=load_quick_session,
+        named_save=save_named_session,
+        save_profile=save_current_experiment_profile,
+        load_session=load_saved_session,
+        load_profile=load_saved_experiment_profile,
+        list_sessions=list_sessions,
+        list_profiles=list_profiles,
+        set_status=set_status,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        screen=lambda: screen,
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+    )
+)
+
 elementary_state = ElementaryWorkspaceState()
 elementary_services = ElementaryWorkspaceServices(
     viewport=grid_viewport,
@@ -3213,6 +3632,7 @@ elementary_services = ElementaryWorkspaceServices(
     invalidate=invalidate_render_cache,
     rebuild_sidebar=lambda: rebuild_context_menu(),
     activate_dimension_menu=activate_dimension_menu,
+    activate_session_menu=activate_session_menu,
     toggle_grid=toggle_grid_lines,
     cycle_theme=cycle_theme,
     cached_stats=cached_mode_stats,
@@ -3243,6 +3663,8 @@ two_dimensional_controller = TwoDimensionalWorkspaceController(
         step_back=_step_back_2d,
         clear=_clear_2d_grid,
         randomize=_randomize_2d_grid,
+        snapshot=_snapshot_2d,
+        restore=_restore_2d,
         build_sidebar=_build_2d_sidebar,
         overlay_active=_two_d_overlay_active,
         close_overlays=_close_2d_overlays,
@@ -3275,7 +3697,7 @@ workspace_registry.register(WorkspaceBundle(elementary_controller, elementary_re
 main_menu = setup_menu()
 rebuild_context_menu()
 center_view()
-set_status("D: dimension · M: 2D mode · Space: run/pause · Mouse: draw", 5.0)
+set_status("D: dimension · M: 2D mode · P: sessions · Space: run/pause", 5.0)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""

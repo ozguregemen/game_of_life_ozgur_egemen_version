@@ -133,8 +133,8 @@ class Menu:
         self.visible = False
         self.header_text = ""
         self.header_height = 54
-        self.button_height = 28
-        self.button_margin = 3
+        self.button_height = 26
+        self.button_margin = 2
 
     def set_header(self, text):
         self.header_text = text
