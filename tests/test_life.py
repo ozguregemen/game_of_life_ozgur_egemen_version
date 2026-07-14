@@ -77,6 +77,120 @@ class ApplicationSmokeTests(unittest.TestCase):
         self.run_smoke_test("wireworld")
 
 
+class ContextualModeUITests(unittest.TestCase):
+    def setUp(self) -> None:
+        life.mode_menu_active = False
+        life.pattern_menu_active = False
+        life.set_simulation_mode("life")
+
+    def tearDown(self) -> None:
+        life.mode_menu_active = False
+        life.set_simulation_mode("life")
+
+    @staticmethod
+    def menu_labels() -> list[str]:
+        return [data["button"].text for data in life.main_menu.buttons]
+
+    def test_m_opens_chooser_without_immediately_changing_mode(self) -> None:
+        life.handle_keydown(life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_m))
+
+        self.assertTrue(life.mode_menu_active)
+        self.assertEqual(life.simulation_mode, "life")
+
+    def test_number_key_selects_mode_from_chooser(self) -> None:
+        life.activate_mode_menu()
+        event = life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_5)
+
+        self.assertTrue(life.handle_mode_menu_event(event))
+
+        self.assertEqual(life.simulation_mode, "wireworld")
+        self.assertFalse(life.mode_menu_active)
+
+    def test_card_click_selects_mode_from_chooser(self) -> None:
+        life.activate_mode_menu()
+        _, cards = life.mode_menu_geometry()
+        brians_brain_card = dict(cards)["brians_brain"]
+        event = life.pygame.event.Event(
+            life.pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=brians_brain_card.center,
+        )
+
+        self.assertTrue(life.handle_mode_menu_event(event))
+        self.assertEqual(life.simulation_mode, "brians_brain")
+        self.assertFalse(life.mode_menu_active)
+
+    def test_context_menu_only_shows_relevant_mode_actions(self) -> None:
+        life.set_simulation_mode("life")
+        life_labels = self.menu_labels()
+        self.assertTrue(any(label.startswith("Rule:") for label in life_labels))
+        self.assertTrue(any(label.startswith("Heatmap:") for label in life_labels))
+        self.assertFalse(any("Electron" in label for label in life_labels))
+
+        life.set_simulation_mode("wireworld")
+        wireworld_labels = self.menu_labels()
+        self.assertIn("Brush: Conductor", wireworld_labels)
+        self.assertIn("Brush: Electron Head", wireworld_labels)
+        self.assertIn("Brush: Electron Tail", wireworld_labels)
+        self.assertFalse(any(label.startswith("Rule:") for label in wireworld_labels))
+        self.assertFalse(any(label.startswith("Heatmap:") for label in wireworld_labels))
+
+    def test_direct_context_brush_selection_refreshes_active_state(self) -> None:
+        life.set_simulation_mode("wireworld")
+        life.set_wireworld_brush(life.ELECTRON_HEAD)
+
+        head_button = next(
+            data["button"]
+            for data in life.main_menu.buttons
+            if data["button"].text == "Brush: Electron Head"
+        )
+        self.assertEqual(life.wireworld_brush, life.ELECTRON_HEAD)
+        self.assertTrue(head_button.active)
+
+    def test_context_button_can_be_clicked_without_prior_mouse_motion(self) -> None:
+        life.set_simulation_mode("wireworld")
+        head_data = next(
+            data
+            for data in life.main_menu.buttons
+            if data["button"].text == "Brush: Electron Head"
+        )
+        event = life.pygame.event.Event(
+            life.pygame.MOUSEBUTTONDOWN,
+            button=1,
+            pos=head_data["button"].rect.center,
+        )
+
+        self.assertTrue(life.main_menu.handle_event(event))
+        self.assertEqual(life.wireworld_brush, life.ELECTRON_HEAD)
+
+    def test_mode_cards_fit_modal_without_overlap(self) -> None:
+        modal, cards = life.mode_menu_geometry()
+        self.assertEqual(len(cards), len(life.MODE_DEFINITIONS))
+        for _, card in cards:
+            self.assertTrue(modal.contains(card))
+        for index, (_, card) in enumerate(cards):
+            self.assertFalse(any(card.colliderect(other) for _, other in cards[index + 1 :]))
+
+    def test_dispatch_tables_cover_every_registered_mode(self) -> None:
+        expected = set(life.SIMULATION_MODES)
+        self.assertEqual(set(life.GENERATION_HANDLERS), expected)
+        self.assertEqual(set(life.DRAW_HANDLERS), expected)
+
+    def test_context_menu_fits_minimum_window_height(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(760, 560)
+            life.set_simulation_mode("immigration")
+            self.assertTrue(
+                all(
+                    data["button"].rect.bottom <= life.main_menu.rect.bottom
+                    for data in life.main_menu.buttons
+                )
+            )
+        finally:
+            life.update_window_size(*original_size)
+
+
 class ImmigrationIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         life.simulation_mode = "immigration"

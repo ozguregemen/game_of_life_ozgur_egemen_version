@@ -44,6 +44,12 @@ from langtons_ant import (
     rotate_ant_clockwise,
     step_ant,
 )
+from mode_registry import (
+    MODE_BY_KEY,
+    MODE_DEFINITIONS,
+    MODE_KEYS,
+    get_mode_definition,
+)
 from patterns import get_all_patterns, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
 from themes import THEMES, Menu
@@ -135,13 +141,7 @@ wireworld_brush = CONDUCTOR
 wireworld_rng = random.Random()
 WIRE_BRUSH_STATES = (CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL)
 
-SIMULATION_MODES = (
-    "life",
-    "immigration",
-    "brians_brain",
-    "langtons_ant",
-    "wireworld",
-)
+SIMULATION_MODES = MODE_KEYS
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
 simulation_mode = (
     requested_start_mode if requested_start_mode in SIMULATION_MODES else "life"
@@ -165,6 +165,7 @@ flip_h = False
 flip_v = False
 pattern_menu_active = False
 pattern_scroll = 0
+mode_menu_active = False
 
 drawing = False
 drawing_value = 1
@@ -630,8 +631,7 @@ def cycle_theme() -> None:
     themes = list(THEMES)
     current_theme = themes[(themes.index(current_theme) + 1) % len(themes)]
     main_menu.theme = current_theme
-    for button_data in main_menu.buttons:
-        button_data["button"].theme = current_theme
+    rebuild_context_menu()
     set_status(f"Theme: {current_theme.title()}")
 
 
@@ -652,30 +652,39 @@ def cycle_rule() -> None:
     current_rule = rules[(rules.index(current_rule) + 1) % len(rules)]
     show_rule_overlay_until = time.time() + 2.5
     mark_stats_dirty()
+    rebuild_context_menu()
 
 
-def toggle_simulation_mode() -> None:
-    """Cycle through the available cellular automata modes."""
+def set_simulation_mode(mode: str) -> None:
+    """Select a registered mode and reset transient interface state."""
     global simulation_mode, simulation_active, single_step_requested
-    global selected_pattern, pattern_menu_active, drawing
-    current_index = SIMULATION_MODES.index(simulation_mode)
-    simulation_mode = SIMULATION_MODES[(current_index + 1) % len(SIMULATION_MODES)]
+    global selected_pattern, pattern_menu_active, mode_menu_active, drawing
+    definition = get_mode_definition(mode)
+    simulation_mode = mode
     simulation_active = False
     single_step_requested = False
     selected_pattern = None
     pattern_menu_active = False
+    mode_menu_active = False
     drawing = False
     cell_transition.transitions.clear()
-    if simulation_mode == "immigration":
-        set_status("Immigration Game: T changes the active species.", 4.0)
-    elif simulation_mode == "brians_brain":
-        set_status("Brian's Brain: firing cells leave a one-step dying trail.", 4.0)
-    elif simulation_mode == "langtons_ant":
-        set_status("Langton's Ant: T rotates, Shift+click moves the ant.", 4.0)
-    elif simulation_mode == "wireworld":
-        set_status("Wireworld: T changes the conductor/signal brush.", 4.0)
-    else:
-        set_status("Life-like cellular automata mode.", 3.0)
+    if "main_menu" in globals():
+        rebuild_context_menu()
+    set_status(f"{definition.name}: {definition.status_hint}", 4.0)
+
+
+def toggle_simulation_mode() -> None:
+    """Cycle modes programmatically; the interactive UI uses the chooser."""
+    current_index = SIMULATION_MODES.index(simulation_mode)
+    set_simulation_mode(SIMULATION_MODES[(current_index + 1) % len(SIMULATION_MODES)])
+
+
+def activate_mode_menu() -> None:
+    """Open the mode chooser and pause the simulation behind it."""
+    global mode_menu_active, pattern_menu_active, simulation_active
+    mode_menu_active = True
+    pattern_menu_active = False
+    simulation_active = False
 
 
 def toggle_active_species() -> None:
@@ -684,6 +693,8 @@ def toggle_active_species() -> None:
     if simulation_mode == "wireworld":
         index = WIRE_BRUSH_STATES.index(wireworld_brush)
         wireworld_brush = WIRE_BRUSH_STATES[(index + 1) % len(WIRE_BRUSH_STATES)]
+        if "main_menu" in globals():
+            rebuild_context_menu()
         set_status(f"Wireworld brush: {WIRE_STATE_NAMES[wireworld_brush]}")
         return
     if simulation_mode == "langtons_ant":
@@ -695,8 +706,31 @@ def toggle_active_species() -> None:
         set_status("This mode has no alternate drawing state.")
         return
     active_species = SPECIES_B if active_species == SPECIES_A else SPECIES_A
+    if "main_menu" in globals():
+        rebuild_context_menu()
     label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
     set_status(f"Active species: {label}")
+
+
+def set_active_species(species: int) -> None:
+    """Select an Immigration brush directly from the contextual menu."""
+    global active_species
+    if simulation_mode != "immigration" or species not in (SPECIES_A, SPECIES_B):
+        return
+    active_species = species
+    rebuild_context_menu()
+    label = "A (blue)" if species == SPECIES_A else "B (orange)"
+    set_status(f"Active species: {label}")
+
+
+def set_wireworld_brush(value: int) -> None:
+    """Select a Wireworld drawing state directly from the contextual menu."""
+    global wireworld_brush
+    if simulation_mode != "wireworld" or value not in WIRE_BRUSH_STATES:
+        return
+    wireworld_brush = value
+    rebuild_context_menu()
+    set_status(f"Wireworld brush: {WIRE_STATE_NAMES[value]}")
 
 
 def place_ant(row: int, col: int) -> None:
@@ -732,25 +766,42 @@ def activate_pattern_menu() -> None:
 def toggle_heatmap() -> None:
     global show_heatmap
     show_heatmap = not show_heatmap
+    if "main_menu" in globals():
+        rebuild_context_menu()
     set_status(f"Heatmap {'on' if show_heatmap else 'off'}.")
 
 
 def toggle_age_numbers() -> None:
     global show_age_numbers
     show_age_numbers = not show_age_numbers
+    if "main_menu" in globals():
+        rebuild_context_menu()
     set_status(f"Age numbers {'on' if show_age_numbers else 'off'}.")
 
 
 def toggle_coordinates() -> None:
     global show_coordinates
     show_coordinates = not show_coordinates
+    if "main_menu" in globals():
+        rebuild_context_menu()
     set_status(f"Coordinates {'on' if show_coordinates else 'off'}.")
 
 
 def toggle_quadrants() -> None:
     global show_quadrants
     show_quadrants = not show_quadrants
+    if "main_menu" in globals():
+        rebuild_context_menu()
     set_status(f"Quadrants {'on' if show_quadrants else 'off'}.")
+
+
+def toggle_grid_lines() -> None:
+    """Toggle grid lines and refresh the contextual control label."""
+    global show_grid
+    show_grid = not show_grid
+    if "main_menu" in globals():
+        rebuild_context_menu()
+    set_status(f"Grid lines {'on' if show_grid else 'off'}.")
 
 
 def get_pattern_name() -> str | None:
@@ -930,17 +981,18 @@ def apply_wireworld_generation() -> bool:
     return True
 
 
+GENERATION_HANDLERS = {
+    "life": apply_life_generation,
+    "immigration": apply_immigration_generation,
+    "brians_brain": apply_brain_generation,
+    "langtons_ant": apply_ant_generation,
+    "wireworld": apply_wireworld_generation,
+}
+
+
 def apply_generation() -> bool:
     """Advance the selected simulation mode."""
-    if simulation_mode == "wireworld":
-        return apply_wireworld_generation()
-    if simulation_mode == "langtons_ant":
-        return apply_ant_generation()
-    if simulation_mode == "brians_brain":
-        return apply_brain_generation()
-    if simulation_mode == "immigration":
-        return apply_immigration_generation()
-    return apply_life_generation()
+    return GENERATION_HANDLERS[simulation_mode]()
 
 
 # ---------------------------------------------------------------------------
@@ -1713,6 +1765,137 @@ def draw_pattern_menu() -> None:
     screen.blit(surface, (menu_x, menu_y))
 
 
+def mode_menu_geometry() -> tuple[pygame.Rect, list[tuple[str, pygame.Rect]]]:
+    """Return the modal and card rectangles for the responsive mode chooser."""
+    modal_width = min(760, WINDOW_WIDTH - 40)
+    modal_height = min(520, WINDOW_HEIGHT - 40)
+    modal = pygame.Rect(0, 0, modal_width, modal_height)
+    modal.center = (WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2)
+
+    columns = 2
+    rows = (len(MODE_DEFINITIONS) + columns - 1) // columns
+    horizontal_margin = 24
+    card_gap = 12
+    cards_top = modal.y + 70
+    cards_bottom = modal.bottom - 48
+    card_width = (modal.width - 2 * horizontal_margin - card_gap) // columns
+    card_height = (cards_bottom - cards_top - (rows - 1) * card_gap) // rows
+    cards: list[tuple[str, pygame.Rect]] = []
+    for index, definition in enumerate(MODE_DEFINITIONS):
+        row, col = divmod(index, columns)
+        card = pygame.Rect(
+            modal.x + horizontal_margin + col * (card_width + card_gap),
+            cards_top + row * (card_height + card_gap),
+            card_width,
+            card_height,
+        )
+        cards.append((definition.key, card))
+    return modal, cards
+
+
+def wrap_text(text: str, render_font: pygame.font.Font, width: int) -> list[str]:
+    """Wrap a short UI description to the available pixel width."""
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if current and render_font.size(candidate)[0] > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
+def draw_mode_menu() -> None:
+    """Draw an explanatory card chooser over the paused application."""
+    if not mode_menu_active:
+        return
+
+    dimmer = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+    dimmer.fill((0, 0, 0, 180))
+    screen.blit(dimmer, (0, 0))
+
+    modal, cards = mode_menu_geometry()
+    pygame.draw.rect(screen, (28, 31, 39), modal, border_radius=10)
+    pygame.draw.rect(screen, (205, 210, 220), modal, 2, border_radius=10)
+    screen.blit(
+        font.render("Choose a simulation mode", True, (245, 247, 250)),
+        (modal.x + 24, modal.y + 18),
+    )
+
+    mouse_position = pygame.mouse.get_pos()
+    for index, (mode_key, card) in enumerate(cards):
+        definition = MODE_BY_KEY[mode_key]
+        selected = mode_key == simulation_mode
+        hovered = card.collidepoint(mouse_position)
+        background = (48, 52, 63) if hovered or selected else (38, 42, 52)
+        pygame.draw.rect(screen, background, card, border_radius=7)
+        border = definition.accent if selected or hovered else (90, 96, 110)
+        pygame.draw.rect(screen, border, card, 3 if selected else 2, border_radius=7)
+
+        badge = pygame.Rect(card.x + 12, card.y + 11, 25, 25)
+        pygame.draw.rect(screen, definition.accent, badge, border_radius=5)
+        number = tiny_font.render(str(index + 1), True, (15, 18, 24))
+        screen.blit(number, number.get_rect(center=badge.center))
+        screen.blit(
+            small_font.render(definition.name, True, (248, 249, 252)),
+            (card.x + 47, card.y + 13),
+        )
+
+        for line_index, line in enumerate(
+            wrap_text(definition.summary, tiny_font, card.width - 24)[:3]
+        ):
+            screen.blit(
+                tiny_font.render(line, True, (195, 200, 212)),
+                (card.x + 12, card.y + 47 + line_index * 16),
+            )
+
+        if selected:
+            current_label = tiny_font.render("Current mode", True, definition.accent)
+            screen.blit(
+                current_label,
+                (card.right - current_label.get_width() - 12, card.y + 16),
+            )
+
+    footer = "Click a card or press 1-5   ·   Esc closes"
+    footer_surface = tiny_font.render(footer, True, (190, 195, 205))
+    screen.blit(
+        footer_surface,
+        (modal.centerx - footer_surface.get_width() // 2, modal.bottom - 31),
+    )
+
+
+def handle_mode_menu_event(event: pygame.event.Event) -> bool:
+    """Handle keyboard and mouse selection while the mode chooser is open."""
+    global mode_menu_active
+    if not mode_menu_active:
+        return False
+
+    if event.type == pygame.KEYDOWN:
+        if event.key in (pygame.K_ESCAPE, pygame.K_m):
+            mode_menu_active = False
+            return True
+        if pygame.K_1 <= event.key < pygame.K_1 + len(MODE_DEFINITIONS):
+            index = event.key - pygame.K_1
+            set_simulation_mode(MODE_DEFINITIONS[index].key)
+            return True
+
+    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        modal, cards = mode_menu_geometry()
+        for mode_key, card in cards:
+            if card.collidepoint(event.pos):
+                set_simulation_mode(mode_key)
+                return True
+        if not modal.collidepoint(event.pos):
+            mode_menu_active = False
+        return True
+
+    return True
+
+
 def draw_status() -> None:
     if not status_message or time.time() >= status_message_until:
         return
@@ -1729,29 +1912,134 @@ def draw_status() -> None:
     screen.blit(text_surface, text_surface.get_rect(center=box.center))
 
 
+DRAW_HANDLERS = {
+    "life": draw_grid,
+    "immigration": draw_immigration_grid,
+    "brians_brain": draw_brain_grid,
+    "langtons_ant": draw_ant_grid,
+    "wireworld": draw_wireworld_grid,
+}
+
+
 def draw_scene() -> None:
     screen.fill(THEMES[current_theme]["background"])
-    if simulation_mode == "wireworld":
-        draw_wireworld_grid()
-    elif simulation_mode == "langtons_ant":
-        draw_ant_grid()
-    elif simulation_mode == "brians_brain":
-        draw_brain_grid()
-    elif simulation_mode == "immigration":
-        draw_immigration_grid()
-    else:
-        draw_grid()
+    DRAW_HANDLERS[simulation_mode]()
     draw_info_bar()
     draw_stats()
     main_menu.draw(screen, tiny_font)
     draw_pattern_menu()
     draw_rule_overlay()
     draw_status()
+    draw_mode_menu()
 
 
 # ---------------------------------------------------------------------------
 # UI setup and events
 # ---------------------------------------------------------------------------
+
+
+def add_context_action(menu: Menu, action: str) -> None:
+    """Add one mode-specific control described by the mode registry."""
+    if action == "change_rule":
+        menu.add_button(
+            f"Rule: {RULES[current_rule]['name']}",
+            cycle_rule,
+            accent=MODE_BY_KEY["life"].accent,
+        )
+    elif action == "toggle_heatmap":
+        menu.add_button(
+            f"Heatmap: {'On' if show_heatmap else 'Off'}",
+            toggle_heatmap,
+            accent=(255, 125, 45),
+            active=show_heatmap,
+        )
+    elif action == "toggle_ages":
+        menu.add_button(
+            f"Age Numbers: {'On' if show_age_numbers else 'Off'}",
+            toggle_age_numbers,
+            accent=(225, 215, 80),
+            active=show_age_numbers,
+        )
+    elif action == "species_a":
+        menu.add_button(
+            "Brush: Species A",
+            lambda: set_active_species(SPECIES_A),
+            accent=(40, 180, 255),
+            active=active_species == SPECIES_A,
+        )
+    elif action == "species_b":
+        menu.add_button(
+            "Brush: Species B",
+            lambda: set_active_species(SPECIES_B),
+            accent=(255, 135, 35),
+            active=active_species == SPECIES_B,
+        )
+    elif action == "rotate_ant":
+        menu.add_button(
+            "Rotate Ant Clockwise",
+            toggle_active_species,
+            accent=(230, 35, 45),
+        )
+    elif action == "wire_conductor":
+        menu.add_button(
+            "Brush: Conductor",
+            lambda: set_wireworld_brush(CONDUCTOR),
+            accent=wireworld_state_color(CONDUCTOR),
+            active=wireworld_brush == CONDUCTOR,
+        )
+    elif action == "wire_head":
+        menu.add_button(
+            "Brush: Electron Head",
+            lambda: set_wireworld_brush(ELECTRON_HEAD),
+            accent=wireworld_state_color(ELECTRON_HEAD),
+            active=wireworld_brush == ELECTRON_HEAD,
+        )
+    elif action == "wire_tail":
+        menu.add_button(
+            "Brush: Electron Tail",
+            lambda: set_wireworld_brush(ELECTRON_TAIL),
+            accent=wireworld_state_color(ELECTRON_TAIL),
+            active=wireworld_brush == ELECTRON_TAIL,
+        )
+    else:
+        raise ValueError(f"Unknown contextual action: {action}")
+
+
+def rebuild_context_menu() -> None:
+    """Build the sidebar from the selected mode's registered capabilities."""
+    definition = get_mode_definition(simulation_mode)
+    main_menu.clear_buttons()
+    main_menu.set_header(f"{definition.name} Controls")
+    main_menu.add_button(
+        "Select Mode (M)",
+        activate_mode_menu,
+        accent=definition.accent,
+    )
+    for action in definition.contextual_actions:
+        add_context_action(main_menu, action)
+
+    main_menu.add_button("Clear Grid", clear_grid)
+    main_menu.add_button("Randomize", randomize_grid)
+    main_menu.add_button("Step Back", step_back)
+    main_menu.add_button(
+        f"Grid Lines: {'On' if show_grid else 'Off'}",
+        toggle_grid_lines,
+        active=show_grid,
+    )
+    main_menu.add_button("Show Patterns", activate_pattern_menu)
+    main_menu.add_button("Save Pattern", save_current_pattern)
+    main_menu.add_button(f"Theme: {current_theme.title()}", cycle_theme)
+    main_menu.add_button("Center View", center_view)
+    main_menu.add_button(
+        f"Coordinates: {'On' if show_coordinates else 'Off'}",
+        toggle_coordinates,
+        active=show_coordinates,
+    )
+    main_menu.add_button(
+        f"Quadrants: {'On' if show_quadrants else 'Off'}",
+        toggle_quadrants,
+        active=show_quadrants,
+    )
 
 
 def setup_menu() -> Menu:
@@ -1762,22 +2050,6 @@ def setup_menu() -> Menu:
         WINDOW_HEIGHT - INFO_BAR_HEIGHT,
         current_theme,
     )
-    menu.add_button("Change Mode", toggle_simulation_mode)
-    menu.add_button("Brush / Species / Direction", toggle_active_species)
-    menu.add_button("Clear Grid", clear_grid)
-    menu.add_button("Randomize", randomize_grid)
-    menu.add_button("Step Back", step_back)
-    menu.add_button("Change Theme", cycle_theme)
-    menu.add_button("Change Rule", cycle_rule)
-    menu.add_button("Zoom In", lambda: zoom(1.20))
-    menu.add_button("Zoom Out", lambda: zoom(0.80))
-    menu.add_button("Center View", center_view)
-    menu.add_button("Show Patterns", activate_pattern_menu)
-    menu.add_button("Save Pattern", save_current_pattern)
-    menu.add_button("Toggle Heatmap", toggle_heatmap)
-    menu.add_button("Toggle Ages", toggle_age_numbers)
-    menu.add_button("Toggle Coordinates", toggle_coordinates)
-    menu.add_button("Toggle Quadrants", toggle_quadrants)
     menu.visible = True
     return menu
 
@@ -1792,9 +2064,7 @@ def update_window_size(new_width: int, new_height: int) -> None:
     main_menu.rect.x = menu_x
     main_menu.rect.y = INFO_BAR_HEIGHT
     main_menu.rect.height = WINDOW_HEIGHT - INFO_BAR_HEIGHT
-
-    for button_data in main_menu.buttons:
-        button_data["button"].rect.x = menu_x + 10
+    main_menu.relayout()
 
     center_view()
 
@@ -1850,13 +2120,13 @@ def handle_pattern_menu_event(event: pygame.event.Event) -> bool:
 
 
 def handle_keydown(event: pygame.event.Event) -> None:
-    global simulation_active, single_step_requested, speed, show_grid
+    global simulation_active, single_step_requested, speed
     global rotation, flip_h, flip_v, selected_pattern
 
     if event.key == pygame.K_SPACE:
         simulation_active = not simulation_active
     elif event.key == pygame.K_m:
-        toggle_simulation_mode()
+        activate_mode_menu()
     elif event.key == pygame.K_t:
         toggle_active_species()
     elif event.key == pygame.K_n:
@@ -1869,7 +2139,7 @@ def handle_keydown(event: pygame.event.Event) -> None:
     elif event.key == pygame.K_DOWN:
         speed = max(1, speed - 1)
     elif event.key == pygame.K_g:
-        show_grid = not show_grid
+        toggle_grid_lines()
     elif event.key == pygame.K_r and selected_pattern:
         rotation = (rotation + 90) % 360
     elif event.key == pygame.K_f and selected_pattern:
@@ -1902,15 +2172,19 @@ def handle_event(event: pygame.event.Event) -> bool:
     if event.type == pygame.QUIT:
         return False
 
+    if event.type == pygame.VIDEORESIZE:
+        update_window_size(event.w, event.h)
+        return True
+
+    if mode_menu_active:
+        handle_mode_menu_event(event)
+        return True
+
     if pattern_menu_active:
         handle_pattern_menu_event(event)
         return True
 
     if main_menu.handle_event(event):
-        return True
-
-    if event.type == pygame.VIDEORESIZE:
-        update_window_size(event.w, event.h)
         return True
 
     if event.type == pygame.KEYDOWN:
@@ -1973,8 +2247,9 @@ def handle_event(event: pygame.event.Event) -> bool:
 
 
 main_menu = setup_menu()
+rebuild_context_menu()
 center_view()
-set_status("M: mode · T: brush/species/direction · Space: run/pause · Mouse: draw", 5.0)
+set_status("M: choose mode · Space: run/pause · Mouse: draw · Wheel: zoom", 5.0)
 
 def run() -> None:
     """Run the interactive application until the window is closed."""

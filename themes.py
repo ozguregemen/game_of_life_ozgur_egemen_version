@@ -75,16 +75,42 @@ def get_age_color(age, theme="classic"):
 
 # Button class for UI elements
 class Button:
-    def __init__(self, x, y, width, height, text, theme="classic"):
+    def __init__(
+        self,
+        x,
+        y,
+        width,
+        height,
+        text,
+        theme="classic",
+        accent=None,
+        active=False,
+    ):
         self.rect = pygame.Rect(x, y, width, height)
         self.text = text
         self.theme = theme
+        self.accent = accent
+        self.active = active
         self.is_hovered = False
 
     def draw(self, screen, font):
         color = THEMES[self.theme]["button_hover"] if self.is_hovered else THEMES[self.theme]["button"]
         pygame.draw.rect(screen, color, self.rect)
-        pygame.draw.rect(screen, THEMES[self.theme]["button_text"], self.rect, 2)
+        border_color = (
+            self.accent
+            if self.active and self.accent is not None
+            else THEMES[self.theme]["button_text"]
+        )
+        pygame.draw.rect(screen, border_color, self.rect, 3 if self.active else 2)
+
+        if self.accent is not None:
+            swatch = pygame.Rect(
+                self.rect.x + 8,
+                self.rect.centery - 5,
+                10,
+                10,
+            )
+            pygame.draw.rect(screen, self.accent, swatch)
         
         text_surface = font.render(self.text, True, THEMES[self.theme]["button_text"])
         text_rect = text_surface.get_rect(center=self.rect.center)
@@ -94,7 +120,7 @@ class Button:
         if event.type == pygame.MOUSEMOTION:
             self.is_hovered = self.rect.collidepoint(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN:
-            if self.is_hovered:
+            if event.button == 1 and self.rect.collidepoint(event.pos):
                 return True
         return False
 
@@ -105,15 +131,42 @@ class Menu:
         self.theme = theme
         self.buttons = []
         self.visible = False
+        self.header_text = ""
+        self.header_height = 54
+        self.button_height = 28
+        self.button_margin = 3
 
-    def add_button(self, text, callback):
-        button_height = 30
-        button_margin = 5
-        y = self.rect.y + len(self.buttons) * (button_height + button_margin) + 10
+    def set_header(self, text):
+        self.header_text = text
+        self.relayout()
+
+    def clear_buttons(self):
+        self.buttons.clear()
+
+    def add_button(self, text, callback, *, accent=None, active=False):
+        top = self.rect.y + (self.header_height if self.header_text else 10)
+        y = top + len(self.buttons) * (self.button_height + self.button_margin)
         self.buttons.append({
-            "button": Button(self.rect.x + 10, y, self.rect.width - 20, button_height, text, self.theme),
+            "button": Button(
+                self.rect.x + 10,
+                y,
+                self.rect.width - 20,
+                self.button_height,
+                text,
+                self.theme,
+                accent,
+                active,
+            ),
             "callback": callback
         })
+
+    def relayout(self):
+        top = self.rect.y + (self.header_height if self.header_text else 10)
+        for index, button_data in enumerate(self.buttons):
+            button = button_data["button"]
+            button.rect.x = self.rect.x + 10
+            button.rect.y = top + index * (self.button_height + self.button_margin)
+            button.rect.width = self.rect.width - 20
 
     def draw(self, screen, font):
         if not self.visible:
@@ -122,6 +175,21 @@ class Menu:
         # Draw menu background
         pygame.draw.rect(screen, THEMES[self.theme]["menu"], self.rect)
         pygame.draw.rect(screen, THEMES[self.theme]["menu_text"], self.rect, 2)
+
+        if self.header_text:
+            heading = font.render(
+                self.header_text,
+                True,
+                THEMES[self.theme]["menu_text"],
+            )
+            screen.blit(heading, (self.rect.x + 12, self.rect.y + 14))
+            pygame.draw.line(
+                screen,
+                THEMES[self.theme]["menu_text"],
+                (self.rect.x + 10, self.rect.y + self.header_height - 9),
+                (self.rect.right - 10, self.rect.y + self.header_height - 9),
+                1,
+            )
 
         # Draw buttons
         for button_data in self.buttons:
@@ -135,4 +203,4 @@ class Menu:
             if button_data["button"].handle_event(event):
                 button_data["callback"]()
                 return True
-        return False 
+        return False
