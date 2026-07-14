@@ -27,7 +27,7 @@ satırı yine `import pygame` olarak kalır.
 - Doğma/ölme geçiş animasyonları
 - Aktivite heatmap'i ve ölü hücre izleri
 - 50 nesillik geri alma geçmişi
-- Hazır ve kullanıcı tarafından kaydedilmiş patternler
+- Her oyun moduna özel, durumları koruyan hazır ve kullanıcı patternleri
 - Pattern döndürme, yatay/dikey çevirme ve yerleştirme önizlemesi
 - Otomatik pattern recognition
 - Classic, Neon ve Pastel temaları
@@ -84,6 +84,7 @@ satırı yine `import pygame` olarak kalır.
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
 - `wireworld.py`: Dört durumlu Wireworld kural ve istatistik çekirdeği
 - `mode_registry.py`: Mod adları, açıklamaları, renkleri ve bağlamsal kontrol tanımları
+- `mode_patterns.py`: Immigration, Brian's Brain, Langton ve Wireworld hazır patternleri
 - `rules.py`: Kurallar ve pattern recognition
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `themes.py`: Temalar ve menü bileşenleri
@@ -98,9 +99,10 @@ python -m unittest discover -s tests
 ```
 
 Test paketi Conway kurallarını, pattern tanıma/depolama davranışını, atomik
-pattern yerleştirmeyi; Immigration, Brian's Brain, Langton's Ant ve Wireworld
-kurallarını; mod registry ve bağlamsal menü davranışını; beş modun SDL dummy
-video driver ile başlangıcını kapsar.
+pattern yerleştirmeyi; moda özel pattern filtreleme ve çok durumlu pattern
+depolamayı; Immigration, Brian's Brain, Langton's Ant ve Wireworld kurallarını;
+mod registry ve bağlamsal menü davranışını; beş modun SDL dummy video driver ile
+başlangıcını kapsar.
 
 ## Bağlamsal arayüz
 
@@ -115,6 +117,24 @@ kontrolü; Wireworld'de renkli iletken, elektron başı ve elektron kuyruğu fı
 gösterilir. Seçili tür veya fırça renkli çerçeveyle belirtilir. Ortak temizleme,
 randomize, geri alma, pattern, tema ve görünüm kontrolleri her modda erişilebilir
 kalır.
+
+## Moda özel patternler
+
+`Show Patterns` yalnızca açık olan simülasyona uygun patternleri gösterir. Life-like
+modu klasik block, blinker, glider ve benzeri Life patternlerini; Immigration iki
+türün dağılımını koruyan renkli block, blinker ve glider örneklerini; Brian's Brain
+ateşlenen ve ölmekte olan durumları birlikte kullanan osilatör ve wickstretcher
+örneklerini gösterir. Langton patternleri siyah/beyaz hücrelere ek olarak karıncanın
+göreli konumunu ve yönünü de saklar.
+
+Wireworld menüsünde hareket eden düz sinyal, ileri/ters diyot çifti ve clocked XOR
+devresi bulunur. Bu patternlerde iletken, elektron başı ve elektron kuyruğu ayrı
+durumlar olarak korunur. Pattern döndürme ve çevirme işlemleri çok durumlu hücreleri;
+Langton modunda ayrıca karıncanın konum ve yönünü dönüştürür.
+
+Kaydedilen özel pattern JSON'ları seçili modun adını içerir ve yalnızca o modun
+menüsünde görünür. Eski, `mode` alanı bulunmayan JSON dosyaları geriye uyumluluk için
+Life-like patterni olarak yüklenir.
 
 ## Immigration Game
 
@@ -135,8 +155,8 @@ sonraki nesilde ölmekte olan duruma, ardından kapalı duruma geçer. Ölmekte 
 hücreler doğum hesabında komşu sayılmaz.
 
 Ateşlenen hücreler açık camgöbeği, ölmekte olan hücreler koyu mor çizilir. Sol
-tık ateşlenen hücre yerleştirir, sağ tık siler. Hazır patternler ateşlenen
-hücrelerden oluşan başlangıç durumları olarak kullanılabilir. Brian's Brain de
+tık ateşlenen hücre yerleştirir, sağ tık siler. Hazır patternler ateşlenen ve
+ölmekte olan hücreleri birlikte içeren doğrulanmış başlangıç durumlarıdır. Brian's Brain de
 kendi grid, generation ve geri alma geçmişini korur.
 
 ## Langton's Ant
@@ -160,7 +180,7 @@ başı varsa yeni elektron başına dönüşür; aksi halde iletken kalır.
 
 Boş alan siyah, iletken sarı, elektron başı mavi ve elektron kuyruğu kırmızı
 çizilir. Sol tık seçili durumu yerleştirir, sağ tık hücreyi siler. `T`, iletken,
-elektron başı ve elektron kuyruğu fırçaları arasında geçer. Hazır patternler
-Wireworld'de iletken hat olarak yerleştirilir. Bir devreyi çalıştırmak için iletken
-hat üzerine en az bir elektron başı; yönlü bir başlangıç için başın arkasına bir
+elektron başı ve elektron kuyruğu fırçaları arasında geçer. Hazır devre patternleri
+üç durumu da doğrudan yerleştirir. Elle bir devreyi çalıştırmak için iletken hat
+üzerine en az bir elektron başı; yönlü bir başlangıç için başın arkasına bir
 elektron kuyruğu çizilebilir.
