@@ -8,6 +8,7 @@ import numpy as np
 import pygame
 
 from surface_rasterizer import StateGridRasterizer
+from three_dimensional_ca import AXIS_X, Volume3D
 
 
 class StateGridRasterizerTests(unittest.TestCase):
@@ -46,6 +47,24 @@ class StateGridRasterizerTests(unittest.TestCase):
 
         self.assertEqual(first_count, 2)
         self.assertEqual(self.rasterizer.cached_surface_count, first_count)
+
+    def test_blits_a_zero_copy_noncontiguous_3d_slice(self) -> None:
+        volume = Volume3D.empty((2, 2, 2), state_count=3)
+        volume.write_slice(AXIS_X, 1, ((0, 1), (2, 0)))
+        plane = volume.extract_slice(AXIS_X, 1, copy=False)
+
+        self.rasterizer.blit(
+            self.target,
+            plane,
+            self.palette,
+            (0, 0),
+            cell_size=2,
+        )
+
+        self.assertFalse(plane.flags.c_contiguous)
+        self.assertFalse(plane.flags.writeable)
+        self.assertEqual(tuple(self.target.get_at((2, 0))[:3]), self.palette[1])
+        self.assertEqual(tuple(self.target.get_at((0, 2))[:3]), self.palette[2])
 
     def test_rejects_invalid_grid_palette_and_scale(self) -> None:
         with self.assertRaisesRegex(ValueError, "rectangular 2D"):
