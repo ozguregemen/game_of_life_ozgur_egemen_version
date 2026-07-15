@@ -90,6 +90,7 @@ class ElementaryWorkspaceState:
     rule_menu_active: bool = False
     rule_menu_input: str = ""
     rule_menu_target: str = "primary"
+    rule_menu_favorites_only: bool = False
     drawing: bool = False
     drawing_value: int = 1
     brush_state: int = 1
@@ -115,6 +116,7 @@ class ElementaryWorkspaceServices:
     activate_session_menu: Callable[[], None]
     activate_analysis: Callable[[], None]
     activate_export: Callable[[], None]
+    activate_help: Callable[[], None]
     toggle_grid: Callable[[], None]
     cycle_theme: Callable[[], None]
     cached_stats: Callable[[str, Callable[[], dict[str, Any]]], dict[str, Any]]
@@ -129,6 +131,8 @@ class ElementaryWorkspaceServices:
     timeline_max_frames: int
     record_analysis: Callable[[StateObservation], None]
     reset_analysis: Callable[[StateObservation], None]
+    favorite_rules: Callable[[], frozenset[int]]
+    toggle_favorite_rule: Callable[[int], bool]
 
 
 class ElementaryWorkspaceController(WorkspaceController):
@@ -1021,6 +1025,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.state.rule_menu_target = "primary"
         self.state.rule_menu_active = True
         self.state.rule_menu_input = ""
+        self.state.rule_menu_favorites_only = False
         self.services.set_running(False)
 
     def open_comparison_rule_menu(self) -> None:
@@ -1033,6 +1038,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.state.rule_menu_target = "comparison"
         self.state.rule_menu_active = True
         self.state.rule_menu_input = ""
+        self.state.rule_menu_favorites_only = False
         self.services.set_running(False)
 
     def _catalog_rule(self) -> int:
@@ -1058,6 +1064,17 @@ class ElementaryWorkspaceController(WorkspaceController):
     def close_rule_menu(self) -> None:
         self.state.rule_menu_active = False
 
+    def filtered_catalog_rules(self) -> tuple[int, ...]:
+        """Return catalogue rules matching the numeric search and favorite filter."""
+        favorites = self.services.favorite_rules()
+        query = self.state.rule_menu_input
+        return tuple(
+            rule
+            for rule in range(256)
+            if (not query or query in str(rule))
+            and (not self.state.rule_menu_favorites_only or rule in favorites)
+        )
+
     def rule_menu_geometry(
         self,
     ) -> tuple[pygame.Rect, list[tuple[int, pygame.Rect]]]:
@@ -1068,17 +1085,21 @@ class ElementaryWorkspaceController(WorkspaceController):
         modal.center = (window_width // 2, window_height // 2)
 
         columns = 16
-        rows = 16
+        rules = self.filtered_catalog_rules()
+        rows = max(1, (len(rules) + columns - 1) // columns)
         gap = 2
         grid_top = modal.y + 88
         grid_bottom = modal.bottom - 45
         card_width = (modal.width - 40 - gap * (columns - 1)) // columns
-        card_height = (grid_bottom - grid_top - gap * (rows - 1)) // rows
+        card_height = min(
+            24,
+            max(12, (grid_bottom - grid_top - gap * (rows - 1)) // rows),
+        )
         grid_width = columns * card_width + gap * (columns - 1)
         start_x = modal.centerx - grid_width // 2
         cards = []
-        for rule in range(256):
-            row, column = divmod(rule, columns)
+        for index, rule in enumerate(rules):
+            row, column = divmod(index, columns)
             cards.append(
                 (
                     rule,
@@ -1110,6 +1131,11 @@ class ElementaryWorkspaceController(WorkspaceController):
             if event.key == pygame.K_BACKSPACE:
                 self.state.rule_menu_input = self.state.rule_menu_input[:-1]
                 return True
+            if event.key == pygame.K_f:
+                self.state.rule_menu_favorites_only = (
+                    not self.state.rule_menu_favorites_only
+                )
+                return True
             if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 if self.state.rule_menu_input:
                     self._set_catalog_rule(int(self.state.rule_menu_input))
@@ -1124,12 +1150,17 @@ class ElementaryWorkspaceController(WorkspaceController):
                     self._status("Elementary rule numbers range from 0 to 255.")
                 return True
 
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 3):
             modal, cards = self.rule_menu_geometry()
             for rule, card in cards:
                 if card.collidepoint(event.pos):
-                    self._set_catalog_rule(rule)
-                    self.close_rule_menu()
+                    if event.button == 3:
+                        selected = self.services.toggle_favorite_rule(rule)
+                        label = "added to" if selected else "removed from"
+                        self._status(f"Rule {rule} {label} favorites.")
+                    else:
+                        self._set_catalog_rule(rule)
+                        self.close_rule_menu()
                     return True
             if not modal.collidepoint(event.pos):
                 self.close_rule_menu()
@@ -1182,25 +1213,45 @@ class ElementaryWorkspaceController(WorkspaceController):
         accent = DIMENSION_BY_KEY["1d"].accent
         menu.clear_buttons()
         menu.set_header(f"1D · {self.family_name}")
+        menu.begin_section(
+            "1d_workspace",
+            "Workspace",
+            tooltip="Open global navigation, saved experiments, analysis, export, and help.",
+        )
         menu.add_button(
             "Select Dimension (D)",
             self.services.activate_dimension_menu,
             accent=accent,
+            tooltip="Switch between the 1D and 2D workspaces without losing state.",
         )
         menu.add_button(
             "Session & Profiles (P)",
             self.services.activate_session_menu,
             accent=(80, 190, 145),
+            tooltip="Save, load, or reopen a recently used experiment.",
         )
         menu.add_button(
             "Scientific Analysis (I)",
             self.services.activate_analysis,
             accent=(90, 195, 255),
+            tooltip="Inspect population, density, entropy, change rate, and periods.",
         )
         menu.add_button(
             "Export Results (X)",
             self.services.activate_export,
             accent=(235, 155, 70),
+            tooltip="Export the diagram, animation, metrics, or experiment JSON.",
+        )
+        menu.add_button(
+            "Keyboard Help (F1)",
+            self.services.activate_help,
+            accent=(180, 150, 245),
+            tooltip="Show all common and 1D-specific keyboard shortcuts.",
+        )
+        menu.begin_section(
+            "1d_rules",
+            "Rule & Comparison",
+            tooltip="Choose a rule family and compare two rules under equal conditions.",
         )
         menu.add_button(
             f"Family: {self.family_name}",
@@ -1270,6 +1321,11 @@ class ElementaryWorkspaceController(WorkspaceController):
                 f"Compare +: {short_rule_code((self.state.comparison_rule + 1) % (self.rule_spec.max_code + 1))}",
                 lambda: self.adjust_comparison_rule(1),
             )
+        menu.begin_section(
+            "1d_experiment",
+            "Seed & Boundary",
+            tooltip="Control restart behavior, boundary conditions, and initial rows.",
+        )
         reset_label = (
             "Canonical Reset"
             if self.state.rule_change_reset
@@ -1287,6 +1343,12 @@ class ElementaryWorkspaceController(WorkspaceController):
         menu.add_button("Seed: Single Center", self.use_single_seed)
         menu.add_button("Seed: Random", self.randomize)
         menu.add_button("Clear Diagram", self.clear)
+        menu.begin_section(
+            "1d_view",
+            "View",
+            expanded=False,
+            tooltip="Change grid visibility, accessible palette, and camera position.",
+        )
         menu.add_button(
             f"Grid Lines: {'On' if self.services.show_grid() else 'Off'}",
             self.services.toggle_grid,
@@ -1358,6 +1420,15 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
         secondary: bool = False,
     ) -> tuple[int, int, int]:
         """Return a stable palette color for a non-zero finite state."""
+        if self.services.theme_name() == "colorblind":
+            palette = (
+                (240, 228, 66),
+                (86, 180, 233),
+                (213, 94, 0),
+            )
+            if self.state.states == 2 and secondary:
+                return (86, 180, 233)
+            return palette[(value - 1) % len(palette)]
         if self.state.states == 2:
             return (245, 170, 65) if secondary else DIMENSION_BY_KEY["1d"].accent
         hue = ((value - 1) / max(1, self.state.states - 1) + 0.52) % 1.0
@@ -1531,13 +1602,15 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             f"{self.controller.boundary_label(self.state.boundary)}"
         )
         info_font = self.services.small_font()
+        tool_width = min(220, max(150, width // 4))
+        available_info_width = max(40, width - 120 - tool_width - 18)
         screen.blit(
             info_font.render(
-                self._fit_text(info_font, info, width - 20),
+                self._fit_text(info_font, info, available_info_width),
                 True,
                 theme["text"],
             ),
-            (10, 11),
+            (120, 11),
         )
 
         y = window_height - self.services.stats_height
@@ -1628,14 +1701,17 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
         binary = "".join(str(value) for value in rule_bits(selected_rule))
         detail = (
             f"Current: Rule {selected_rule} = {binary}₂   ·   "
-            "gold border: featured rule"
+            "gold: featured · star: favorite"
         )
         tiny_font = self.services.tiny_font()
         screen.blit(
             tiny_font.render(detail, True, (192, 198, 211)),
             (modal.x + 21, modal.y + 53),
         )
-        input_label = f"Type rule: {self.state.rule_menu_input or '—'}"
+        favorite_label = "Favorites" if self.state.rule_menu_favorites_only else "All"
+        input_label = (
+            f"Search: {self.state.rule_menu_input or '—'} · {favorite_label}"
+        )
         input_surface = tiny_font.render(input_label, True, accent)
         screen.blit(
             input_surface,
@@ -1643,6 +1719,7 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
         )
 
         mouse_position = pygame.mouse.get_pos()
+        favorites = self.services.favorite_rules()
         for rule, card in cards:
             selected = rule == selected_rule
             hovered = card.collidepoint(mouse_position)
@@ -1667,10 +1744,21 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             )
             number = tiny_font.render(str(rule), True, (247, 248, 251))
             screen.blit(number, number.get_rect(center=card.center))
+            if rule in favorites:
+                star = tiny_font.render("★", True, (240, 220, 90))
+                screen.blit(star, (card.x + 2, card.y + 1))
+
+        if not cards:
+            empty = self.services.small_font().render(
+                "No rules match this search/filter.",
+                True,
+                (205, 210, 220),
+            )
+            screen.blit(empty, empty.get_rect(center=modal.center))
 
         footer = (
-            "Click a rule · type 0–255 + Enter · ←/→ previous/next · "
-            "E/Esc closes"
+            "Type to search · Enter selects exact rule · right click favorites · "
+            "F filters favorites · E/Esc closes"
         )
         footer_surface = tiny_font.render(footer, True, (190, 195, 205))
         screen.blit(

@@ -201,4 +201,8 @@ def get_enhanced_age_color(age: int, theme: str = "classic") -> Any:
             return (255, max(0, 150 - age * 10), max(0, 150 - age * 10))
         return (255, 100, 100)
 
+    if theme == "colorblind":
+        brightness = min(1.0, 0.58 + age * 0.035)
+        return tuple(int(channel * brightness) for channel in (240, 228, 66))
+
     return THEMES[theme]["cell"]

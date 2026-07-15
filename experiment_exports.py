@@ -156,33 +156,49 @@ class ExperimentExportCoordinator:
         )
 
     def palette(self) -> dict[int, tuple[int, int, int]]:
-        theme = THEMES[self.services.theme_name()]
+        theme_name = self.services.theme_name()
+        theme = THEMES[theme_name]
         background = theme["background"]
         if self.services.active_dimension() == "1d":
             spec = self._one_d_spec()
             palette = {0: background, 1: theme["cell"]}
+            colorblind = ((240, 228, 66), (86, 180, 233), (213, 94, 0))
             for state in range(2, spec.states):
-                red, green, blue = colorsys.hsv_to_rgb(
-                    ((state - 1) / max(1, spec.states - 1) + 0.52) % 1.0,
-                    0.72,
-                    0.96,
-                )
-                palette[state] = (
-                    round(red * 255),
-                    round(green * 255),
-                    round(blue * 255),
-                )
+                if theme_name == "colorblind":
+                    palette[state] = colorblind[(state - 1) % len(colorblind)]
+                else:
+                    red, green, blue = colorsys.hsv_to_rgb(
+                        ((state - 1) / max(1, spec.states - 1) + 0.52) % 1.0,
+                        0.72,
+                        0.96,
+                    )
+                    palette[state] = (
+                        round(red * 255),
+                        round(green * 255),
+                        round(blue * 255),
+                    )
             return palette
         mode = self.services.active_mode()
         if mode == "life":
             return {0: background, 1: theme["cell"]}
         if mode == "immigration":
+            if theme_name == "colorblind":
+                return {0: background, 1: (0, 114, 178), 2: (213, 94, 0)}
             return {0: background, 1: (40, 180, 255), 2: (255, 135, 35)}
         if mode == "brians_brain":
+            if theme_name == "colorblind":
+                return {0: background, 1: (240, 228, 66), 2: (86, 180, 233)}
             return {0: background, 1: (75, 235, 255), 2: (45, 90, 155)}
         if mode == "langtons_ant":
             return {0: (245, 245, 240), 1: (25, 25, 25), 2: (235, 55, 60)}
         if mode == "wireworld":
+            if theme_name == "colorblind":
+                return {
+                    WIRE_EMPTY: (16, 24, 32),
+                    ELECTRON_HEAD: (86, 180, 233),
+                    ELECTRON_TAIL: (213, 94, 0),
+                    CONDUCTOR: (240, 228, 66),
+                }
             return {
                 WIRE_EMPTY: (10, 10, 12),
                 ELECTRON_HEAD: (70, 165, 255),
@@ -190,6 +206,21 @@ class ExperimentExportCoordinator:
                 CONDUCTOR: (245, 195, 35),
             }
         if mode == "cyclic_automaton":
+            if theme_name == "colorblind":
+                return dict(
+                    enumerate(
+                        (
+                            (30, 34, 40),
+                            (230, 159, 0),
+                            (86, 180, 233),
+                            (0, 158, 115),
+                            (240, 228, 66),
+                            (0, 114, 178),
+                            (213, 94, 0),
+                            (204, 121, 167),
+                        )
+                    )
+                )
             palette: dict[int, tuple[int, int, int]] = {}
             for state in range(CYCLIC_STATE_COUNT):
                 red, green, blue = colorsys.hsv_to_rgb(

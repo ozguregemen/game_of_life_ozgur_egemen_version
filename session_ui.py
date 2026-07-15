@@ -22,6 +22,7 @@ class SessionMenuServices:
     load_profile: Callable[[str], bool]
     list_sessions: Callable[[], list[dict[str, str]]]
     list_profiles: Callable[[], list[dict[str, str]]]
+    recent_experiments: Callable[[], list[dict[str, str]]]
     set_status: Callable[[str, float], None]
     window_size: Callable[[], tuple[int, int]]
     screen: Callable[[], pygame.Surface]
@@ -124,6 +125,15 @@ class SessionMenu:
                         },
                     )
                 )
+            for item in self.services.recent_experiments()[:3]:
+                kind_label = "Session" if item["kind"] == "session" else "1D Profile"
+                entries.append(
+                    {
+                        "key": f"recent_{item['kind']}:{item['identifier']}",
+                        "name": f"Recent · {item['name']}",
+                        "detail": f"{kind_label} · open again with one click",
+                    }
+                )
             return entries
 
         prefix = "load_session" if self.view == "sessions" else "load_profile"
@@ -162,6 +172,12 @@ class SessionMenu:
             self.close()
             self.services.load_session(key.split(":", 1)[1])
         elif key.startswith("load_profile:"):
+            self.close()
+            self.services.load_profile(key.split(":", 1)[1])
+        elif key.startswith("recent_session:"):
+            self.close()
+            self.services.load_session(key.split(":", 1)[1])
+        elif key.startswith("recent_profile:"):
             self.close()
             self.services.load_profile(key.split(":", 1)[1])
 

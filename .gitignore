@@ -25,6 +25,9 @@ htmlcov/
 # Generated diagrams, animations, videos, metrics, and experiment bundles
 /exports/
 
+# Local UI preferences (favorites and recent experiments)
+/ui_preferences.json
+
 # OS metadata
 .DS_Store
 Thumbs.db

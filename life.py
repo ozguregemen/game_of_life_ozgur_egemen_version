@@ -50,6 +50,7 @@ from experiment_exports import (
     ExperimentExportCoordinator,
     ExperimentExportServices,
 )
+from help_ui import HelpPanelServices, ShortcutHelpPanel
 from export_ui import ExportMenu, ExportMenuServices
 from exporting import (
     ExportRunner,
@@ -115,6 +116,7 @@ from scientific_analysis import (
 from themes import THEMES, Menu
 from timeline_history import TimelineBinding, TimelineStatus
 from timeline_ui import TimelinePanel, TimelinePanelServices
+from ui_preferences import UIPreferences
 from visuals import CellTransition, get_enhanced_age_color
 from wireworld import (
     CONDUCTOR,
@@ -175,6 +177,16 @@ CYCLIC_PALETTE = (
     (245, 190, 45),
     (240, 90, 55),
     (195, 55, 180),
+)
+COLORBLIND_CYCLIC_PALETTE = (
+    (30, 34, 40),
+    (230, 159, 0),
+    (86, 180, 233),
+    (0, 158, 115),
+    (240, 228, 66),
+    (0, 114, 178),
+    (213, 94, 0),
+    (204, 121, 167),
 )
 
 pygame.init()
@@ -251,6 +263,9 @@ two_d_timelines: dict[str, TimelineBinding] = {}
 analysis_registry = ScientificAnalysisRegistry(max_samples=TIMELINE_MAX_FRAMES)
 comparison_runner = ElementaryComparisonRunner()
 export_runner = ExportRunner()
+ui_preferences = UIPreferences.load(
+    autosave=os.environ.get("SDL_VIDEODRIVER") != "dummy"
+)
 
 show_grid = True
 show_heatmap = False
@@ -1472,6 +1487,8 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
         export_manager.close()
     drawing = False
     drawing_history_pending = False
+    if "help_panel" in globals():
+        help_panel.close()
     main_menu.theme = current_theme
     rebuild_context_menu()
     return normalized
@@ -1488,6 +1505,7 @@ def save_quick_session() -> bool:
     except (OSError, TypeError, ValueError, SessionStorageError) as exc:
         set_status(f"Could not save session: {exc}", 5.0)
         return False
+    ui_preferences.record_recent("session", LAST_SESSION_IDENTIFIER, "Last Session")
     set_status("Complete session saved as 'Last Session'.", 3.0)
     return True
 
@@ -1504,13 +1522,14 @@ def save_named_session() -> bool:
         set_status("Session save cancelled.")
         return False
     try:
-        save_session(capture_session_document(name), name)
+        path = save_session(capture_session_document(name), name)
     except FileExistsError as exc:
         set_status(f"Could not save session: {exc}", 5.0)
         return False
     except (OSError, TypeError, ValueError, SessionStorageError) as exc:
         set_status(f"Could not save session: {exc}", 5.0)
         return False
+    ui_preferences.record_recent("session", path.stem, name)
     set_status(f"Complete session '{name}' saved.", 3.0)
     return True
 
@@ -1523,6 +1542,7 @@ def load_saved_session(identifier: str) -> bool:
     except (OSError, TypeError, ValueError, SessionStorageError) as exc:
         set_status(f"Could not load session: {exc}", 5.0)
         return False
+    ui_preferences.record_recent("session", identifier, normalized["name"])
     set_status(f"Session '{normalized['name']}' loaded; simulation paused.", 4.0)
     return True
 
@@ -1548,13 +1568,14 @@ def save_current_experiment_profile() -> bool:
         set_status("Experiment profile save cancelled.")
         return False
     try:
-        save_profile(capture_experiment_profile(name), name)
+        path = save_profile(capture_experiment_profile(name), name)
     except FileExistsError as exc:
         set_status(f"Could not save experiment profile: {exc}", 5.0)
         return False
     except (OSError, TypeError, ValueError, SessionStorageError) as exc:
         set_status(f"Could not save experiment profile: {exc}", 5.0)
         return False
+    ui_preferences.record_recent("profile", path.stem, name)
     set_status(f"1D experiment profile '{name}' saved.", 3.0)
     return True
 
@@ -1576,6 +1597,7 @@ def load_saved_experiment_profile(identifier: str) -> bool:
     except (OSError, TypeError, ValueError, SessionStorageError) as exc:
         set_status(f"Could not load experiment profile: {exc}", 5.0)
         return False
+    ui_preferences.record_recent("profile", identifier, normalized["name"])
     set_status(f"1D experiment '{normalized['name']}' loaded at generation 0.", 4.0)
     return True
 
@@ -2406,17 +2428,17 @@ def immigration_species_color(value: int) -> tuple[int, int, int]:
     age = cell_age(value)
     brightness = min(1.0, 0.62 + age * 0.025)
     if species_of(value) == SPECIES_A:
-        base = (40, 180, 255)
+        base = (0, 114, 178) if current_theme == "colorblind" else (40, 180, 255)
     else:
-        base = (255, 135, 35)
+        base = (213, 94, 0) if current_theme == "colorblind" else (255, 135, 35)
     return tuple(int(channel * brightness) for channel in base)
 
 
 def brain_state_color(value: int) -> tuple[int, int, int]:
     """Return the conventional bright/dim colors for Brian's Brain."""
-    if value == FIRING:
-        return (80, 235, 255)
-    return (75, 55, 155)
+    if current_theme == "colorblind":
+        return (240, 228, 66) if value == FIRING else (86, 180, 233)
+    return (80, 235, 255) if value == FIRING else (75, 55, 155)
 
 
 def wireworld_state_color(value: int) -> tuple[int, int, int]:
@@ -2427,12 +2449,24 @@ def wireworld_state_color(value: int) -> tuple[int, int, int]:
         ELECTRON_TAIL: (235, 65, 55),
         CONDUCTOR: (245, 190, 35),
     }
+    if current_theme == "colorblind":
+        colors = {
+            WIRE_EMPTY: (16, 24, 32),
+            ELECTRON_HEAD: (86, 180, 233),
+            ELECTRON_TAIL: (213, 94, 0),
+            CONDUCTOR: (240, 228, 66),
+        }
     return colors[value]
 
 
 def cyclic_state_color(value: int) -> tuple[int, int, int]:
     """Return the fixed eight-state cyclic color wheel."""
-    return CYCLIC_PALETTE[value]
+    palette = (
+        COLORBLIND_CYCLIC_PALETTE
+        if current_theme == "colorblind"
+        else CYCLIC_PALETTE
+    )
+    return palette[value]
 
 
 def draw_immigration_grid() -> None:
@@ -2869,8 +2903,15 @@ def _draw_2d_info_bar() -> None:
             f"{state}   Mode: Life-like   Speed: {speed} gen/s   "
             f"Generation: {generation}   Rule: {RULES[current_rule]['name']}"
         )
-    rendered = small_font.render(text, True, theme["text"])
-    screen.blit(rendered, (10, 11))
+    tool_width = min(220, max(150, width // 4))
+    available_width = max(40, width - 120 - tool_width - 18)
+    shortened = text
+    while shortened and small_font.size(shortened)[0] > available_width:
+        shortened = shortened[:-1]
+    if shortened != text:
+        shortened = shortened.rstrip() + "..."
+    rendered = small_font.render(shortened, True, theme["text"])
+    screen.blit(rendered, (120, 11))
 
 
 def _draw_2d_stats() -> None:
@@ -3410,6 +3451,146 @@ def draw_status() -> None:
     screen.blit(text_surface, text_surface.get_rect(center=box.center))
 
 
+def run_pause_rect() -> pygame.Rect:
+    """Return the clickable status control shared by every workspace."""
+    return pygame.Rect(8, 7, 104, INFO_BAR_HEIGHT - 14)
+
+
+def active_tool_label() -> str:
+    """Describe the currently effective drawing tool without relying on color."""
+    if active_dimension == "1d":
+        return f"Cell state {elementary_controller.state.brush_state}"
+    if selected_pattern is not None:
+        return f"Pattern: {selected_pattern['name']}"
+    if simulation_mode == "immigration":
+        return f"Species {'A' if active_species == SPECIES_A else 'B'}"
+    if simulation_mode == "wireworld":
+        return WIRE_STATE_NAMES[wireworld_brush]
+    if simulation_mode == "cyclic_automaton":
+        return f"Color state {cyclic_brush}"
+    if simulation_mode == "langtons_ant":
+        return "Board draw · Shift places ant"
+    if simulation_mode == "brians_brain":
+        return "Firing cell"
+    return "Live cell"
+
+
+def toggle_simulation_running() -> None:
+    global simulation_active
+    timeline_panel.stop()
+    simulation_active = not simulation_active
+    set_status("Simulation running." if simulation_active else "Simulation paused.")
+
+
+def draw_workspace_status_controls() -> None:
+    """Draw high-contrast run/pause and active-tool badges over the info bar."""
+    theme = THEMES[current_theme]
+    content_width = max(1, WINDOW_WIDTH - MENU_WIDTH)
+    run_rect = run_pause_rect()
+    run_color = (0, 114, 178) if simulation_active else (213, 94, 0)
+    pygame.draw.rect(screen, run_color, run_rect, border_radius=6)
+    pygame.draw.rect(screen, theme["text"], run_rect, 1, border_radius=6)
+    if simulation_active:
+        pygame.draw.polygon(
+            screen,
+            (255, 255, 255),
+            [
+                (run_rect.x + 10, run_rect.y + 7),
+                (run_rect.x + 10, run_rect.bottom - 7),
+                (run_rect.x + 22, run_rect.centery),
+            ],
+        )
+        label = "RUNNING"
+    else:
+        pygame.draw.rect(
+            screen,
+            (255, 255, 255),
+            (run_rect.x + 10, run_rect.y + 7, 4, run_rect.height - 14),
+        )
+        pygame.draw.rect(
+            screen,
+            (255, 255, 255),
+            (run_rect.x + 18, run_rect.y + 7, 4, run_rect.height - 14),
+        )
+        label = "PAUSED"
+    screen.blit(
+        tiny_font.render(label, True, (255, 255, 255)),
+        (run_rect.x + 30, run_rect.y + 8),
+    )
+
+    tool_width = min(220, max(150, content_width // 4))
+    tool_rect = pygame.Rect(
+        max(run_rect.right + 8, content_width - tool_width - 8),
+        7,
+        tool_width,
+        INFO_BAR_HEIGHT - 14,
+    )
+    pygame.draw.rect(screen, theme["button"], tool_rect, border_radius=6)
+    accent = (
+        DIMENSION_BY_KEY["1d"].accent
+        if active_dimension == "1d"
+        else MODE_BY_KEY[simulation_mode].accent
+    )
+    pygame.draw.rect(screen, accent, tool_rect, 2, border_radius=6)
+    text = f"TOOL · {active_tool_label()}"
+    while text and tiny_font.size(text)[0] > tool_rect.width - 16:
+        text = text[:-1]
+    screen.blit(
+        tiny_font.render(text.rstrip(), True, theme["button_text"]),
+        (tool_rect.x + 8, tool_rect.y + 8),
+    )
+
+
+def help_context_title() -> str:
+    if active_dimension == "1d":
+        return f"1D · {elementary_controller.family_name}"
+    return f"2D · {MODE_BY_KEY[simulation_mode].name}"
+
+
+def help_context_entries() -> tuple[tuple[str, str], ...]:
+    if active_dimension == "1d":
+        return (
+            ("E", "Open the searchable Elementary rule catalogue"),
+            ("Left / Right click", "Write the selected state / erase state"),
+            ("Middle drag", "Pan the space-time diagram"),
+            ("Rule catalogue: F", "Show all rules or favorite rules only"),
+            ("Catalogue right click", "Add or remove a favorite rule"),
+            ("Timeline arrows", "Step backward or forward through recorded state"),
+        )
+    entries = [
+        ("Left / Right click", "Draw with the active tool / erase a cell"),
+        ("Middle drag", "Pan the grid"),
+        ("T", "Cycle the current mode's brush or state"),
+        ("1–9", "Select a visible mode-specific pattern"),
+    ]
+    if simulation_mode == "life":
+        entries.extend((("H", "Toggle heatmap"), ("A", "Toggle cell ages")))
+    if simulation_mode == "langtons_ant":
+        entries.append(("Shift + click", "Place the ant at a grid cell"))
+    if selected_pattern is not None:
+        entries.extend((("R", "Rotate pattern"), ("F / V", "Flip horizontally / vertically")))
+    return tuple(entries)
+
+
+def toggle_help_panel() -> None:
+    """Open contextual shortcut help after closing competing modal UI."""
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    global simulation_active
+    if "help_panel" in globals() and help_panel.active:
+        help_panel.close()
+        return
+    simulation_active = False
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    active_workspace().controller.deactivate()
+    session_manager.close()
+    analysis_panel.close()
+    if "export_manager" in globals():
+        export_manager.close()
+    help_panel.open()
+
+
 DRAW_HANDLERS = {
     "life": draw_grid,
     "immigration": draw_immigration_grid,
@@ -3484,6 +3665,7 @@ def draw_scene() -> None:
     draw_active_grid()
     renderer = active_workspace().renderer
     renderer.draw_bars()
+    draw_workspace_status_controls()
     timeline_panel.draw()
     main_menu.draw(screen, tiny_font)
     renderer.draw_decorations()
@@ -3493,6 +3675,7 @@ def draw_scene() -> None:
     draw_dimension_menu()
     draw_session_menu()
     export_manager.draw()
+    help_panel.draw()
 
 
 # ---------------------------------------------------------------------------
@@ -3585,25 +3768,45 @@ def _build_2d_sidebar(menu: Menu) -> None:
     definition = get_mode_definition(simulation_mode)
     menu.clear_buttons()
     menu.set_header(f"2D · {definition.name}")
+    menu.begin_section(
+        "2d_workspace",
+        "Workspace",
+        tooltip="Global navigation, saved experiments, analysis, export, and help.",
+    )
     menu.add_button(
         "Select Dimension (D)",
         activate_dimension_menu,
         accent=DIMENSION_BY_KEY["2d"].accent,
+        tooltip="Switch dimensions without clearing either workspace.",
     )
     menu.add_button(
         "Session & Profiles (P)",
         activate_session_menu,
         accent=(80, 190, 145),
+        tooltip="Save, load, or reopen a recently used experiment.",
     )
     menu.add_button(
         "Scientific Analysis (I)",
         toggle_analysis_panel,
         accent=(90, 195, 255),
+        tooltip="Open live scientific measurements and period detection.",
     )
     menu.add_button(
         "Export Results (X)",
         activate_export_menu,
         accent=(235, 155, 70),
+        tooltip="Export the current grid, timeline, metrics, or experiment JSON.",
+    )
+    menu.add_button(
+        "Keyboard Help (F1)",
+        toggle_help_panel,
+        accent=(180, 150, 245),
+        tooltip="Show common and mode-specific shortcuts.",
+    )
+    menu.begin_section(
+        "2d_tools",
+        "Mode & Active Tool",
+        tooltip="Choose a simulation and configure its active drawing tool.",
     )
     menu.add_button(
         "Select Mode (M)",
@@ -3613,15 +3816,26 @@ def _build_2d_sidebar(menu: Menu) -> None:
     for action in definition.contextual_actions:
         add_context_action(menu, action)
 
+    menu.begin_section(
+        "2d_experiment",
+        "Experiment",
+        tooltip="Create, clear, select, and save mode-specific patterns.",
+    )
     menu.add_button("Clear Grid", clear_grid)
     menu.add_button("Randomize", randomize_grid)
+    menu.add_button("Show Patterns", activate_pattern_menu)
+    menu.add_button("Save Pattern", save_current_pattern)
+    menu.begin_section(
+        "2d_view",
+        "View",
+        expanded=False,
+        tooltip="Grid overlays, accessible palettes, and camera controls.",
+    )
     menu.add_button(
         f"Grid Lines: {'On' if show_grid else 'Off'}",
         toggle_grid_lines,
         active=show_grid,
     )
-    menu.add_button("Show Patterns", activate_pattern_menu)
-    menu.add_button("Save Pattern", save_current_pattern)
     menu.add_button(f"Theme: {current_theme.title()}", cycle_theme)
     menu.add_button("Center View", center_view)
     menu.add_button(
@@ -3775,7 +3989,10 @@ def handle_keydown(event: pygame.event.Event) -> None:
     global simulation_active, single_step_requested, speed
 
     modifiers = getattr(event, "mod", pygame.key.get_mods())
-    if event.key == pygame.K_s and modifiers & pygame.KMOD_CTRL:
+    question_mark = event.key == pygame.K_SLASH and bool(modifiers & pygame.KMOD_SHIFT)
+    if event.key == pygame.K_F1 or question_mark:
+        toggle_help_panel()
+    elif event.key == pygame.K_s and modifiers & pygame.KMOD_CTRL:
         save_quick_session()
     elif event.key == pygame.K_o and modifiers & pygame.KMOD_CTRL:
         load_quick_session()
@@ -3789,8 +4006,7 @@ def handle_keydown(event: pygame.event.Event) -> None:
         timeline_panel.stop()
         request_timeline_generation()
     elif event.key == pygame.K_SPACE:
-        timeline_panel.stop()
-        simulation_active = not simulation_active
+        toggle_simulation_running()
     elif event.key == pygame.K_d:
         activate_dimension_menu()
     elif event.key == pygame.K_n:
@@ -3873,6 +4089,10 @@ def handle_event(event: pygame.event.Event) -> bool:
         update_window_size(event.w, event.h)
         return True
 
+    if help_panel.active:
+        help_panel.handle_event(event)
+        return True
+
     if export_manager.active:
         export_manager.handle_event(event)
         return True
@@ -3891,6 +4111,14 @@ def handle_event(event: pygame.event.Event) -> bool:
     controller = active_workspace().controller
     if controller.overlay_active:
         controller.handle_overlay_event(event)
+        return True
+
+    if (
+        event.type == pygame.MOUSEBUTTONDOWN
+        and event.button == 1
+        and run_pause_rect().collidepoint(event.pos)
+    ):
+        toggle_simulation_running()
         return True
 
     if timeline_panel.handle_event(event):
@@ -3957,6 +4185,7 @@ session_manager = SessionMenu(
         load_profile=load_saved_experiment_profile,
         list_sessions=list_sessions,
         list_profiles=list_profiles,
+        recent_experiments=ui_preferences.recent,
         set_status=set_status,
         window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
         screen=lambda: screen,
@@ -3993,6 +4222,7 @@ elementary_services = ElementaryWorkspaceServices(
     activate_session_menu=activate_session_menu,
     activate_analysis=toggle_analysis_panel,
     activate_export=activate_export_menu,
+    activate_help=toggle_help_panel,
     toggle_grid=toggle_grid_lines,
     cycle_theme=cycle_theme,
     cached_stats=cached_mode_stats,
@@ -4007,6 +4237,8 @@ elementary_services = ElementaryWorkspaceServices(
     timeline_max_frames=TIMELINE_MAX_FRAMES,
     record_analysis=analysis_registry.observe,
     reset_analysis=analysis_registry.reset,
+    favorite_rules=lambda: frozenset(ui_preferences.favorite_rules),
+    toggle_favorite_rule=ui_preferences.toggle_favorite_rule,
 )
 elementary_controller = ElementaryWorkspaceController(
     elementary_services,
@@ -4089,6 +4321,20 @@ analysis_panel = ScientificAnalysisPanel(
     comparison_runner,
 )
 
+help_panel = ShortcutHelpPanel(
+    HelpPanelServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        theme=lambda: THEMES[current_theme],
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+        context_title=help_context_title,
+        context_entries=help_context_entries,
+        pause=lambda: _set_simulation_running(False),
+    )
+)
+
 timeline_panel = TimelinePanel(
     TimelinePanelServices(
         rect=timeline_rect,
@@ -4145,7 +4391,7 @@ main_menu = setup_menu()
 rebuild_context_menu()
 center_view()
 set_status(
-    "D: dimension · M: mode · I: analysis · X: export · Space: run/pause",
+    "F1: help · D: dimension · M: mode · I: analysis · Space: run/pause",
     5.0,
 )
 
@@ -4172,6 +4418,7 @@ def run() -> None:
             if (
                 not session_manager.active
                 and not export_manager.active
+                and not help_panel.active
                 and not dimension_menu_active
                 and not active_workspace().controller.overlay_active
             ):
