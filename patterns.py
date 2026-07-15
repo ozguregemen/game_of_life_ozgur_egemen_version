@@ -14,6 +14,7 @@ from mode_registry import MODE_KEYS, get_mode_definition
 PATTERNS = {
     "glider": {
         "name": "Glider",
+        "category": "spaceships",
         "pattern": [
             [0, 1, 0],
             [0, 0, 1],
@@ -22,6 +23,7 @@ PATTERNS = {
     },
     "pulsar": {
         "name": "Pulsar",
+        "category": "oscillators",
         "pattern": [
             [0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -40,6 +42,7 @@ PATTERNS = {
     },
     "beacon": {
         "name": "Beacon",
+        "category": "oscillators",
         "pattern": [
             [1, 1, 0, 0],
             [1, 0, 0, 0],
@@ -49,6 +52,7 @@ PATTERNS = {
     },
     "toad": {
         "name": "Toad",
+        "category": "oscillators",
         "pattern": [
             [0, 1, 1, 1],
             [1, 1, 1, 0]
@@ -56,6 +60,7 @@ PATTERNS = {
     },
     "blinker": {
         "name": "Blinker",
+        "category": "oscillators",
         "pattern": [
             [1],
             [1],
@@ -64,6 +69,7 @@ PATTERNS = {
     },
     "block": {
         "name": "Block",
+        "category": "still_lifes",
         "pattern": [
             [1, 1],
             [1, 1]
@@ -71,6 +77,7 @@ PATTERNS = {
     },
     "beehive": {
         "name": "Beehive",
+        "category": "still_lifes",
         "pattern": [
             [0, 1, 1, 0],
             [1, 0, 0, 1],
@@ -79,6 +86,7 @@ PATTERNS = {
     },
     "loaf": {
         "name": "Loaf",
+        "category": "still_lifes",
         "pattern": [
             [0, 1, 1, 0],
             [1, 0, 0, 1],
@@ -88,6 +96,7 @@ PATTERNS = {
     },
     "glider_gun": {
         "name": "Gosper Glider Gun",
+        "category": "guns_and_puffers",
         "pattern": [
             [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
             [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0],
@@ -102,6 +111,7 @@ PATTERNS = {
     },
     "pentadecathlon": {
         "name": "Pentadecathlon",
+        "category": "oscillators",
         "pattern": [
             [0,0,1,0,0],
             [1,0,1,0,1],
@@ -120,6 +130,7 @@ PATTERNS = {
     },
     "r_pentomino": {
         "name": "R-Pentomino",
+        "category": "methuselahs",
         "pattern": [
             [0,1,1],
             [1,1,0],
@@ -128,6 +139,7 @@ PATTERNS = {
     },
     "diehard": {
         "name": "Diehard",
+        "category": "methuselahs",
         "pattern": [
             [0,0,0,0,0,0,1,0],
             [1,1,0,0,0,0,0,0],
@@ -136,6 +148,7 @@ PATTERNS = {
     },
     "acorn": {
         "name": "Acorn",
+        "category": "methuselahs",
         "pattern": [
             [0,1,0,0,0,0,0],
             [0,0,0,1,0,0,0],
@@ -144,6 +157,7 @@ PATTERNS = {
     },
     "lwss": {
         "name": "Lightweight Spaceship (LWSS)",
+        "category": "spaceships",
         "pattern": [
             [0,1,1,1,1],
             [1,0,0,0,1],
@@ -153,6 +167,7 @@ PATTERNS = {
     },
     "copperhead": {
         "name": "Copperhead",
+        "category": "spaceships",
         "pattern": [
             [0,1,1,0,0,1,1,0],
             [0,0,0,1,1,0,0,0],
@@ -170,6 +185,7 @@ PATTERNS = {
     },
     "washerwoman": {
         "name": "Washerwoman",
+        "category": "guns_and_puffers",
         "pattern": [
             [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
             [1,1,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,1,0],
@@ -180,6 +196,7 @@ PATTERNS = {
     },
     "4-8-12_diamond": {
         "name": "4-8-12 Diamond",
+        "category": "oscillators",
         "pattern": [
             [0,0,0,0,1,1,1,1,0,0,0,0],
             [0,0,0,0,0,0,0,0,0,0,0,0],
@@ -194,6 +211,7 @@ PATTERNS = {
     },
     "puffer": {
         "name": "Puffer",
+        "category": "guns_and_puffers",
         "pattern": [
             [0,1,1,1,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0,0,1,1,1,0],
             [1,0,0,1,0,0,0,0,0,1,1,1,0,0,0,1,1,1,0,0,0,0,0,1,0,0,1],
@@ -206,6 +224,7 @@ PATTERNS = {
     },
     "caterpillar": {
         "name": "Caterpillar",
+        "category": "spaceships",
         "pattern": [
             [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
             [1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
@@ -216,6 +235,7 @@ PATTERNS = {
     },
     "david-hilbert": {
         "name": "David Hilbert",
+        "category": "methuselahs",
         "pattern": [
             [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0],
             [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0],
@@ -256,6 +276,42 @@ PATTERN_STATE_VALUES = {
     "cyclic_automaton": frozenset(range(8)),
 }
 
+MAX_BUILTIN_PATTERNS_PER_MODE = 20
+PATTERN_CATEGORY_LABELS: dict[str, tuple[tuple[str, str], ...]] = {
+    "life": (
+        ("still_lifes", "Still Lifes"),
+        ("oscillators", "Oscillators"),
+        ("spaceships", "Spaceships"),
+        ("methuselahs", "Methuselahs"),
+        ("guns_and_puffers", "Guns & Puffers"),
+    ),
+    "immigration": (
+        ("still_lifes", "Stable Two-Species Forms"),
+        ("oscillators", "Two-Species Oscillators"),
+        ("spaceships", "Two-Species Spaceships"),
+        ("competition", "Competition Seeds"),
+    ),
+    "brians_brain": (
+        ("oscillators", "Oscillators"),
+        ("wave_seeds", "Wave Seeds"),
+        ("wickstretchers", "Wickstretchers"),
+    ),
+    "langtons_ant": (
+        ("classic_starts", "Classic Starts"),
+        ("arenas", "Prepared Arenas"),
+    ),
+    "wireworld": (
+        ("signals", "Signals & Wires"),
+        ("routing", "Routing Components"),
+        ("timing", "Timing Circuits"),
+        ("logic", "Logic Gates"),
+    ),
+    "cyclic_automaton": (
+        ("wave_seeds", "Wave Seeds"),
+        ("spiral_seeds", "Spiral Seeds"),
+    ),
+}
+
 PATTERN_DIRECTORY = Path(__file__).resolve().with_name("patterns")
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|]+')
 _WHITESPACE = re.compile(r"\s+")
@@ -269,6 +325,9 @@ _WINDOWS_RESERVED_NAMES = {
 }
 _PATTERN_CACHE: dict[str, dict[str, Any]] = {}
 _MODE_PATTERN_CACHE: dict[str, dict[str, dict[str, Any]]] = {
+    mode: {} for mode in MODE_KEYS
+}
+_MODE_CATEGORY_CACHE: dict[str, dict[str, dict[str, dict[str, Any]]]] = {
     mode: {} for mode in MODE_KEYS
 }
 
@@ -300,11 +359,19 @@ def _validate_pattern_data(data: Any) -> dict[str, Any]:
     name = data["name"]
     pattern = data["pattern"]
     mode = data.get("mode", "life")
+    category = data.get("category", "custom")
     if not isinstance(name, str) or not name.strip():
         raise TypeError("Pattern 'name' must be non-empty text.")
     safe_pattern_filename(name)
     if not isinstance(mode, str) or mode not in PATTERN_STATE_VALUES:
         raise TypeError("Pattern 'mode' must name a registered simulation mode.")
+    if (
+        not isinstance(category, str)
+        or not re.fullmatch(r"[a-z][a-z0-9_]*", category)
+    ):
+        raise TypeError(
+            "Pattern 'category' must be a lowercase identifier such as 'oscillators'."
+        )
     if not isinstance(pattern, list) or not pattern:
         raise TypeError("Pattern must be a non-empty two-dimensional list.")
     if not all(isinstance(row, list) and row for row in pattern):
@@ -326,6 +393,7 @@ def _validate_pattern_data(data: Any) -> dict[str, Any]:
     validated = dict(data)
     validated["name"] = name.strip()
     validated["mode"] = mode
+    validated["category"] = category
     validated["pattern"] = [[int(cell) for cell in row] for row in pattern]
 
     ant = data.get("ant")
@@ -386,10 +454,27 @@ def refresh_pattern_cache() -> None:
     """Reload built-in and custom patterns into the shared cache."""
     refreshed: dict[str, dict[str, Any]] = {}
     builtins = {**PATTERNS, **MODE_PATTERNS}
+    builtin_counts = {mode: 0 for mode in MODE_KEYS}
     for key, pattern_data in builtins.items():
         document = deepcopy(pattern_data)
         document.setdefault("mode", "life")
-        refreshed[key] = _validate_pattern_data(document)
+        validated = _validate_pattern_data(document)
+        builtin_counts[validated["mode"]] += 1
+        refreshed[key] = validated
+
+    oversized = {
+        mode: count
+        for mode, count in builtin_counts.items()
+        if count > MAX_BUILTIN_PATTERNS_PER_MODE
+    }
+    if oversized:
+        details = ", ".join(
+            f"{mode}={count}" for mode, count in sorted(oversized.items())
+        )
+        raise ValueError(
+            "Built-in pattern catalogs may contain at most "
+            f"{MAX_BUILTIN_PATTERNS_PER_MODE} entries per mode ({details})."
+        )
 
     if PATTERN_DIRECTORY.is_dir():
         for path in sorted(PATTERN_DIRECTORY.glob("*.json")):
@@ -403,8 +488,13 @@ def refresh_pattern_cache() -> None:
     for mode in MODE_KEYS:
         mode_cache = _MODE_PATTERN_CACHE.setdefault(mode, {})
         mode_cache.clear()
+        category_cache = _MODE_CATEGORY_CACHE.setdefault(mode, {})
+        category_cache.clear()
     for key, pattern_data in refreshed.items():
-        _MODE_PATTERN_CACHE[pattern_data["mode"]][key] = pattern_data
+        mode = pattern_data["mode"]
+        category = pattern_data["category"]
+        _MODE_PATTERN_CACHE[mode][key] = pattern_data
+        _MODE_CATEGORY_CACHE[mode].setdefault(category, {})[key] = pattern_data
 
 
 def save_pattern(
@@ -484,6 +574,45 @@ def get_patterns_for_mode(mode: str) -> dict[str, dict[str, Any]]:
     if mode not in _MODE_PATTERN_CACHE:
         raise ValueError(f"Unknown simulation mode: {mode}")
     return _MODE_PATTERN_CACHE[mode]
+
+
+def get_pattern_categories_for_mode(mode: str) -> tuple[tuple[str, str, int], ...]:
+    """Return ordered, non-empty category metadata from the in-memory cache."""
+    if mode not in _MODE_CATEGORY_CACHE:
+        raise ValueError(f"Unknown simulation mode: {mode}")
+
+    categories = _MODE_CATEGORY_CACHE[mode]
+    configured = dict(PATTERN_CATEGORY_LABELS.get(mode, ()))
+    ordered_keys = [
+        key for key, _ in PATTERN_CATEGORY_LABELS.get(mode, ()) if key in categories
+    ]
+    ordered_keys.extend(sorted(set(categories) - set(ordered_keys)))
+    return tuple(
+        (
+            key,
+            configured.get(
+                key,
+                "Custom Patterns" if key == "custom" else key.replace("_", " ").title(),
+            ),
+            len(categories[key]),
+        )
+        for key in ordered_keys
+    )
+
+
+def get_patterns_for_category(
+    mode: str,
+    category: str,
+) -> dict[str, dict[str, Any]]:
+    """Return one cached mode/category catalog without reading from disk."""
+    if mode not in _MODE_CATEGORY_CACHE:
+        raise ValueError(f"Unknown simulation mode: {mode}")
+    if category == "all":
+        return _MODE_PATTERN_CACHE[mode]
+    try:
+        return _MODE_CATEGORY_CACHE[mode][category]
+    except KeyError as exc:
+        raise ValueError(f"Unknown pattern category for {mode}: {category}") from exc
 
 
 def rotate_pattern(
