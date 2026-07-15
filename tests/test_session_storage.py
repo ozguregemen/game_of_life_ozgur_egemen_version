@@ -12,7 +12,11 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
 import session_storage
-from one_dimensional_ca import FAMILY_TOTALISTIC, default_rule_spec
+from one_dimensional_ca import (
+    FAMILY_TOTALISTIC,
+    SEED_WIDTH_COMPACT,
+    default_rule_spec,
+)
 
 
 class SessionStorageTests(unittest.TestCase):
@@ -104,6 +108,40 @@ class SessionStorageTests(unittest.TestCase):
 
         self.assertEqual(loaded["name"], "Kural 110 Deneyi")
         self.assertEqual(loaded["experiment"], document["experiment"])
+
+    def test_legacy_documents_default_to_compact_1d_seed_width(self) -> None:
+        session = self.valid_session("Legacy Width")
+        session["workspaces"]["1d"].pop("seed_width_mode", None)
+        session["workspaces"]["1d"].pop("row_backgrounds", None)
+        session["workspaces"]["1d"]["comparison"]["background"] = 1
+        session["workspaces"]["1d"]["comparison"].pop(
+            "row_backgrounds",
+            None,
+        )
+        normalized_session = session_storage.validate_session_document(session)
+
+        profile = life.capture_experiment_profile("Legacy Profile")
+        profile["experiment"].pop("seed_width_mode", None)
+        normalized_profile = session_storage.validate_profile_document(profile)
+
+        self.assertEqual(
+            normalized_session["workspaces"]["1d"]["seed_width_mode"],
+            SEED_WIDTH_COMPACT,
+        )
+        self.assertEqual(
+            len(normalized_session["workspaces"]["1d"]["row_backgrounds"]),
+            len(normalized_session["workspaces"]["1d"]["rows"]),
+        )
+        self.assertEqual(
+            normalized_session["workspaces"]["1d"]["comparison"][
+                "row_backgrounds"
+            ][-1],
+            1,
+        )
+        self.assertEqual(
+            normalized_profile["experiment"]["seed_width_mode"],
+            SEED_WIDTH_COMPACT,
+        )
 
     def test_generalized_profile_preserves_family_states_and_comparison(self) -> None:
         original = life.capture_session_document("Profile Restore")

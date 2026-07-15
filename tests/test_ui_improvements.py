@@ -14,8 +14,37 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame
 
 import life
-from themes import THEMES, Menu
+from themes import (
+    COLORBLIND_BLUE,
+    COLORBLIND_MAGENTA,
+    COLORBLIND_YELLOW,
+    THEMES,
+    Menu,
+    get_age_color,
+    one_d_state_color,
+)
 from ui_preferences import UIPreferences
+
+
+def contrast_ratio(
+    first: tuple[int, int, int],
+    second: tuple[int, int, int],
+) -> float:
+    """Return WCAG relative-luminance contrast for deterministic palette tests."""
+
+    def luminance(color: tuple[int, int, int]) -> float:
+        channels = []
+        for value in color:
+            normalized = value / 255
+            channels.append(
+                normalized / 12.92
+                if normalized <= 0.04045
+                else ((normalized + 0.055) / 1.055) ** 2.4
+            )
+        return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+    high, low = sorted((luminance(first), luminance(second)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
 
 
 class CollapsibleMenuTests(unittest.TestCase):
@@ -178,11 +207,200 @@ class ApplicationUIImprovementTests(unittest.TestCase):
             life.immigration_species_color(life.SPECIES_B),
         )
         self.assertEqual(life.wireworld_state_color(life.CONDUCTOR), (240, 228, 66))
+        self.assertEqual(
+            life.immigration_species_base_color(life.SPECIES_A),
+            COLORBLIND_BLUE,
+        )
+        self.assertEqual(
+            life.immigration_species_base_color(life.SPECIES_B),
+            COLORBLIND_YELLOW,
+        )
+        self.assertEqual(life.ant_display_color(), COLORBLIND_BLUE)
         self.assertEqual(len(set(life.COLORBLIND_CYCLIC_PALETTE)), 8)
         self.assertEqual(
             life.export_coordinator.palette()[life.ELECTRON_TAIL],
-            (213, 94, 0),
+            COLORBLIND_MAGENTA,
         )
+
+    def test_colorblind_screen_and_export_semantic_palettes_match(self) -> None:
+        life.current_theme = "colorblind"
+
+        life.set_simulation_mode("immigration")
+        immigration_palette = life.export_coordinator.palette()
+        self.assertEqual(
+            immigration_palette[life.SPECIES_A],
+            life.immigration_species_base_color(life.SPECIES_A),
+        )
+        self.assertEqual(
+            immigration_palette[2],
+            life.immigration_species_base_color(life.SPECIES_B),
+        )
+
+        life.set_simulation_mode("langtons_ant")
+        self.assertEqual(
+            life.export_coordinator.palette()[2],
+            life.ant_display_color(),
+        )
+
+    def test_screen_and_export_palettes_match_across_specialized_modes(self) -> None:
+        life.set_active_dimension("2d")
+        for theme_name in ("classic", "midnight", "paper", "colorblind"):
+            life.current_theme = theme_name
+            with self.subTest(theme=theme_name, mode="brians_brain"):
+                life.set_simulation_mode("brians_brain")
+                palette = life.export_coordinator.palette()
+                self.assertEqual(palette[1], life.brain_state_color(life.FIRING))
+                self.assertEqual(palette[2], life.brain_state_color(life.DYING))
+            with self.subTest(theme=theme_name, mode="cyclic_automaton"):
+                life.set_simulation_mode("cyclic_automaton")
+                palette = life.export_coordinator.palette()
+                self.assertTrue(
+                    all(
+                        palette[state] == life.cyclic_state_color(state)
+                        for state in range(life.CYCLIC_STATE_COUNT)
+                    )
+                )
+
+    def test_1d_screen_and_export_palettes_share_primary_and_comparison_colors(self) -> None:
+        life.set_active_dimension("1d")
+        state = life.elementary_controller.state
+        state.states = 2
+        for theme_name in ("classic", "midnight", "paper", "colorblind"):
+            life.current_theme = theme_name
+            palette = life.export_coordinator.palette()
+            with self.subTest(theme=theme_name):
+                self.assertEqual(
+                    palette[1],
+                    life.elementary_renderer._state_color(1),
+                )
+                self.assertEqual(
+                    palette[2],
+                    life.elementary_renderer._state_color(1, secondary=True),
+                )
+                self.assertNotEqual(palette[1], palette[2])
+
+    def test_colorblind_immigration_species_b_has_a_non_color_marker(self) -> None:
+        original_cell_size = life.CELL_SIZE
+        life.current_theme = "colorblind"
+        life.CELL_SIZE = 12
+        rect = pygame.Rect(20, 20, 12, 12)
+        base = life.immigration_species_base_color(life.SPECIES_B)
+        try:
+            pygame.draw.rect(life.screen, base, rect)
+            life.draw_immigration_marker(rect, life.SPECIES_B)
+            marker = rect.inflate(-4, -4)
+
+            self.assertEqual(
+                tuple(life.screen.get_at(marker.topleft)[:3]),
+                THEMES["colorblind"]["background"],
+            )
+        finally:
+            life.CELL_SIZE = original_cell_size
+
+    def test_new_general_themes_are_complete_and_age_aware(self) -> None:
+        required = set(THEMES["classic"])
+        for theme_name in ("midnight", "paper"):
+            with self.subTest(theme=theme_name):
+                self.assertEqual(set(THEMES[theme_name]), required)
+                self.assertEqual(
+                    get_age_color(0, theme_name),
+                    THEMES[theme_name]["background"],
+                )
+                self.assertNotEqual(
+                    get_age_color(5, theme_name),
+                    THEMES[theme_name]["background"],
+                )
+
+    def test_accessible_theme_grid_and_state_colors_meet_graphical_contrast(self) -> None:
+        for theme_name in ("colorblind", "midnight", "paper"):
+            theme = THEMES[theme_name]
+            with self.subTest(theme=theme_name):
+                self.assertGreaterEqual(
+                    contrast_ratio(theme["grid"], theme["background"]),
+                    3.0,
+                )
+                self.assertGreaterEqual(
+                    contrast_ratio(theme["cell"], theme["background"]),
+                    3.0,
+                )
+        self.assertGreaterEqual(
+            contrast_ratio(COLORBLIND_BLUE, COLORBLIND_YELLOW),
+            3.0,
+        )
+        colorblind_comparison = {
+            one_d_state_color(state, 4, "colorblind", secondary=secondary)
+            for secondary in (False, True)
+            for state in range(1, 4)
+        }
+        self.assertEqual(len(colorblind_comparison), 6)
+        for theme_name in ("pastel", "paper"):
+            primary = one_d_state_color(1, 2, theme_name)
+            secondary = one_d_state_color(1, 2, theme_name, secondary=True)
+            self.assertGreaterEqual(
+                contrast_ratio(primary, THEMES[theme_name]["background"]),
+                3.0,
+            )
+            self.assertGreaterEqual(
+                contrast_ratio(secondary, THEMES[theme_name]["background"]),
+                3.0,
+            )
+            self.assertGreaterEqual(contrast_ratio(primary, secondary), 3.0)
+
+    def test_2d_fit_cell_size_matches_supported_window_sizes(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        expected = {
+            (760, 560): 6,
+            (1200, 720): 11,
+            (1366, 768): 12,
+            (1920, 1080): 18,
+        }
+        try:
+            life.set_active_dimension("2d")
+            for window_size, cell_size in expected.items():
+                with self.subTest(window=window_size):
+                    life.update_window_size(*window_size)
+                    self.assertEqual(life.fitted_2d_cell_size(), cell_size)
+        finally:
+            life.update_window_size(*original_size)
+
+    def test_fit_board_keeps_all_cells_visible_without_mutating_state(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(1200, 720)
+            life.set_active_dimension("2d")
+            life.grid[3][4] = 7
+            generation = life.generation
+
+            life.fit_2d_view()
+
+            viewport = life.grid_viewport()
+            origin_x, origin_y = life.grid_origin()
+            board = pygame.Rect(
+                origin_x,
+                origin_y,
+                life.COLS * life.CELL_SIZE,
+                life.ROWS * life.CELL_SIZE,
+            )
+            self.assertTrue(viewport.contains(board))
+            self.assertEqual(life.grid[3][4], 7)
+            self.assertEqual(life.generation, generation)
+            self.assertIn(f"{life.COLS}x{life.ROWS}", life.status_message)
+        finally:
+            life.update_window_size(*original_size)
+
+    def test_resize_warns_when_preserved_2d_zoom_moves_board_offscreen(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        original_cell_size = life.CELL_SIZE
+        try:
+            life.set_active_dimension("2d")
+            life.CELL_SIZE = 20
+            life.update_window_size(760, 560)
+
+            self.assertIn("Ctrl+0", life.status_message)
+            self.assertEqual(life.CELL_SIZE, 20)
+        finally:
+            life.CELL_SIZE = original_cell_size
+            life.update_window_size(*original_size)
 
     def test_recent_experiments_appear_in_session_manager_actions(self) -> None:
         life.ui_preferences.record_recent("session", "last_session", "Last Session")

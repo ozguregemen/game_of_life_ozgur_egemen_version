@@ -23,6 +23,29 @@ class DeltaTests(unittest.TestCase):
 
         self.assertEqual(apply_delta(previous, diff_states(previous, current)), current)
 
+    def test_rolling_rows_round_trip_with_one_operation(self) -> None:
+        previous = {
+            "rows": [[value, value % 2] for value in range(100)],
+            "generation": 100,
+        }
+        current = {
+            "rows": previous["rows"][1:] + [[100, 0]],
+            "generation": 101,
+        }
+
+        delta = diff_states(previous, current)
+
+        self.assertEqual(apply_delta(previous, delta), current)
+        row_operations = [operation for operation in delta if operation.path == ("rows",)]
+        self.assertEqual(len(row_operations), 1)
+        self.assertEqual(row_operations[0].kind, "roll")
+        self.assertEqual(row_operations[0].value, [100, 0])
+
+    def test_identical_repeated_list_does_not_create_roll(self) -> None:
+        state = {"rows": [[1, 1], [1, 1], [1, 1]]}
+
+        self.assertEqual(diff_states(state, state), [])
+
 
 class TimelineHistoryTests(unittest.TestCase):
     def test_reconstructs_between_checkpoints(self) -> None:

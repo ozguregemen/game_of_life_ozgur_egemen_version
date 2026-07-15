@@ -9,7 +9,11 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
 import session_storage
-from one_dimensional_ca import FAMILY_MULTISTATE, default_rule_spec
+from one_dimensional_ca import (
+    FAMILY_MULTISTATE,
+    SEED_WIDTH_WIDE,
+    default_rule_spec,
+)
 
 
 class ApplicationSessionTests(unittest.TestCase):
@@ -54,8 +58,10 @@ class ApplicationSessionTests(unittest.TestCase):
         eca.boundary = life.BOUNDARY_WRAP
         eca.background = 0
         eca.rule_change_reset = False
+        eca.seed_width_mode = SEED_WIDTH_WIDE
         eca.seed = (1, 0, 0)
         eca.rows = [(0, 1, 0), (1, 1, 0)]
+        eca.row_backgrounds = [1, 0]
         eca.generation = 37
         eca.cell_size = 9
         eca.view_offset_x = 41
@@ -124,8 +130,10 @@ class ApplicationSessionTests(unittest.TestCase):
         eca = life.elementary_controller.state
         self.assertEqual(eca.rule, 110)
         self.assertEqual(eca.boundary, life.BOUNDARY_WRAP)
+        self.assertEqual(eca.seed_width_mode, SEED_WIDTH_WIDE)
         self.assertEqual(eca.seed, (1, 0, 0))
         self.assertEqual(eca.rows, [(0, 1, 0), (1, 1, 0)])
+        self.assertEqual(eca.row_backgrounds, [1, 0])
         self.assertEqual(eca.generation, 37)
         self.assertEqual(eca.cell_size, 9)
         self.assertEqual((eca.view_offset_x, eca.view_offset_y), (41, -73))
@@ -191,6 +199,7 @@ class ApplicationSessionTests(unittest.TestCase):
         eca.boundary = life.BOUNDARY_FIXED
         eca.background = 0
         eca.rule_change_reset = False
+        eca.seed_width_mode = SEED_WIDTH_WIDE
         eca.rows = [(0, 1, 0), (1, 0, 1)]
         eca.generation = 12
         profile = life.capture_experiment_profile("Rule 90 Pair")
@@ -205,6 +214,7 @@ class ApplicationSessionTests(unittest.TestCase):
         self.assertEqual(eca.rows, [(1, 0, 1)])
         self.assertEqual(eca.generation, 0)
         self.assertFalse(eca.rule_change_reset)
+        self.assertEqual(eca.seed_width_mode, SEED_WIDTH_WIDE)
 
     def test_generalized_1d_session_preserves_rule_memory_and_comparison(self) -> None:
         life.set_active_dimension("1d")

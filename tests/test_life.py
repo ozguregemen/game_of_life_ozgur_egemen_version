@@ -9,6 +9,15 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
+from one_dimensional_ca import (
+    SEED_WIDTH_COMPACT,
+    SEED_WIDTH_VIEWPORT,
+    SEED_WIDTH_WIDE,
+)
+from workspaces.elementary_1d import (
+    ECA_DIAGRAM_CELL_BUDGET,
+    ECA_MAX_DIAGRAM_WIDTH,
+)
 
 
 def reset_mode_timeline(mode: str) -> None:
@@ -161,8 +170,206 @@ class DimensionUITests(unittest.TestCase):
         self.assertTrue(any(label.startswith("Next Rule:") for label in labels))
         self.assertIn("Rule Change: Canonical Reset", labels)
         self.assertTrue(any(label.startswith("Boundary:") for label in labels))
+        self.assertTrue(any(label.startswith("Seed Width:") for label in labels))
         self.assertNotIn("Select Mode (M)", labels)
         self.assertNotIn("Show Patterns", labels)
+
+    def test_1d_seed_width_presets_are_odd_bounded_and_undoable(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(1920, 1080)
+            life.set_active_dimension("1d")
+            self.eca.seed_width_mode = SEED_WIDTH_COMPACT
+            life.elementary_controller.reset_history()
+            widths = life.elementary_controller.seed_widths()
+
+            self.assertEqual(widths[SEED_WIDTH_COMPACT], life.ECA_WIDTH)
+            self.assertLess(
+                widths[SEED_WIDTH_COMPACT],
+                widths[SEED_WIDTH_VIEWPORT],
+            )
+            self.assertLess(widths[SEED_WIDTH_VIEWPORT], widths[SEED_WIDTH_WIDE])
+            self.assertTrue(all(width % 2 == 1 for width in widths.values()))
+
+            life.elementary_controller.cycle_seed_width()
+            self.assertEqual(self.eca.seed_width_mode, SEED_WIDTH_VIEWPORT)
+            self.assertEqual(len(self.eca.rows[-1]), widths[SEED_WIDTH_VIEWPORT])
+
+            life.elementary_controller.step_back()
+            self.assertEqual(self.eca.seed_width_mode, SEED_WIDTH_COMPACT)
+            self.assertEqual(len(self.eca.rows[-1]), life.ECA_WIDTH)
+            expected_x = (
+                life.elementary_controller.diagram_viewport().width
+                - len(self.eca.rows[-1]) * self.eca.cell_size
+            ) // 2
+            self.assertEqual(self.eca.view_offset_x, expected_x)
+        finally:
+            life.update_window_size(*original_size)
+
+    def test_wide_1d_diagram_respects_cell_budget_and_uses_rolling_delta(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(1920, 1080)
+            life.set_active_dimension("1d")
+            self.eca.seed_width_mode = SEED_WIDTH_WIDE
+            self.eca.rule = 30
+            life.elementary_controller.use_single_seed()
+            life.elementary_controller.reset_history()
+            row_limit = life.elementary_controller.diagram_row_limit()
+
+            for _ in range(row_limit + 1):
+                life.elementary_controller.advance()
+
+            self.assertLessEqual(len(self.eca.rows), row_limit)
+            self.assertLessEqual(
+                len(self.eca.rows) * len(self.eca.rows[-1]),
+                ECA_DIAGRAM_CELL_BUDGET,
+            )
+            latest_frame = life.elementary_controller.timeline.timeline.frames[-1]
+            self.assertIsNotNone(latest_frame.delta)
+            self.assertTrue(
+                any(
+                    operation.kind == "roll" and operation.path == ("rows",)
+                    for operation in latest_frame.delta or ()
+                )
+            )
+        finally:
+            life.update_window_size(*original_size)
+
+    def test_1d_retention_budget_and_growth_safety_width_are_hard_bounds(self) -> None:
+        self.assertLessEqual(
+            life.elementary_controller.diagram_row_limit(ECA_MAX_DIAGRAM_WIDTH)
+            * ECA_MAX_DIAGRAM_WIDTH,
+            ECA_DIAGRAM_CELL_BUDGET,
+        )
+        life.set_active_dimension("1d")
+        edge_row = (1,) + (0,) * (ECA_MAX_DIAGRAM_WIDTH - 1)
+        self.eca.rule = 30
+        self.eca.boundary = life.BOUNDARY_INFINITE
+        self.eca.rows = [edge_row]
+        self.eca.row_backgrounds = [0]
+        self.eca.previous_row = (0,) * ECA_MAX_DIAGRAM_WIDTH
+        self.eca.comparison_rows = [edge_row]
+        self.eca.comparison_row_backgrounds = [0]
+        self.eca.comparison_previous_row = self.eca.previous_row
+
+        self.assertFalse(life.elementary_controller.advance())
+        self.assertEqual(self.eca.generation, 0)
+        self.assertEqual(len(self.eca.rows[-1]), ECA_MAX_DIAGRAM_WIDTH)
+        self.assertIn("safety width", life.status_message)
+
+    def test_selected_1d_seed_width_survives_canonical_rule_reset(self) -> None:
+        life.set_active_dimension("1d")
+        self.eca.seed_width_mode = SEED_WIDTH_VIEWPORT
+        expected_width = life.elementary_controller.preferred_seed_width()
+        life.elementary_controller.use_single_seed()
+
+        life.adjust_eca_rule(1)
+
+        self.assertEqual(len(self.eca.seed), expected_width)
+        self.assertEqual(len(self.eca.rows[-1]), expected_width)
+
+    def test_viewport_seed_width_fits_small_window_even_at_large_zoom(self) -> None:
+        original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        try:
+            life.update_window_size(760, 560)
+            life.set_active_dimension("1d")
+            self.eca.cell_size = 16
+            self.eca.comparison_enabled = False
+            widths = life.elementary_controller.seed_widths()
+            visible_cells = (
+                life.elementary_controller.diagram_panes()[0].width
+                // self.eca.cell_size
+            )
+
+            self.assertLess(widths[SEED_WIDTH_VIEWPORT], widths[SEED_WIDTH_COMPACT])
+            self.assertLessEqual(widths[SEED_WIDTH_VIEWPORT], visible_cells)
+            self.eca.seed_width_mode = SEED_WIDTH_VIEWPORT
+            life.elementary_controller.use_single_seed()
+            self.assertLessEqual(
+                life.elementary_controller.editor_rect().width,
+                life.eca_diagram_viewport().width,
+            )
+        finally:
+            life.update_window_size(*original_size)
+
+    def test_1d_virtual_grid_continues_outside_finite_row(self) -> None:
+        original_theme = life.current_theme
+        original_grid = life.show_grid
+        try:
+            life.set_active_dimension("1d")
+            life.current_theme = "classic"
+            life.show_grid = True
+            self.eca.cell_size = 6
+            life.elementary_controller.center_view()
+            life.screen.fill(life.THEMES["classic"]["background"])
+
+            life.elementary_renderer.draw_base()
+
+            origin_x, origin_y = life.elementary_controller.grid_origin()
+            sample = (origin_x - self.eca.cell_size * 2, origin_y + 2)
+            sample_below = (origin_x + 2, origin_y + self.eca.cell_size * 3)
+            self.assertGreaterEqual(sample[0], life.eca_diagram_viewport().left)
+            self.assertEqual(
+                tuple(life.screen.get_at(sample)[:3]),
+                life.THEMES["classic"]["grid"],
+            )
+            self.assertEqual(
+                tuple(life.screen.get_at(sample_below)[:3]),
+                life.THEMES["classic"]["grid"],
+            )
+        finally:
+            life.current_theme = original_theme
+            life.show_grid = original_grid
+
+    def test_1d_virtual_cells_render_their_historical_infinite_background(self) -> None:
+        original_theme = life.current_theme
+        original_grid = life.show_grid
+        try:
+            life.set_active_dimension("1d")
+            life.current_theme = "classic"
+            life.show_grid = False
+            self.eca.cell_size = 6
+            self.eca.boundary = life.BOUNDARY_INFINITE
+            self.eca.rows = [(0, 1, 0), (0, 0, 1, 0, 0)]
+            self.eca.row_backgrounds = [1, 0]
+            self.eca.background = 0
+            self.eca.previous_row = (0, 0, 0, 0, 0)
+            self.eca.comparison_rows = list(self.eca.rows)
+            self.eca.comparison_row_backgrounds = list(self.eca.row_backgrounds)
+            self.eca.comparison_previous_row = self.eca.previous_row
+            life.elementary_controller.center_view()
+            life.screen.fill(life.THEMES["classic"]["background"])
+
+            life.elementary_renderer.draw_base()
+
+            origin_x, origin_y = life.elementary_controller.grid_origin()
+            self.assertEqual(
+                tuple(life.screen.get_at((origin_x + 1, origin_y + 1))[:3]),
+                life.THEMES["classic"]["cell"],
+            )
+        finally:
+            life.current_theme = original_theme
+            life.show_grid = original_grid
+
+    def test_legacy_comparison_restore_uses_its_own_outside_background(self) -> None:
+        life.set_active_dimension("1d")
+        self.eca.rows = [(0, 1, 0), (1, 0, 1)]
+        self.eca.row_backgrounds = [0, 0]
+        self.eca.previous_row = (0, 1, 0)
+        self.eca.comparison_enabled = True
+        self.eca.comparison_rows = [(0, 1, 0), (1, 1, 1)]
+        self.eca.comparison_row_backgrounds = [0, 1]
+        self.eca.comparison_previous_row = (0, 1, 0)
+        self.eca.comparison_background = 1
+        snapshot = life.elementary_controller._timeline_snapshot()
+        snapshot.pop("row_backgrounds")
+        snapshot["comparison"].pop("row_backgrounds")
+
+        life.elementary_controller._restore_simulation_snapshot(snapshot)
+
+        self.assertEqual(self.eca.row_backgrounds, [0, 0])
+        self.assertEqual(self.eca.comparison_row_backgrounds, [0, 1])
 
     def test_switching_dimensions_preserves_2d_grid(self) -> None:
         life.grid = life.make_grid()

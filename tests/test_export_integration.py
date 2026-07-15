@@ -9,6 +9,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
+from exporting import render_frame_array
 from session_storage import validate_session_document
 
 
@@ -66,8 +67,25 @@ class ExportIntegrationTests(unittest.TestCase):
 
         frame = life.capture_current_raster()
 
-        self.assertEqual(frame.rows[0], (0, 1, 0, 0, 0, 0, 0, 1, 0))
-        self.assertEqual(frame.rows[1], (1, 1, 1, 0, 0, 0, 1, 0, 1))
+        self.assertEqual(frame.rows[0], (0, 1, 0, 0, 0, 0, 0, 2, 0))
+        self.assertEqual(frame.rows[1], (1, 1, 1, 0, 0, 0, 2, 0, 2))
+        pixels = render_frame_array(frame, life.export_coordinator.palette())
+        self.assertEqual(pixels.shape[:2], (2, 9))
+
+    def test_1d_export_materializes_recorded_infinite_background(self) -> None:
+        life.set_active_dimension("1d")
+        state = life.elementary_controller.state
+        state.rows = [(0, 1, 0), (0, 0, 1, 0, 0)]
+        state.row_backgrounds = [1, 0]
+        state.previous_row = (0, 0, 0, 0, 0)
+        state.background = 0
+        state.comparison_enabled = False
+        state.generation = 1
+
+        frame = life.capture_current_raster()
+
+        self.assertEqual(frame.rows[0], (1, 0, 1, 0, 1))
+        self.assertEqual(frame.rows[1], (0, 0, 1, 0, 0))
 
     def test_2d_life_ages_are_normalized_for_visual_exports(self) -> None:
         self.configure_life_blinker()
@@ -91,6 +109,25 @@ class ExportIntegrationTests(unittest.TestCase):
             frame.rows[life.ant_state.row][life.ant_state.col],
             2,
         )
+
+    def test_inactive_langton_ant_uses_distinct_export_state(self) -> None:
+        life.set_active_dimension("2d")
+        life.set_simulation_mode("langtons_ant")
+        life.ant_grid = life.make_ant_grid(life.ROWS, life.COLS)
+        active = life.centered_ant(life.ROWS, life.COLS)
+        life.ant_state = life.AntState(
+            active.row,
+            active.col,
+            active.direction,
+            active=False,
+        )
+
+        frame = life.capture_current_raster()
+        palette = life.export_coordinator.palette()
+
+        self.assertEqual(frame.rows[active.row][active.col], 3)
+        self.assertIn(3, palette)
+        self.assertNotEqual(palette[2], palette[3])
 
     def test_timeline_capture_does_not_move_visible_cursor(self) -> None:
         self.configure_life_blinker()
