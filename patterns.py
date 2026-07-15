@@ -305,6 +305,8 @@ PATTERN_CATEGORY_LABELS: dict[str, tuple[tuple[str, str], ...]] = {
         ("routing", "Routing Components"),
         ("timing", "Timing Circuits"),
         ("logic", "Logic Gates"),
+        ("memory", "Memory & State"),
+        ("arithmetic", "Arithmetic Circuits"),
     ),
     "cyclic_automaton": (
         ("wave_seeds", "Wave Seeds"),

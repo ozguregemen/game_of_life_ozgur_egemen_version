@@ -406,8 +406,11 @@ içerir. Brian's Brain, doğrulanmış period-3/period-4 osilatörleri, genişle
 seed'ini ve iki wickstretcher'ı gösterir. Langton patternleri siyah/beyaz hücrelere ek
 olarak karıncanın göreli konumunu ve yönünü de saklar.
 
-Wireworld kataloğunda düz ve köşe sinyalleri, paralel bus, pulse collision, üç-yollu
-splitter, 12-tick clock loop, ileri/ters diyot çifti ve clocked XOR devresi bulunur.
+Wireworld kataloğunda 15 doğrulanmış örnek bulunur. Öğretici sinyal, köşe, paralel
+bus, collision, splitter ve clock loop örneklerine ek olarak klasik diode, OR, AND,
+exclusive-OR, AND-NOT/clocked NOT, set-reset flip-flop ve 68×15 hücrelik bit-serial
+binary adder yer alır. CellPyLib'in ileri/ters diyot ve clocked XOR örnekleri de
+korunur. Mantık, bellek ve arithmetic devreleri ayrı kategorilerde gösterilir.
 Bu patternlerde iletken, elektron başı ve elektron kuyruğu ayrı durumlar olarak
 korunur. Pattern döndürme ve çevirme işlemleri çok durumlu hücreleri; Langton modunda
 ayrıca karıncanın konum ve yönünü dönüştürür.

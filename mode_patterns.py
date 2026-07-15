@@ -7,6 +7,17 @@ from typing import Any
 
 
 CYCLIC_STATE_COUNT = 8
+WIREWORLD_ASCII_STATES = {".": 0, "H": 1, "T": 2, "C": 3}
+
+
+def _wireworld_ascii(*rows: str) -> list[list[int]]:
+    """Decode a compact Wireworld diagram (head, tail, conductor, empty)."""
+    if not rows or not rows[0] or any(len(row) != len(rows[0]) for row in rows):
+        raise ValueError("Wireworld ASCII diagrams must be non-empty and rectangular.")
+    try:
+        return [[WIREWORLD_ASCII_STATES[cell] for cell in row] for row in rows]
+    except KeyError as exc:
+        raise ValueError(f"Unknown Wireworld ASCII state: {exc.args[0]}") from exc
 
 
 def _cyclic_phase_gradient(size: int = 8) -> list[list[int]]:
@@ -292,6 +303,128 @@ MODE_PATTERNS: dict[str, dict[str, Any]] = {
             [3, 0, 0, 0, 3],
             [0, 3, 3, 3, 0],
         ],
+    },
+    "wireworld_classic_diode": {
+        "name": "Classic Diode Demonstration",
+        "mode": "wireworld",
+        "category": "routing",
+        "description": "Forward and reverse signals demonstrate one-way conduction.",
+        "source": "https://www.quinapalus.com/wires2.html",
+        "pattern": _wireworld_ascii(
+            ".........CC.......",
+            "CTHCCCCTHC.CCTHCCC",
+            ".........CC.......",
+            "..................",
+            "........HC........",
+            "CTHCCCCT.CCCCCCCCC",
+            "........HC........",
+        ),
+    },
+    "wireworld_classic_or": {
+        "name": "Classic OR Gate",
+        "mode": "wireworld",
+        "category": "logic",
+        "description": "The compact Quinapalus OR gate with an active input pulse.",
+        "source": "https://www.quinapalus.com/wires3.html",
+        "pattern": _wireworld_ascii(
+            "CCTHCCCCC.........",
+            ".........C........",
+            "........CCCCCCTHCC",
+            ".........C........",
+            "CCCCCCCCC.........",
+        ),
+    },
+    "wireworld_classic_xor": {
+        "name": "Classic Exclusive-OR Gate",
+        "mode": "wireworld",
+        "category": "logic",
+        "description": "One active input passes; simultaneous inputs cancel at the junction.",
+        "source": "https://www.quinapalus.com/wires4.html",
+        "pattern": _wireworld_ascii(
+            "CCTHCCCCC.........",
+            ".........C........",
+            "........CCCC......",
+            "........C..CCCCCCC",
+            "........CCCC......",
+            ".........C........",
+            "CCCCCCCCC.........",
+        ),
+    },
+    "wireworld_classic_and_not": {
+        "name": "Classic AND-NOT / Clocked NOT",
+        "mode": "wireworld",
+        "category": "logic",
+        "description": "Computes A AND NOT B; a clock on A turns it into an inverter.",
+        "source": "https://www.quinapalus.com/wires5.html",
+        "pattern": _wireworld_ascii(
+            "CCTHCCCCC.........",
+            ".........C........",
+            "........CCC.......",
+            ".........C........",
+            "........C.CCCCCCCC",
+            ".......C..........",
+            "CCCCCCC...........",
+        ),
+    },
+    "wireworld_classic_and": {
+        "name": "Clocked AND Gate",
+        "mode": "wireworld",
+        "category": "logic",
+        "description": "A complete two-input AND demonstration with clocks and output.",
+        "source": "https://codeheir.com/blog/2024/07/13/wireworld-cellular-automaton/",
+        "pattern": _wireworld_ascii(
+            "..........H...................",
+            ".HCCC....T.C..................",
+            "T....C...C.C.....C.CC.........",
+            ".CCCC.CCC..C....CCC..C........",
+            "...........C.C.C.C.H..CCCCTHCC",
+            ".HCCC.CCCC..CCC....T..........",
+            "T....C....T..C.C...C..........",
+            ".CCCC......H....CCC...........",
+            "............CCCC..............",
+        ),
+    },
+    "wireworld_classic_flip_flop": {
+        "name": "Set-Reset Flip-Flop",
+        "mode": "wireworld",
+        "category": "memory",
+        "description": "A six-cell storage loop with set, reset, and pulse-stream output.",
+        "source": "https://www.quinapalus.com/wires7.html",
+        "pattern": _wireworld_ascii(
+            "CCCCCCCCCCCCC....................",
+            ".............C...................",
+            "............CCC..................",
+            ".............C...................",
+            "............C.CCCCCTHCCCCTHCCCCTH",
+            "............C.C..................",
+            "...........CCC...................",
+            "............C....................",
+            "CCCCCCCTHCCC.....................",
+        ),
+    },
+    "wireworld_classic_binary_adder": {
+        "name": "Bit-Serial Binary Adder",
+        "mode": "wireworld",
+        "category": "arithmetic",
+        "description": "A compact full binary adder with carry state and serial I/O.",
+        "source": "https://www.quinapalus.com/wires8.html",
+        "pattern": _wireworld_ascii(
+            "..C.....C.....C...............CCCCCC................................",
+            ".............................C......C......C.....C.....C.....C.....C",
+            "CCCCCCCTHCCCCTHCCCCC.....CCCC..CC..CCCC.............................",
+            "....................C...C.....C..T.C..CCCCTHCCCCCCCCCCCCCCCCTHCCCCCC",
+            "...................CCCC.C...C.CCH..CCCC.............................",
+            "...................C..CC.CCCCC......C...............................",
+            "...................CCCC.C...C.C.C..C................................",
+            "....................C...C.....T...C.................................",
+            "CTHCCCCTHCCCCCCCCCCCC..CCC...HHH.C..................................",
+            ".....................C..C.....C..C..................................",
+            "..C.....C.....C......C.C.C...C.CC...................................",
+            ".....................C.C.C...C.C....................................",
+            "......................C..C..CCC.....................................",
+            ".........................C...C......................................",
+            "..........................CCC.......................................",
+        ),
     },
     "wireworld_diodes": {
         "name": "Forward and Reverse Diodes",
