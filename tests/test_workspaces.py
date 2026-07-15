@@ -1,9 +1,12 @@
 import os
+import random
 import unittest
 from unittest.mock import patch
 from typing import Any, Mapping
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+
+import pygame
 
 import life
 from one_dimensional_ca import (
@@ -147,10 +150,12 @@ class ApplicationWorkspaceTests(unittest.TestCase):
         self.eca = ElementaryWorkspaceState()
         life.elementary_controller.state = self.eca
         life.elementary_state = self.eca
+        life.elementary_renderer.diagram_backend = "auto"
         life.elementary_controller.reset_history()
 
     def tearDown(self) -> None:
         life.generation = self.original_generation
+        life.elementary_renderer.diagram_backend = "auto"
         life.set_simulation_mode("life")
 
     def test_application_registers_both_available_dimensions(self) -> None:
@@ -308,6 +313,63 @@ class ApplicationWorkspaceTests(unittest.TestCase):
 
         life.elementary_renderer.draw_base()
         life.elementary_renderer.draw_bars()
+
+    def test_large_1d_diagram_uses_surfarray_without_visual_changes(self) -> None:
+        life.set_active_dimension("1d")
+        original_theme = life.current_theme
+        original_grid = life.show_grid
+        rng = random.Random(47)
+        width = 121
+        row_count = 36
+        self.eca.cell_size = 6
+        self.eca.rows = [
+            tuple(1 if rng.random() < 0.38 else 0 for _ in range(width))
+            for _ in range(row_count)
+        ]
+        self.eca.row_backgrounds = [
+            int(index % 7 == 0) for index in range(row_count)
+        ]
+        self.eca.seed = self.eca.rows[0]
+        self.eca.previous_row = (0,) * width
+        self.eca.comparison_rows = list(self.eca.rows)
+        self.eca.comparison_row_backgrounds = list(self.eca.row_backgrounds)
+        self.eca.comparison_previous_row = self.eca.previous_row
+        try:
+            life.current_theme = "classic"
+            life.show_grid = False
+            life.elementary_controller.center_view()
+
+            life.screen.fill(life.THEMES["classic"]["background"])
+            life.elementary_renderer.diagram_backend = "rects"
+            life.elementary_renderer.draw_base()
+            legacy_pixels = pygame.surfarray.array3d(life.screen)
+
+            life.screen.fill(life.THEMES["classic"]["background"])
+            life.elementary_renderer.diagram_backend = "auto"
+            life.elementary_renderer.draw_base()
+            bulk_pixels = pygame.surfarray.array3d(life.screen)
+
+            self.assertEqual(
+                life.elementary_renderer.last_diagram_backend,
+                "surfarray",
+            )
+            self.assertTrue((legacy_pixels == bulk_pixels).all())
+        finally:
+            life.current_theme = original_theme
+            life.show_grid = original_grid
+
+    def test_surfarray_backend_falls_back_for_half_cell_row_alignment(self) -> None:
+        life.set_active_dimension("1d")
+        self.eca.rows = [(0, 1, 0), (0, 1, 1, 0)]
+        self.eca.row_backgrounds = [0, 0]
+        self.eca.comparison_rows = list(self.eca.rows)
+        self.eca.comparison_row_backgrounds = [0, 0]
+        life.elementary_controller.center_view()
+        life.elementary_renderer.diagram_backend = "surfarray"
+
+        life.elementary_renderer.draw_base()
+
+        self.assertEqual(life.elementary_renderer.last_diagram_backend, "rects")
 
     def test_higher_order_memory_round_trips_through_timeline(self) -> None:
         life.set_active_dimension("1d")

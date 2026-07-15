@@ -6,6 +6,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+import numpy as np
 import pygame
 
 from dimension_registry import DIMENSION_BY_KEY
@@ -44,6 +45,7 @@ from one_dimensional_ca import (
     step_one_dimensional,
 )
 from scientific_analysis import StateObservation
+from surface_rasterizer import StateGridRasterizer
 from themes import THEMES, Menu, one_d_state_color
 from timeline_history import TimelineBinding, TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
@@ -57,6 +59,7 @@ ECA_MAX_CELL_SIZE = 16
 ECA_MIN_SEED_WIDTH = 9
 ECA_MAX_SEED_WIDTH = 801
 ECA_MAX_DIAGRAM_WIDTH = 4095
+ECA_SURFARRAY_CELL_THRESHOLD = 4_096
 
 @dataclass
 class ElementaryWorkspaceState:
@@ -1584,6 +1587,9 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
     ) -> None:
         self.controller = controller
         self.services = services
+        self.diagram_backend = "auto"
+        self.last_diagram_backend = "rects"
+        self._rasterizer = StateGridRasterizer()
 
     @property
     def state(self) -> ElementaryWorkspaceState:
@@ -1675,7 +1681,6 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
         label: str | None,
     ) -> None:
         screen = self.services.screen()
-        origin_x, origin_y = origin
         old_clip = screen.get_clip()
         screen.set_clip(pane)
         if label is not None:
@@ -1686,11 +1691,159 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             )
             screen.blit(label_surface, (pane.x + 7, pane.y + 3))
 
+        bounds = self._visible_diagram_bounds(rows, pane, origin)
+        use_surfarray = self._should_use_surfarray(rows, bounds)
+        if use_surfarray:
+            self._draw_diagram_surfarray(
+                rows,
+                row_backgrounds,
+                origin,
+                bounds,
+                secondary=secondary,
+            )
+            self.last_diagram_backend = "surfarray"
+        else:
+            self._draw_diagram_rects(
+                rows,
+                row_backgrounds,
+                pane,
+                origin,
+                secondary=secondary,
+            )
+            self.last_diagram_backend = "rects"
+        self._draw_virtual_grid(
+            pane,
+            origin,
+            top_padding=20 if label is not None else 0,
+        )
+        current_width = len(rows[-1])
+        newest = pygame.Rect(
+            origin[0],
+            origin[1] + (len(rows) - 1) * self.state.cell_size,
+            current_width * self.state.cell_size,
+            self.state.cell_size,
+        )
+        pygame.draw.rect(
+            screen,
+            self._state_color(1, secondary=secondary),
+            newest,
+            1,
+        )
+        screen.set_clip(old_clip)
+
+    def _visible_diagram_bounds(
+        self,
+        rows: list[CellRow],
+        pane: pygame.Rect,
+        origin: tuple[int, int],
+    ) -> tuple[int, int, int, int]:
+        """Return visible row and world-column bounds for a diagram pane."""
+        size = self.state.cell_size
+        origin_x, origin_y = origin
         first_row = max(0, (pane.top - origin_y) // self.state.cell_size)
         last_row = min(
             len(rows),
             (pane.bottom - origin_y + self.state.cell_size - 1)
             // self.state.cell_size,
+        )
+        first_col = (pane.left - origin_x) // size
+        last_col = -(-(pane.right - origin_x) // size)
+        return first_row, last_row, first_col, last_col
+
+    def _should_use_surfarray(
+        self,
+        rows: list[CellRow],
+        bounds: tuple[int, int, int, int],
+    ) -> bool:
+        """Choose bulk rendering for large, cell-aligned visible diagrams."""
+        if self.diagram_backend not in {"auto", "rects", "surfarray"}:
+            raise ValueError(f"Unknown 1D diagram backend: {self.diagram_backend}")
+        if self.diagram_backend == "rects":
+            return False
+        first_row, last_row, first_col, last_col = bounds
+        if first_row >= last_row or first_col >= last_col:
+            return False
+        current_width = len(rows[-1])
+        aligned = all(
+            (current_width - len(rows[row_index])) % 2 == 0
+            for row_index in range(first_row, last_row)
+        )
+        if not aligned:
+            return False
+        visible_cells = (last_row - first_row) * (last_col - first_col)
+        return (
+            self.diagram_backend == "surfarray"
+            or visible_cells >= ECA_SURFARRAY_CELL_THRESHOLD
+        )
+
+    def _draw_diagram_surfarray(
+        self,
+        rows: list[CellRow],
+        row_backgrounds: list[int],
+        origin: tuple[int, int],
+        bounds: tuple[int, int, int, int],
+        *,
+        secondary: bool,
+    ) -> None:
+        """Rasterize the visible state plane with one surfarray transfer."""
+        first_row, last_row, first_col, last_col = bounds
+        current_width = len(rows[-1])
+        visible_states = np.empty(
+            (last_row - first_row, last_col - first_col),
+            dtype=np.int16,
+        )
+        for target_row, row_index in enumerate(range(first_row, last_row)):
+            row_data = rows[row_index]
+            outside_state = (
+                row_backgrounds[row_index]
+                if row_index < len(row_backgrounds)
+                else 0
+            )
+            visible_states[target_row].fill(outside_state)
+            row_first_col = (current_width - len(row_data)) // 2
+            copy_first = max(first_col, row_first_col)
+            copy_last = min(last_col, row_first_col + len(row_data))
+            if copy_first >= copy_last:
+                continue
+            source_first = copy_first - row_first_col
+            source_last = copy_last - row_first_col
+            target_first = copy_first - first_col
+            target_last = copy_last - first_col
+            visible_states[target_row, target_first:target_last] = row_data[
+                source_first:source_last
+            ]
+
+        palette = tuple(
+            self._state_color(value, secondary=secondary)
+            for value in range(self.state.states)
+        )
+        self._rasterizer.blit(
+            self.services.screen(),
+            visible_states,
+            palette,
+            (
+                origin[0] + first_col * self.state.cell_size,
+                origin[1] + first_row * self.state.cell_size,
+            ),
+            cell_size=self.state.cell_size,
+        )
+
+    def _draw_diagram_rects(
+        self,
+        rows: list[CellRow],
+        row_backgrounds: list[int],
+        pane: pygame.Rect,
+        origin: tuple[int, int],
+        *,
+        secondary: bool,
+    ) -> None:
+        """Draw small or non-cell-aligned diagrams with the legacy path."""
+        screen = self.services.screen()
+        origin_x, origin_y = origin
+        first_row, last_row, _, _ = self._visible_diagram_bounds(
+            rows,
+            pane,
+            origin,
         )
         current_width = len(rows[-1])
         for row_index in range(first_row, last_row):
@@ -1747,24 +1900,6 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
                         self._state_color(value, secondary=secondary),
                         rect,
                     )
-        self._draw_virtual_grid(
-            pane,
-            origin,
-            top_padding=20 if label is not None else 0,
-        )
-        newest = pygame.Rect(
-            origin_x,
-            origin_y + (len(rows) - 1) * self.state.cell_size,
-            current_width * self.state.cell_size,
-            self.state.cell_size,
-        )
-        pygame.draw.rect(
-            screen,
-            self._state_color(1, secondary=secondary),
-            newest,
-            1,
-        )
-        screen.set_clip(old_clip)
 
     def draw_base(self) -> None:
         screen = self.services.screen()
