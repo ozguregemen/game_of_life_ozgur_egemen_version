@@ -54,6 +54,21 @@ class ExportIntegrationTests(unittest.TestCase):
         self.assertEqual(len(frame.rows), 5)
         self.assertEqual(frame.rows, tuple(tuple(row) for row in state.rows))
 
+    def test_1d_comparison_export_places_both_diagrams_side_by_side(self) -> None:
+        life.set_active_dimension("1d")
+        state = life.elementary_controller.state
+        state.rows = [(0, 1, 0), (1, 1, 1)]
+        state.comparison_enabled = True
+        state.comparison_rows = [(0, 1, 0), (1, 0, 1)]
+        state.previous_row = (0, 1, 0)
+        state.comparison_previous_row = (0, 1, 0)
+        state.generation = 1
+
+        frame = life.capture_current_raster()
+
+        self.assertEqual(frame.rows[0], (0, 1, 0, 0, 0, 0, 0, 1, 0))
+        self.assertEqual(frame.rows[1], (1, 1, 1, 0, 0, 0, 1, 0, 1))
+
     def test_2d_life_ages_are_normalized_for_visual_exports(self) -> None:
         self.configure_life_blinker()
         life.grid[8][8] = 19

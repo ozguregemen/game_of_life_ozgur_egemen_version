@@ -1,7 +1,8 @@
-"""State, controller, and renderer for the 1D elementary CA workspace."""
+"""State, controller, and renderer for the generalized 1D CA workspace."""
 
 from __future__ import annotations
 
+import colorsys
 import random
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
@@ -16,15 +17,28 @@ from elementary_ca import (
     DEFAULT_RULE,
     DEFAULT_WIDTH,
     RULE_PRESETS,
-    ElementaryRow,
-    next_background,
-    normalize_row,
-    random_seed,
-    row_stats,
     rule_bits,
-    single_cell_seed,
-    step_elementary,
     validate_rule,
+)
+from one_dimensional_ca import (
+    FAMILY_ELEMENTARY,
+    FAMILY_HIGHER_ORDER,
+    FAMILY_MULTISTATE,
+    FAMILY_RADIUS,
+    FAMILY_REVERSIBLE,
+    FAMILY_TOTALISTIC,
+    RULE_FAMILIES,
+    RULE_FAMILY_BY_KEY,
+    CellRow,
+    RuleSpec,
+    default_rule_spec,
+    next_uniform_background,
+    normalize_state_row,
+    random_state_seed,
+    row_statistics,
+    short_rule_code,
+    single_state_seed,
+    step_one_dimensional,
 )
 from scientific_analysis import StateObservation
 from themes import THEMES, Menu
@@ -42,15 +56,32 @@ class ElementaryWorkspaceState:
     """All persistent and transient state owned by the 1D workspace."""
 
     rule: int = DEFAULT_RULE
+    family: str = FAMILY_ELEMENTARY
+    states: int = 2
+    radius: int = 1
     boundary: str = BOUNDARY_INFINITE
     background: int = 0
+    previous_background: int = 0
     rule_change_reset: bool = True
-    seed: ElementaryRow = field(
-        default_factory=lambda: single_cell_seed(DEFAULT_WIDTH)
+    seed: CellRow = field(
+        default_factory=lambda: single_state_seed(DEFAULT_WIDTH)
     )
-    rows: list[ElementaryRow] = field(
-        default_factory=lambda: [single_cell_seed(DEFAULT_WIDTH)]
+    rows: list[CellRow] = field(
+        default_factory=lambda: [single_state_seed(DEFAULT_WIDTH)]
     )
+    previous_row: CellRow = field(
+        default_factory=lambda: tuple(0 for _ in range(DEFAULT_WIDTH))
+    )
+    comparison_enabled: bool = False
+    comparison_rule: int = 90
+    comparison_rows: list[CellRow] = field(
+        default_factory=lambda: [single_state_seed(DEFAULT_WIDTH)]
+    )
+    comparison_previous_row: CellRow = field(
+        default_factory=lambda: tuple(0 for _ in range(DEFAULT_WIDTH))
+    )
+    comparison_background: int = 0
+    comparison_previous_background: int = 0
     generation: int = 0
     rng: random.Random = field(default_factory=random.Random)
     cell_size: int = 6
@@ -58,8 +89,10 @@ class ElementaryWorkspaceState:
     view_offset_y: int = 0
     rule_menu_active: bool = False
     rule_menu_input: str = ""
+    rule_menu_target: str = "primary"
     drawing: bool = False
     drawing_value: int = 1
+    brush_state: int = 1
     stroke_history_pending: bool = False
 
 
@@ -99,7 +132,7 @@ class ElementaryWorkspaceServices:
 
 
 class ElementaryWorkspaceController(WorkspaceController):
-    """Own elementary CA rules, history, view state, and user input."""
+    """Own generalized 1D rules, history, view state, and user input."""
 
     key = "1d"
 
@@ -140,6 +173,25 @@ class ElementaryWorkspaceController(WorkspaceController):
     def generation(self) -> int:
         return self.state.generation
 
+    @property
+    def rule_spec(self) -> RuleSpec:
+        """Return the normalized primary rule definition."""
+        return RuleSpec(
+            self.state.family,
+            self.state.rule,
+            self.state.states,
+            self.state.radius,
+        )
+
+    @property
+    def comparison_spec(self) -> RuleSpec:
+        """Return the secondary rule with matching family parameters."""
+        return self.rule_spec.with_code(self.state.comparison_rule)
+
+    @property
+    def family_name(self) -> str:
+        return RULE_FAMILY_BY_KEY[self.state.family].name
+
     def diagram_viewport(self) -> pygame.Rect:
         viewport = self.services.viewport()
         return pygame.Rect(
@@ -149,11 +201,37 @@ class ElementaryWorkspaceController(WorkspaceController):
             max(1, viewport.height - ECA_EDITOR_HEIGHT),
         )
 
-    def grid_origin(self) -> tuple[int, int]:
+    def diagram_panes(self) -> tuple[pygame.Rect, ...]:
+        """Return one full-width pane or two equal comparison panes."""
         viewport = self.diagram_viewport()
+        if not self.state.comparison_enabled:
+            return (viewport,)
+        gap = 10
+        pane_width = max(1, (viewport.width - gap) // 2)
         return (
-            viewport.x + self.state.view_offset_x,
-            viewport.y + self.services.grid_top_margin + self.state.view_offset_y,
+            pygame.Rect(viewport.x, viewport.y, pane_width, viewport.height),
+            pygame.Rect(
+                viewport.x + pane_width + gap,
+                viewport.y,
+                viewport.width - pane_width - gap,
+                viewport.height,
+            ),
+        )
+
+    def grid_origin(self, comparison: bool = False) -> tuple[int, int]:
+        """Return a diagram origin while preserving a shared pan offset."""
+        viewport = self.diagram_viewport()
+        pane = self.diagram_panes()[1 if comparison else 0]
+        diagram_width = len(self.state.rows[-1]) * self.state.cell_size
+        centered_full = (viewport.width - diagram_width) // 2
+        pan_delta = self.state.view_offset_x - centered_full
+        label_height = 20 if self.state.comparison_enabled else 0
+        return (
+            pane.x + (pane.width - diagram_width) // 2 + pan_delta,
+            pane.y
+            + self.services.grid_top_margin
+            + label_height
+            + self.state.view_offset_y,
         )
 
     def editor_rect(self) -> pygame.Rect:
@@ -169,9 +247,13 @@ class ElementaryWorkspaceController(WorkspaceController):
     def follow_latest(self) -> None:
         viewport = self.diagram_viewport()
         diagram_height = len(self.state.rows) * self.state.cell_size
+        label_height = 20 if self.state.comparison_enabled else 0
         self.state.view_offset_y = min(
             0,
-            viewport.height - self.services.grid_top_margin - diagram_height,
+            viewport.height
+            - self.services.grid_top_margin
+            - label_height
+            - diagram_height,
         )
 
     def center_view(self) -> None:
@@ -189,24 +271,24 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.state.cell_size = new_size
         self.center_view()
         self._invalidate()
-        self._status(f"Elementary cell size: {self.state.cell_size}px")
+        self._status(f"1D cell size: {self.state.cell_size}px")
 
     def save_history(self) -> None:
         self.timeline.prepare_change()
 
     def step_back(self) -> None:
         if not self.timeline.step(-1):
-            self._status("No earlier elementary CA state is available.")
+            self._status("No earlier 1D CA state is available.")
             return
         self.services.set_running(False)
-        self._status(f"Returned to elementary generation {self.state.generation}.")
+        self._status(f"Returned to 1D generation {self.state.generation}.")
 
     def step_forward(self) -> None:
         if not self.timeline.step(1):
-            self._status("No later elementary CA state is available.")
+            self._status("No later 1D CA state is available.")
             return
         self.services.set_running(False)
-        self._status(f"Advanced to elementary generation {self.state.generation}.")
+        self._status(f"Advanced to 1D generation {self.state.generation}.")
 
     def seek_history(self, index: int) -> bool:
         moved = self.timeline.seek(index)
@@ -234,64 +316,138 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.services.reset_analysis(self.analysis_observation())
 
     def analysis_observation(self) -> StateObservation:
+        spec = self.rule_spec
         return StateObservation(
-            key="1d:elementary",
-            title=f"Elementary Rule {self.state.rule}",
+            key=f"1d:{self.state.family}",
+            title=f"{self.family_name} Code {self.state.rule}",
             generation=self.state.generation,
             values=tuple(self.state.rows[-1]),
-            state_count=2,
-            active_states=(1,),
+            state_count=self.state.states,
+            active_states=tuple(range(1, self.state.states)),
             population_label="Active cells",
             alignment="center",
             experiment_context=(
-                self.state.rule,
+                tuple(spec.as_dict().items()),
                 self.state.boundary,
                 self.state.rule_change_reset,
             ),
-            signature_context=self.state.background,
+            signature_context=(
+                self.state.background,
+                self.state.previous_background,
+                self.state.previous_row if spec.memory != "none" else (),
+            ),
         )
 
     def advance(self) -> bool:
+        spec = self.rule_spec
+        comparison_spec = self.comparison_spec if self.state.comparison_enabled else spec
         current_row = self.state.rows[-1]
+        comparison_row = self.state.comparison_rows[-1]
         history_saved = False
-        if self.state.boundary == BOUNDARY_INFINITE and (
-            current_row[0] != self.state.background
-            or current_row[-1] != self.state.background
-        ):
+        edge_changed = any(
+            value != self.state.background
+            for value in (*current_row[: spec.radius], *current_row[-spec.radius :])
+        )
+        if self.state.comparison_enabled:
+            edge_changed = edge_changed or any(
+                value != self.state.comparison_background
+                for value in (
+                    *comparison_row[: spec.radius],
+                    *comparison_row[-spec.radius :],
+                )
+            )
+        if self.state.boundary == BOUNDARY_INFINITE and edge_changed:
             self.save_history()
             history_saved = True
-            self.state.rows[-1] = (
-                self.state.background,
+            primary_padding = (self.state.background,) * spec.radius
+            comparison_padding = (self.state.comparison_background,) * spec.radius
+            previous_padding = (self.state.previous_background,) * spec.radius
+            comparison_previous_padding = (
+                self.state.comparison_previous_background,
+            ) * spec.radius
+            current_row = (
+                *primary_padding,
                 *current_row,
-                self.state.background,
+                *primary_padding,
             )
-            current_row = self.state.rows[-1]
-            self.state.view_offset_x -= self.state.cell_size
+            comparison_row = (
+                *comparison_padding,
+                *comparison_row,
+                *comparison_padding,
+            )
+            self.state.rows[-1] = current_row
+            self.state.comparison_rows[-1] = comparison_row
+            self.state.previous_row = (
+                *previous_padding,
+                *self.state.previous_row,
+                *previous_padding,
+            )
+            self.state.comparison_previous_row = (
+                *comparison_previous_padding,
+                *self.state.comparison_previous_row,
+                *comparison_previous_padding,
+            )
+            self.state.view_offset_x -= self.state.cell_size * spec.radius
 
-        next_row = step_elementary(
+        next_row = step_one_dimensional(
             current_row,
-            self.state.rule,
+            spec,
             boundary=self.state.boundary,
             background=self.state.background,
+            previous_row=self.state.previous_row,
         )
         next_outside = (
-            next_background(self.state.rule, self.state.background)
+            next_uniform_background(
+                spec,
+                self.state.background,
+                previous_background=self.state.previous_background,
+            )
             if self.state.boundary == BOUNDARY_INFINITE
             else 0
         )
+        if self.state.comparison_enabled:
+            comparison_next = step_one_dimensional(
+                comparison_row,
+                comparison_spec,
+                boundary=self.state.boundary,
+                background=self.state.comparison_background,
+                previous_row=self.state.comparison_previous_row,
+            )
+            comparison_next_outside = (
+                next_uniform_background(
+                    comparison_spec,
+                    self.state.comparison_background,
+                    previous_background=self.state.comparison_previous_background,
+                )
+                if self.state.boundary == BOUNDARY_INFINITE
+                else 0
+            )
+        else:
+            comparison_row = current_row
+            comparison_next = next_row
+            comparison_next_outside = next_outside
         if not history_saved:
             self.save_history()
         self.state.rows.append(next_row)
+        self.state.comparison_rows.append(comparison_next)
+        self.state.previous_row = current_row
+        self.state.comparison_previous_row = comparison_row
+        self.state.previous_background = self.state.background
+        self.state.comparison_previous_background = self.state.comparison_background
         self.state.background = next_outside
+        self.state.comparison_background = comparison_next_outside
         if len(self.state.rows) > ECA_DIAGRAM_LIMIT:
             self.state.rows.pop(0)
+        if len(self.state.comparison_rows) > ECA_DIAGRAM_LIMIT:
+            self.state.comparison_rows.pop(0)
         self.state.generation += 1
         self.follow_latest()
         self._invalidate()
         self.sync_history()
         return True
 
-    def reset_seed(self, seed: ElementaryRow, message: str) -> None:
+    def reset_seed(self, seed: CellRow, message: str) -> None:
+        seed = normalize_state_row(seed, self.state.states)
         if (
             self.state.rows == [seed]
             and self.state.generation == 0
@@ -303,8 +459,14 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.save_history()
         self.state.seed = seed
         self.state.rows = [seed]
+        self.state.previous_row = tuple(0 for _ in seed)
+        self.state.comparison_rows = [seed]
+        self.state.comparison_previous_row = tuple(0 for _ in seed)
         self.state.generation = 0
         self.state.background = 0
+        self.state.previous_background = 0
+        self.state.comparison_background = 0
+        self.state.comparison_previous_background = 0
         self.services.set_running(False)
         self.center_view()
         self._invalidate()
@@ -314,30 +476,86 @@ class ElementaryWorkspaceController(WorkspaceController):
     def clear(self) -> None:
         self.reset_seed(
             tuple(0 for _ in range(DEFAULT_WIDTH)),
-            "Elementary diagram cleared.",
+            "1D diagram cleared.",
         )
 
     def randomize(self, density: float = 0.20) -> None:
         self.reset_seed(
-            random_seed(DEFAULT_WIDTH, density=density, rng=self.state.rng),
-            f"Random elementary seed created at {density:.0%} density.",
+            random_state_seed(
+                DEFAULT_WIDTH,
+                states=self.state.states,
+                density=density,
+                rng=self.state.rng,
+            ),
+            f"Random {self.family_name} seed created at {density:.0%} density.",
         )
 
     def use_single_seed(self) -> None:
         self.reset_seed(
-            single_cell_seed(DEFAULT_WIDTH),
+            single_state_seed(DEFAULT_WIDTH, states=self.state.states),
             "Centered single-cell seed created.",
         )
+
+    @staticmethod
+    def _matching_memory_row(row: CellRow, target: CellRow) -> CellRow:
+        """Return valid second-order memory even after direct legacy mutation."""
+        return row if len(row) == len(target) else tuple(0 for _ in target)
+
+    def _comparison_snapshot(self) -> dict[str, Any]:
+        """Capture a synchronized comparison trajectory with legacy fallbacks."""
+        rows = self.state.comparison_rows
+        synchronized = (
+            self.state.comparison_enabled
+            and len(rows) == len(self.state.rows)
+            and all(
+                len(comparison) == len(primary)
+                for primary, comparison in zip(self.state.rows, rows)
+            )
+        )
+        if not synchronized:
+            rows = list(self.state.rows)
+        latest = rows[-1]
+        previous = self._matching_memory_row(
+            self.state.comparison_previous_row
+            if synchronized
+            else self.state.previous_row,
+            latest,
+        )
+        return {
+            "enabled": self.state.comparison_enabled,
+            "rule": self.state.comparison_rule,
+            "rows": [list(row) for row in rows],
+            "previous_row": list(previous),
+            "background": (
+                self.state.comparison_background
+                if synchronized
+                else self.state.background
+            ),
+            "previous_background": (
+                self.state.comparison_previous_background
+                if synchronized
+                else self.state.previous_background
+            ),
+        }
 
     def snapshot(self) -> dict[str, Any]:
         """Return the complete diagram and camera state for session storage."""
         return {
             "rule": self.state.rule,
+            "rule_spec": self.rule_spec.as_dict(),
             "boundary": self.state.boundary,
             "background": self.state.background,
+            "previous_background": self.state.previous_background,
             "rule_change_reset": self.state.rule_change_reset,
             "seed": list(self.state.seed),
             "rows": [list(row) for row in self.state.rows],
+            "previous_row": list(
+                self._matching_memory_row(
+                    self.state.previous_row,
+                    self.state.rows[-1],
+                )
+            ),
+            "comparison": self._comparison_snapshot(),
             "generation": self.state.generation,
             "camera": {
                 "cell_size": self.state.cell_size,
@@ -352,23 +570,84 @@ class ElementaryWorkspaceController(WorkspaceController):
         """Capture simulation state without camera or transient controls."""
         return {
             "rule": self.state.rule,
+            "rule_spec": self.rule_spec.as_dict(),
             "boundary": self.state.boundary,
             "background": self.state.background,
+            "previous_background": self.state.previous_background,
             "rule_change_reset": self.state.rule_change_reset,
             "seed": list(self.state.seed),
             "rows": [list(row) for row in self.state.rows],
+            "previous_row": list(
+                self._matching_memory_row(
+                    self.state.previous_row,
+                    self.state.rows[-1],
+                )
+            ),
+            "comparison": self._comparison_snapshot(),
             "generation": self.state.generation,
         }
 
-    def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
-        """Restore a trusted frame and keep its latest row visible."""
-        self.state.rule = validate_rule(snapshot["rule"])
+    @staticmethod
+    def _spec_from_snapshot(snapshot: Mapping[str, Any]) -> RuleSpec:
+        rule_spec = snapshot.get("rule_spec")
+        if isinstance(rule_spec, Mapping):
+            return RuleSpec.from_mapping(rule_spec)
+        return RuleSpec(FAMILY_ELEMENTARY, validate_rule(snapshot["rule"]), 2, 1)
+
+    def _restore_simulation_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        """Restore trusted generalized state with legacy Elementary defaults."""
+        spec = self._spec_from_snapshot(snapshot)
+        rows = [normalize_state_row(row, spec.states) for row in snapshot["rows"]]
+        seed = normalize_state_row(snapshot["seed"], spec.states)
+        previous_row = normalize_state_row(
+            snapshot.get("previous_row", tuple(0 for _ in rows[-1])),
+            spec.states,
+        )
+        comparison = snapshot.get("comparison")
+        comparison_mapping = comparison if isinstance(comparison, Mapping) else {}
+        comparison_rule = int(
+            comparison_mapping.get("rule", min(90, spec.max_code))
+        )
+        comparison_rule = max(0, min(spec.max_code, comparison_rule))
+        comparison_rows = [
+            normalize_state_row(row, spec.states)
+            for row in comparison_mapping.get("rows", rows)
+        ]
+        comparison_previous_row = normalize_state_row(
+            comparison_mapping.get(
+                "previous_row",
+                tuple(0 for _ in comparison_rows[-1]),
+            ),
+            spec.states,
+        )
+
+        self.state.family = spec.family
+        self.state.rule = spec.code
+        self.state.states = spec.states
+        self.state.radius = spec.radius
         self.state.boundary = str(snapshot["boundary"])
         self.state.background = int(snapshot["background"])
+        self.state.previous_background = int(snapshot.get("previous_background", 0))
         self.state.rule_change_reset = bool(snapshot["rule_change_reset"])
-        self.state.seed = normalize_row(snapshot["seed"])
-        self.state.rows = [normalize_row(row) for row in snapshot["rows"]]
+        self.state.seed = seed
+        self.state.rows = rows
+        self.state.previous_row = previous_row
+        self.state.comparison_enabled = bool(comparison_mapping.get("enabled", False))
+        self.state.comparison_rule = comparison_rule
+        self.state.comparison_rows = comparison_rows
+        self.state.comparison_previous_row = comparison_previous_row
+        self.state.comparison_background = int(
+            comparison_mapping.get("background", self.state.background)
+        )
+        self.state.comparison_previous_background = int(
+            comparison_mapping.get("previous_background", 0)
+        )
         self.state.generation = int(snapshot["generation"])
+        self.state.brush_state = min(self.state.brush_state, spec.states - 1)
+
+    def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        """Restore a trusted frame and keep its latest row visible."""
+        self._restore_simulation_snapshot(snapshot)
         self.state.rule_menu_active = False
         self.state.drawing = False
         self.state.stroke_history_pending = False
@@ -377,23 +656,26 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.services.rebuild_sidebar()
 
     def restore(self, snapshot: Mapping[str, Any]) -> None:
-        """Restore a prevalidated complete elementary workspace snapshot."""
-        rows = [normalize_row(row) for row in snapshot["rows"]]
-        seed = normalize_row(snapshot["seed"])
+        """Restore a prevalidated complete generalized 1D workspace snapshot."""
+        spec = self._spec_from_snapshot(snapshot)
+        rows = [normalize_state_row(row, spec.states) for row in snapshot["rows"]]
         if not rows:
-            raise ValueError("Elementary session must contain at least one row.")
-        rule = validate_rule(snapshot["rule"])
+            raise ValueError("1D session must contain at least one row.")
         boundary = snapshot["boundary"]
         if boundary not in (BOUNDARY_INFINITE, BOUNDARY_FIXED, BOUNDARY_WRAP):
-            raise ValueError(f"Unknown elementary boundary: {boundary}")
+            raise ValueError(f"Unknown 1D boundary: {boundary}")
         background = snapshot["background"]
-        if isinstance(background, bool) or background not in (0, 1):
-            raise ValueError("Elementary background must be 0 or 1.")
+        if (
+            isinstance(background, bool)
+            or not isinstance(background, int)
+            or not 0 <= background < spec.states
+        ):
+            raise ValueError("1D background does not fit the state count.")
         generation = snapshot["generation"]
         if isinstance(generation, bool) or not isinstance(generation, int):
-            raise TypeError("Elementary generation must be an integer.")
+            raise TypeError("1D generation must be an integer.")
         if generation < 0:
-            raise ValueError("Elementary generation cannot be negative.")
+            raise ValueError("1D generation cannot be negative.")
         rule_change_reset = snapshot["rule_change_reset"]
         if not isinstance(rule_change_reset, bool):
             raise TypeError("Rule-change behavior must be true or false.")
@@ -401,13 +683,15 @@ class ElementaryWorkspaceController(WorkspaceController):
         cell_size = int(camera["cell_size"])
         offset_x, offset_y = camera["offset"]
 
-        self.state.rule = rule
-        self.state.boundary = boundary
-        self.state.background = background
-        self.state.rule_change_reset = rule_change_reset
-        self.state.seed = seed
-        self.state.rows = rows
-        self.state.generation = generation
+        self._restore_simulation_snapshot(snapshot)
+        if len(self.state.previous_row) != len(self.state.rows[-1]):
+            raise ValueError("Previous 1D row must match the latest row width.")
+        if not self.state.comparison_rows:
+            raise ValueError("Comparison diagram must contain at least one row.")
+        if len(self.state.comparison_previous_row) != len(
+            self.state.comparison_rows[-1]
+        ):
+            raise ValueError("Comparison previous row must match its latest row.")
         self.state.cell_size = max(
             ECA_MIN_CELL_SIZE,
             min(ECA_MAX_CELL_SIZE, cell_size),
@@ -426,34 +710,63 @@ class ElementaryWorkspaceController(WorkspaceController):
         """Return a reusable rule/boundary/current-row experiment setup."""
         return {
             "rule": self.state.rule,
+            "rule_spec": self.rule_spec.as_dict(),
             "boundary": self.state.boundary,
             "background": self.state.background,
             "rule_change_reset": self.state.rule_change_reset,
             "seed": list(self.state.rows[-1]),
+            "comparison": {
+                "enabled": self.state.comparison_enabled,
+                "rule": self.state.comparison_rule,
+            },
         }
 
     def restore_experiment(self, experiment: Mapping[str, Any]) -> None:
         """Restart the workspace from a validated experiment profile."""
-        seed = normalize_row(experiment["seed"])
-        rule = validate_rule(experiment["rule"])
+        spec = self._spec_from_snapshot(experiment)
+        seed = normalize_state_row(experiment["seed"], spec.states)
         boundary = experiment["boundary"]
         if boundary not in (BOUNDARY_INFINITE, BOUNDARY_FIXED, BOUNDARY_WRAP):
-            raise ValueError(f"Unknown elementary boundary: {boundary}")
+            raise ValueError(f"Unknown 1D boundary: {boundary}")
         background = experiment["background"]
-        if isinstance(background, bool) or background not in (0, 1):
-            raise ValueError("Elementary background must be 0 or 1.")
+        if (
+            isinstance(background, bool)
+            or not isinstance(background, int)
+            or not 0 <= background < spec.states
+        ):
+            raise ValueError("1D background does not fit the state count.")
         rule_change_reset = experiment["rule_change_reset"]
         if not isinstance(rule_change_reset, bool):
             raise TypeError("Rule-change behavior must be true or false.")
+        comparison = experiment.get("comparison")
+        comparison_mapping = comparison if isinstance(comparison, Mapping) else {}
+        comparison_rule = max(
+            0,
+            min(spec.max_code, int(comparison_mapping.get("rule", 0))),
+        )
 
         self.save_history()
-        self.state.rule = rule
+        self.state.family = spec.family
+        self.state.rule = spec.code
+        self.state.states = spec.states
+        self.state.radius = spec.radius
         self.state.boundary = boundary
         self.state.background = background
+        self.state.previous_background = 0
         self.state.rule_change_reset = rule_change_reset
         self.state.seed = seed
         self.state.rows = [seed]
+        self.state.previous_row = tuple(0 for _ in seed)
+        self.state.comparison_enabled = bool(
+            comparison_mapping.get("enabled", False)
+        )
+        self.state.comparison_rule = comparison_rule
+        self.state.comparison_rows = [seed]
+        self.state.comparison_previous_row = tuple(0 for _ in seed)
+        self.state.comparison_background = background
+        self.state.comparison_previous_background = 0
         self.state.generation = 0
+        self.state.brush_state = min(self.state.brush_state, spec.states - 1)
         self.services.set_running(False)
         self.center_view()
         self._invalidate()
@@ -469,39 +782,47 @@ class ElementaryWorkspaceController(WorkspaceController):
         }[boundary]
 
     def set_rule(self, rule: int) -> None:
-        validated_rule = validate_rule(rule)
+        validated_rule = self.rule_spec.with_code(rule).code
         if validated_rule == self.state.rule:
-            self._status(f"Elementary rule {self.state.rule} is already selected.")
+            self._status(f"Rule code {self.state.rule} is already selected.")
             return
         self.save_history()
         self.state.rule = validated_rule
         if self.state.rule_change_reset:
-            self.state.seed = single_cell_seed(DEFAULT_WIDTH)
-            self.state.rows = [self.state.seed]
+            seed = single_state_seed(DEFAULT_WIDTH, states=self.state.states)
             self.state.boundary = BOUNDARY_INFINITE
-            self.state.background = 0
+            background = 0
+            previous_row = None
+            previous_background = 0
             restart_label = "canonical single-cell seed and infinite background"
         else:
-            self.state.seed = self.state.rows[-1]
-            self.state.rows = [self.state.seed]
-            if self.state.boundary != BOUNDARY_INFINITE:
-                self.state.background = 0
+            seed = self.state.rows[-1]
+            background = self.state.background
+            previous_row = self.state.previous_row
+            previous_background = self.state.previous_background
             restart_label = "the current row"
-        self.state.generation = 0
-        self.services.set_running(False)
-        self.center_view()
-        self._invalidate()
-        self.services.rebuild_sidebar()
-        self.sync_history()
+        self._restart_diagrams(
+            seed,
+            background=background,
+            previous_row=previous_row,
+            previous_background=previous_background,
+        )
         self._status(
-            f"Rule {self.state.rule} selected; restarted from {restart_label}.",
+            f"{self.family_name} code {self.state.rule} selected; "
+            f"restarted from {restart_label}.",
             4.0,
         )
 
     def adjust_rule(self, delta: int) -> None:
-        self.set_rule((self.state.rule + delta) % 256)
+        self.set_rule((self.state.rule + delta) % (self.rule_spec.max_code + 1))
 
     def next_featured_rule(self) -> int:
+        if self.state.family != FAMILY_ELEMENTARY:
+            return default_rule_spec(
+                self.state.family,
+                states=self.state.states,
+                radius=self.state.radius,
+            ).code
         for preset in RULE_PRESETS:
             if preset > self.state.rule:
                 return preset
@@ -509,6 +830,131 @@ class ElementaryWorkspaceController(WorkspaceController):
 
     def cycle_featured_rule(self) -> None:
         self.set_rule(self.next_featured_rule())
+
+    def _restart_diagrams(
+        self,
+        seed: CellRow,
+        *,
+        background: int = 0,
+        previous_row: CellRow | None = None,
+        previous_background: int = 0,
+    ) -> None:
+        """Restart primary and comparison trajectories from one shared seed."""
+        seed = normalize_state_row(seed, self.state.states)
+        prior = normalize_state_row(
+            previous_row if previous_row is not None else (0 for _ in seed),
+            self.state.states,
+        )
+        if len(prior) != len(seed):
+            prior = tuple(0 for _ in seed)
+        self.state.seed = seed
+        self.state.rows = [seed]
+        self.state.previous_row = prior
+        self.state.comparison_rows = [seed]
+        self.state.comparison_previous_row = prior
+        self.state.background = background
+        self.state.previous_background = previous_background
+        self.state.comparison_background = background
+        self.state.comparison_previous_background = previous_background
+        self.state.generation = 0
+        self.services.set_running(False)
+        self.center_view()
+        self._invalidate()
+        self.services.rebuild_sidebar()
+        self.sync_history()
+
+    def cycle_rule_family(self) -> None:
+        """Select the next generalized rule family and its canonical preset."""
+        self.save_history()
+        current_index = RULE_FAMILIES.index(self.state.family)
+        family = RULE_FAMILIES[(current_index + 1) % len(RULE_FAMILIES)]
+        spec = default_rule_spec(family)
+        self.state.family = spec.family
+        self.state.rule = spec.code
+        self.state.states = spec.states
+        self.state.radius = spec.radius
+        self.state.comparison_rule = min(
+            spec.max_code,
+            90 if family == FAMILY_ELEMENTARY else (spec.code + 1),
+        )
+        self.state.brush_state = 1
+        self.state.boundary = BOUNDARY_INFINITE
+        self._restart_diagrams(
+            single_state_seed(DEFAULT_WIDTH, states=spec.states)
+        )
+        self._status(
+            f"1D family: {spec.definition.name}. {spec.definition.summary}",
+            5.0,
+        )
+
+    def cycle_state_count(self) -> None:
+        if self.state.family not in (FAMILY_TOTALISTIC, FAMILY_MULTISTATE):
+            self._status("This family has a fixed two-state alphabet.")
+            return
+        choices = (2, 3, 4) if self.state.family == FAMILY_TOTALISTIC else (3, 4)
+        next_states = choices[(choices.index(self.state.states) + 1) % len(choices)]
+        spec = default_rule_spec(
+            self.state.family,
+            states=next_states,
+            radius=self.state.radius,
+        )
+        self.save_history()
+        self.state.rule = spec.code
+        self.state.states = spec.states
+        self.state.comparison_rule = min(spec.max_code, spec.code + 1)
+        self.state.brush_state = 1
+        self._restart_diagrams(
+            single_state_seed(DEFAULT_WIDTH, states=spec.states)
+        )
+        self._status(f"State count changed to {spec.states}; diagram restarted.")
+
+    def cycle_radius(self) -> None:
+        if self.state.family not in (FAMILY_TOTALISTIC, FAMILY_RADIUS):
+            self._status("This family has a fixed radius of one.")
+            return
+        choices = (1, 2, 3) if self.state.family == FAMILY_TOTALISTIC else (2, 3)
+        next_radius = choices[(choices.index(self.state.radius) + 1) % len(choices)]
+        spec = default_rule_spec(
+            self.state.family,
+            states=self.state.states,
+            radius=next_radius,
+        )
+        self.save_history()
+        self.state.rule = spec.code
+        self.state.radius = spec.radius
+        self.state.comparison_rule = min(spec.max_code, spec.code + 1)
+        self._restart_diagrams(
+            single_state_seed(DEFAULT_WIDTH, states=spec.states)
+        )
+        self._status(f"Neighborhood radius changed to {spec.radius}.")
+
+    def toggle_comparison(self) -> None:
+        self.save_history()
+        self.state.comparison_enabled = not self.state.comparison_enabled
+        if self.state.comparison_rule > self.rule_spec.max_code:
+            self.state.comparison_rule = min(90, self.rule_spec.max_code)
+        seed = self.state.rows[-1]
+        self._restart_diagrams(seed)
+        label = "enabled" if self.state.comparison_enabled else "disabled"
+        self._status(f"Side-by-side rule comparison {label}; diagram restarted.")
+
+    def adjust_comparison_rule(self, delta: int) -> None:
+        if not self.state.comparison_enabled:
+            self.toggle_comparison()
+            return
+        maximum = self.rule_spec.max_code
+        new_code = (self.state.comparison_rule + delta) % (maximum + 1)
+        if new_code == self.state.comparison_rule:
+            return
+        self.save_history()
+        self.state.comparison_rule = new_code
+        self._restart_diagrams(self.state.seed)
+        self._status(f"Comparison rule code changed to {new_code}.")
+
+    def cycle_brush_state(self) -> None:
+        self.state.brush_state = self.state.brush_state % (self.state.states - 1) + 1
+        self.services.rebuild_sidebar()
+        self._status(f"1D brush state: {self.state.brush_state}.")
 
     def toggle_rule_change_reset(self) -> None:
         self.save_history()
@@ -527,17 +973,9 @@ class ElementaryWorkspaceController(WorkspaceController):
         boundaries = (BOUNDARY_INFINITE, BOUNDARY_FIXED, BOUNDARY_WRAP)
         current_index = boundaries.index(self.state.boundary)
         self.state.boundary = boundaries[(current_index + 1) % len(boundaries)]
-        self.state.background = 0
-        self.state.seed = self.state.rows[-1]
-        self.state.rows = [self.state.seed]
-        self.state.generation = 0
-        self.services.set_running(False)
-        self.center_view()
-        self._invalidate()
-        self.services.rebuild_sidebar()
-        self.sync_history()
+        self._restart_diagrams(self.state.rows[-1])
         self._status(
-            f"Elementary boundary: {self.boundary_label(self.state.boundary)}; "
+            f"1D boundary: {self.boundary_label(self.state.boundary)}; "
             "diagram restarted."
         )
 
@@ -551,9 +989,15 @@ class ElementaryWorkspaceController(WorkspaceController):
         return None
 
     def draw_cell(self, column: int) -> None:
-        target_value = 1 if self.state.drawing_value else 0
+        target_value = self.state.drawing_value
         current = self.state.rows[-1]
-        if current[column] == target_value:
+        comparison_current = self.state.comparison_rows[-1]
+        primary_unchanged = current[column] == target_value
+        comparison_unchanged = (
+            not self.state.comparison_enabled
+            or comparison_current[column] == target_value
+        )
+        if primary_unchanged and comparison_unchanged:
             return
         if self.state.stroke_history_pending:
             self.save_history()
@@ -561,15 +1005,55 @@ class ElementaryWorkspaceController(WorkspaceController):
         edited = list(current)
         edited[column] = target_value
         self.state.rows[-1] = tuple(edited)
+        if self.state.comparison_enabled:
+            comparison_edited = list(comparison_current)
+            comparison_edited[column] = target_value
+            self.state.comparison_rows[-1] = tuple(comparison_edited)
         if self.state.generation == 0 and len(self.state.rows) == 1:
             self.state.seed = self.state.rows[-1]
         self.services.set_running(False)
         self._invalidate()
 
     def open_rule_menu(self) -> None:
+        if self.state.family != FAMILY_ELEMENTARY:
+            self._status("The 0-255 catalogue is available for Elementary rules.")
+            return
+        self.state.rule_menu_target = "primary"
         self.state.rule_menu_active = True
         self.state.rule_menu_input = ""
         self.services.set_running(False)
+
+    def open_comparison_rule_menu(self) -> None:
+        """Open the Elementary catalogue with the secondary rule selected."""
+        if self.state.family != FAMILY_ELEMENTARY:
+            self._status("Direct catalogue selection is available for Elementary rules.")
+            return
+        if not self.state.comparison_enabled:
+            self.toggle_comparison()
+        self.state.rule_menu_target = "comparison"
+        self.state.rule_menu_active = True
+        self.state.rule_menu_input = ""
+        self.services.set_running(False)
+
+    def _catalog_rule(self) -> int:
+        return (
+            self.state.comparison_rule
+            if self.state.rule_menu_target == "comparison"
+            else self.state.rule
+        )
+
+    def _set_catalog_rule(self, rule: int) -> None:
+        if self.state.rule_menu_target == "comparison":
+            delta = rule - self.state.comparison_rule
+            self.adjust_comparison_rule(delta)
+        else:
+            self.set_rule(rule)
+
+    def _adjust_catalog_rule(self, delta: int) -> None:
+        if self.state.rule_menu_target == "comparison":
+            self.adjust_comparison_rule(delta)
+        else:
+            self.adjust_rule(delta)
 
     def close_rule_menu(self) -> None:
         self.state.rule_menu_active = False
@@ -616,11 +1100,11 @@ class ElementaryWorkspaceController(WorkspaceController):
                 self.close_rule_menu()
                 return True
             if event.key == pygame.K_LEFT:
-                self.adjust_rule(-1)
+                self._adjust_catalog_rule(-1)
                 self.state.rule_menu_input = ""
                 return True
             if event.key == pygame.K_RIGHT:
-                self.adjust_rule(1)
+                self._adjust_catalog_rule(1)
                 self.state.rule_menu_input = ""
                 return True
             if event.key == pygame.K_BACKSPACE:
@@ -628,7 +1112,7 @@ class ElementaryWorkspaceController(WorkspaceController):
                 return True
             if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                 if self.state.rule_menu_input:
-                    self.set_rule(int(self.state.rule_menu_input))
+                    self._set_catalog_rule(int(self.state.rule_menu_input))
                     self.close_rule_menu()
                 return True
             if pygame.K_0 <= event.key <= pygame.K_9:
@@ -644,7 +1128,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             modal, cards = self.rule_menu_geometry()
             for rule, card in cards:
                 if card.collidepoint(event.pos):
-                    self.set_rule(rule)
+                    self._set_catalog_rule(rule)
                     self.close_rule_menu()
                     return True
             if not modal.collidepoint(event.pos):
@@ -672,7 +1156,9 @@ class ElementaryWorkspaceController(WorkspaceController):
                 column = self.mouse_to_column(event.pos)
                 if column is not None:
                     self.state.drawing = True
-                    self.state.drawing_value = 1 if event.button == 1 else 0
+                    self.state.drawing_value = (
+                        self.state.brush_state if event.button == 1 else 0
+                    )
                     self.state.stroke_history_pending = True
                     self.draw_cell(column)
             return True
@@ -695,7 +1181,7 @@ class ElementaryWorkspaceController(WorkspaceController):
     def build_sidebar(self, menu: Menu) -> None:
         accent = DIMENSION_BY_KEY["1d"].accent
         menu.clear_buttons()
-        menu.set_header("1D · Elementary CA")
+        menu.set_header(f"1D · {self.family_name}")
         menu.add_button(
             "Select Dimension (D)",
             self.services.activate_dimension_menu,
@@ -717,23 +1203,73 @@ class ElementaryWorkspaceController(WorkspaceController):
             accent=(235, 155, 70),
         )
         menu.add_button(
-            "Browse Rules 0–255 (E)",
-            self.open_rule_menu,
+            f"Family: {self.family_name}",
+            self.cycle_rule_family,
             accent=accent,
         )
+        if self.state.family == FAMILY_ELEMENTARY:
+            menu.add_button(
+                "Browse Rules 0–255 (E)",
+                self.open_rule_menu,
+                accent=accent,
+            )
+            menu.add_button(
+                f"Next Featured: {self.next_featured_rule()}",
+                self.cycle_featured_rule,
+                accent=(225, 182, 70),
+            )
+        else:
+            menu.add_button(
+                f"Code: {short_rule_code(self.state.rule)}",
+                self.cycle_featured_rule,
+                accent=(225, 182, 70),
+            )
+        rule_term = "Rule" if self.state.family == FAMILY_ELEMENTARY else "Code"
         menu.add_button(
-            f"Next Featured: {self.next_featured_rule()}",
-            self.cycle_featured_rule,
-            accent=(225, 182, 70),
-        )
-        menu.add_button(
-            f"Previous Rule: {(self.state.rule - 1) % 256}",
+            f"Previous {rule_term}: {short_rule_code((self.state.rule - 1) % (self.rule_spec.max_code + 1))}",
             lambda: self.adjust_rule(-1),
         )
         menu.add_button(
-            f"Next Rule: {(self.state.rule + 1) % 256}",
+            f"Next {rule_term}: {short_rule_code((self.state.rule + 1) % (self.rule_spec.max_code + 1))}",
             lambda: self.adjust_rule(1),
         )
+        if self.state.family in (FAMILY_TOTALISTIC, FAMILY_MULTISTATE):
+            menu.add_button(
+                f"States: {self.state.states}",
+                self.cycle_state_count,
+            )
+        if self.state.family in (FAMILY_TOTALISTIC, FAMILY_RADIUS):
+            menu.add_button(
+                f"Radius: {self.state.radius}",
+                self.cycle_radius,
+            )
+        if self.state.states > 2:
+            menu.add_button(
+                f"Brush State: {self.state.brush_state}",
+                self.cycle_brush_state,
+                accent=accent,
+            )
+        menu.add_button(
+            f"Compare: {'On' if self.state.comparison_enabled else 'Off'}",
+            self.toggle_comparison,
+            active=self.state.comparison_enabled,
+            accent=(235, 170, 70),
+        )
+        if self.state.comparison_enabled:
+            if self.state.family == FAMILY_ELEMENTARY:
+                menu.add_button(
+                    f"Compare Rule: {self.state.comparison_rule}",
+                    self.open_comparison_rule_menu,
+                    accent=(235, 170, 70),
+                )
+            menu.add_button(
+                f"Compare −: {short_rule_code((self.state.comparison_rule - 1) % (self.rule_spec.max_code + 1))}",
+                lambda: self.adjust_comparison_rule(-1),
+            )
+            menu.add_button(
+                f"Compare +: {short_rule_code((self.state.comparison_rule + 1) % (self.rule_spec.max_code + 1))}",
+                lambda: self.adjust_comparison_rule(1),
+            )
         reset_label = (
             "Canonical Reset"
             if self.state.rule_change_reset
@@ -764,7 +1300,7 @@ class ElementaryWorkspaceController(WorkspaceController):
 
 
 class ElementaryWorkspaceRenderer(WorkspaceRenderer):
-    """Render the elementary CA state and its rule catalogue."""
+    """Render generalized 1D state and the Elementary rule catalogue."""
 
     render_key = "1d:elementary_ca"
 
@@ -790,20 +1326,124 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             self.services.render_revision(ECA_RENDER_KEY),
             viewport.size,
             self.controller.grid_origin(),
+            (
+                self.controller.grid_origin(comparison=True)
+                if self.state.comparison_enabled
+                else None
+            ),
             self.controller.editor_rect(),
             self.state.cell_size,
+            self.state.family,
+            self.state.states,
+            self.state.comparison_enabled,
+            self.state.comparison_rule,
             self.services.theme_name(),
             self.services.show_grid(),
         )
+
+    @staticmethod
+    def _fit_text(font: pygame.font.Font, value: str, width: int) -> str:
+        if font.size(value)[0] <= width:
+            return value
+        ellipsis = "..."
+        shortened = value
+        while shortened and font.size(shortened + ellipsis)[0] > width:
+            shortened = shortened[:-1]
+        return shortened.rstrip() + ellipsis
+
+    def _state_color(
+        self,
+        value: int,
+        *,
+        secondary: bool = False,
+    ) -> tuple[int, int, int]:
+        """Return a stable palette color for a non-zero finite state."""
+        if self.state.states == 2:
+            return (245, 170, 65) if secondary else DIMENSION_BY_KEY["1d"].accent
+        hue = ((value - 1) / max(1, self.state.states - 1) + 0.52) % 1.0
+        red, green, blue = colorsys.hsv_to_rgb(hue, 0.72, 0.96)
+        return round(red * 255), round(green * 255), round(blue * 255)
+
+    def _draw_diagram(
+        self,
+        rows: list[CellRow],
+        pane: pygame.Rect,
+        origin: tuple[int, int],
+        *,
+        secondary: bool,
+        label: str | None,
+    ) -> None:
+        screen = self.services.screen()
+        theme = THEMES[self.services.theme_name()]
+        origin_x, origin_y = origin
+        old_clip = screen.get_clip()
+        screen.set_clip(pane)
+        if label is not None:
+            label_surface = self.services.tiny_font().render(
+                label,
+                True,
+                self._state_color(1, secondary=secondary),
+            )
+            screen.blit(label_surface, (pane.x + 7, pane.y + 3))
+
+        first_row = max(0, (pane.top - origin_y) // self.state.cell_size)
+        last_row = min(
+            len(rows),
+            (pane.bottom - origin_y + self.state.cell_size - 1)
+            // self.state.cell_size,
+        )
+        current_width = len(rows[-1])
+        for row_index in range(first_row, last_row):
+            row_data = rows[row_index]
+            row_origin_x = origin_x + (
+                (current_width - len(row_data)) * self.state.cell_size // 2
+            )
+            first_col = max(
+                0,
+                (pane.left - row_origin_x) // self.state.cell_size,
+            )
+            last_col = min(
+                len(row_data),
+                (pane.right - row_origin_x + self.state.cell_size - 1)
+                // self.state.cell_size,
+            )
+            y = origin_y + row_index * self.state.cell_size
+            for column in range(first_col, last_col):
+                value = row_data[column]
+                rect = pygame.Rect(
+                    row_origin_x + column * self.state.cell_size,
+                    y,
+                    self.state.cell_size,
+                    self.state.cell_size,
+                )
+                if value:
+                    pygame.draw.rect(
+                        screen,
+                        self._state_color(value, secondary=secondary),
+                        rect,
+                    )
+                if self.services.show_grid() and self.state.cell_size >= 4:
+                    pygame.draw.rect(screen, theme["grid"], rect, 1)
+        newest = pygame.Rect(
+            origin_x,
+            origin_y + (len(rows) - 1) * self.state.cell_size,
+            current_width * self.state.cell_size,
+            self.state.cell_size,
+        )
+        pygame.draw.rect(
+            screen,
+            self._state_color(1, secondary=secondary),
+            newest,
+            1,
+        )
+        screen.set_clip(old_clip)
 
     def draw_base(self) -> None:
         screen = self.services.screen()
         viewport = self.services.viewport()
         diagram_viewport = self.controller.diagram_viewport()
-        origin_x, origin_y = self.controller.grid_origin()
         editor = self.controller.editor_rect()
         theme = THEMES[self.services.theme_name()]
-        live_color = DIMENSION_BY_KEY["1d"].accent
         tiny_font = self.services.tiny_font()
 
         old_clip = screen.get_clip()
@@ -813,7 +1453,10 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             theme["info_bar"],
             (viewport.x, viewport.y, viewport.width, ECA_EDITOR_HEIGHT),
         )
-        label = "Editable current row  ·  left click: on  ·  right click: off"
+        label = (
+            "Editable current row  ·  left click: state "
+            f"{self.state.brush_state}  ·  right click: state 0"
+        )
         screen.blit(
             tiny_font.render(label, True, theme["text"]),
             (viewport.x + 10, viewport.y + 5),
@@ -826,10 +1469,10 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             if rect.right < viewport.left or rect.left > viewport.right:
                 continue
             if value:
-                pygame.draw.rect(screen, live_color, rect)
+                pygame.draw.rect(screen, self._state_color(value), rect)
             if self.services.show_grid() and self.state.cell_size >= 4:
                 pygame.draw.rect(screen, theme["grid"], rect, 1)
-        pygame.draw.rect(screen, live_color, editor, 1)
+        pygame.draw.rect(screen, self._state_color(1), editor, 1)
         pygame.draw.line(
             screen,
             theme["grid"],
@@ -837,61 +1480,35 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             (viewport.right, diagram_viewport.y - 1),
         )
 
-        screen.set_clip(diagram_viewport)
-        first_row = max(
-            0,
-            (diagram_viewport.top - origin_y) // self.state.cell_size,
+        panes = self.controller.diagram_panes()
+        primary_label = None
+        if self.state.comparison_enabled:
+            primary_label = f"Primary · code {short_rule_code(self.state.rule)}"
+        self._draw_diagram(
+            self.state.rows,
+            panes[0],
+            self.controller.grid_origin(),
+            secondary=False,
+            label=primary_label,
         )
-        last_row = min(
-            len(self.state.rows),
-            (
-                diagram_viewport.bottom
-                - origin_y
-                + self.state.cell_size
-                - 1
+        if self.state.comparison_enabled:
+            self._draw_diagram(
+                self.state.comparison_rows,
+                panes[1],
+                self.controller.grid_origin(comparison=True),
+                secondary=True,
+                label=(
+                    "Comparison · code "
+                    f"{short_rule_code(self.state.comparison_rule)}"
+                ),
             )
-            // self.state.cell_size,
-        )
-        current_width = len(current_row)
-        for row_index in range(first_row, last_row):
-            row_data = self.state.rows[row_index]
-            row_origin_x = origin_x + (
-                (current_width - len(row_data)) * self.state.cell_size // 2
+            divider_x = (panes[0].right + panes[1].left) // 2
+            pygame.draw.line(
+                screen,
+                theme["grid"],
+                (divider_x, diagram_viewport.y),
+                (divider_x, diagram_viewport.bottom),
             )
-            first_col = max(
-                0,
-                (diagram_viewport.left - row_origin_x) // self.state.cell_size,
-            )
-            last_col = min(
-                len(row_data),
-                (
-                    diagram_viewport.right
-                    - row_origin_x
-                    + self.state.cell_size
-                    - 1
-                )
-                // self.state.cell_size,
-            )
-            y = origin_y + row_index * self.state.cell_size
-            for column in range(first_col, last_col):
-                x = row_origin_x + column * self.state.cell_size
-                rect = pygame.Rect(
-                    x,
-                    y,
-                    self.state.cell_size,
-                    self.state.cell_size,
-                )
-                if row_data[column]:
-                    pygame.draw.rect(screen, live_color, rect)
-                if self.services.show_grid() and self.state.cell_size >= 4:
-                    pygame.draw.rect(screen, theme["grid"], rect, 1)
-        newest = pygame.Rect(
-            origin_x,
-            origin_y + (len(self.state.rows) - 1) * self.state.cell_size,
-            current_width * self.state.cell_size,
-            self.state.cell_size,
-        )
-        pygame.draw.rect(screen, live_color, newest, 1)
         screen.set_clip(old_clip)
 
     def draw_bars(self) -> None:
@@ -906,13 +1523,20 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             (0, 0, width, self.services.info_bar_height),
         )
         info = (
-            f"{state_label}   Dimension: 1D   Elementary Rule: {self.state.rule}   "
+            f"{state_label}   Dimension: 1D   {self.controller.family_name}: "
+            f"{short_rule_code(self.state.rule)}   States: {self.state.states}   "
+            f"Radius: {self.state.radius}   "
             f"Speed: {self.services.speed()} gen/s   "
             f"Generation: {self.state.generation}   Boundary: "
             f"{self.controller.boundary_label(self.state.boundary)}"
         )
+        info_font = self.services.small_font()
         screen.blit(
-            self.services.small_font().render(info, True, theme["text"]),
+            info_font.render(
+                self._fit_text(info_font, info, width - 20),
+                True,
+                theme["text"],
+            ),
             (10, 11),
         )
 
@@ -925,8 +1549,10 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
         stats = self.services.cached_stats(
             ECA_RENDER_KEY,
             lambda: {
-                **row_stats(self.state.rows[-1]),
-                "diagram_active": sum(sum(row) for row in self.state.rows),
+                **row_statistics(self.state.rows[-1], self.state.states),
+                "diagram_active": sum(
+                    value != 0 for row in self.state.rows for value in row
+                ),
             },
         )
         current_width = len(self.state.rows[-1])
@@ -936,19 +1562,40 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             f"Density: {stats['density']:.2f}%   Rows shown: "
             f"{len(self.state.rows)}   Diagram active cells: "
             f"{stats['diagram_active']}   Outside state: {self.state.background}   "
+            f"Diversity: {stats['diversity']}/{self.state.states}   "
             f"Timeline: {history.cursor + 1}/{history.frame_count}"
         )
-        outputs = "".join(str(value) for value in rule_bits(self.state.rule))
+        if self.state.family == FAMILY_ELEMENTARY:
+            outputs = "".join(str(value) for value in rule_bits(self.state.rule))
+            rule_detail = f"111 110 101 100 011 010 001 000  →  {outputs}"
+        else:
+            rule_detail = self.controller.rule_spec.definition.summary
+        comparison_detail = (
+            "   ·   Comparison code: "
+            f"{short_rule_code(self.state.comparison_rule)}"
+            if self.state.comparison_enabled
+            else ""
+        )
         second_line = (
-            f"111 110 101 100 011 010 001 000  →  {outputs}   ·   "
+            f"{rule_detail}{comparison_detail}   ·   "
             "Time flows downward; the fixed editor changes the latest row."
         )
+        stats_font = self.services.small_font()
+        detail_font = self.services.tiny_font()
         screen.blit(
-            self.services.small_font().render(first_line, True, theme["text"]),
+            stats_font.render(
+                self._fit_text(stats_font, first_line, width - 20),
+                True,
+                theme["text"],
+            ),
             (10, y + 8),
         )
         screen.blit(
-            self.services.tiny_font().render(second_line, True, theme["text"]),
+            detail_font.render(
+                self._fit_text(detail_font, second_line, width - 20),
+                True,
+                theme["text"],
+            ),
             (10, y + 38),
         )
 
@@ -964,17 +1611,23 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
         accent = DIMENSION_BY_KEY["1d"].accent
         pygame.draw.rect(screen, (25, 28, 36), modal, border_radius=12)
         pygame.draw.rect(screen, (210, 214, 224), modal, 2, border_radius=12)
+        target_label = (
+            "Comparison rule catalogue"
+            if self.state.rule_menu_target == "comparison"
+            else "Elementary rule catalogue"
+        )
         screen.blit(
             self.services.large_font().render(
-                "Elementary rule catalogue · 0–255",
+                f"{target_label} · 0–255",
                 True,
                 (245, 247, 250),
             ),
             (modal.x + 20, modal.y + 15),
         )
-        binary = "".join(str(value) for value in rule_bits(self.state.rule))
+        selected_rule = self.controller._catalog_rule()
+        binary = "".join(str(value) for value in rule_bits(selected_rule))
         detail = (
-            f"Current: Rule {self.state.rule} = {binary}₂   ·   "
+            f"Current: Rule {selected_rule} = {binary}₂   ·   "
             "gold border: featured rule"
         )
         tiny_font = self.services.tiny_font()
@@ -991,7 +1644,7 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
 
         mouse_position = pygame.mouse.get_pos()
         for rule, card in cards:
-            selected = rule == self.state.rule
+            selected = rule == selected_rule
             hovered = card.collidepoint(mouse_position)
             featured = rule in RULE_PRESETS
             background = (54, 91, 112) if selected else (48, 52, 63)

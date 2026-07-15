@@ -86,6 +86,7 @@ from mode_registry import (
     MODE_KEYS,
     get_mode_definition,
 )
+from one_dimensional_ca import FAMILY_ELEMENTARY
 from patterns import get_patterns_for_mode, flip_pattern, rotate_pattern, save_pattern
 from rules import RULES, apply_rules_2d, find_patterns
 from session_storage import (
@@ -1538,7 +1539,7 @@ def capture_experiment_profile(name: str) -> dict[str, Any]:
 
 
 def save_current_experiment_profile() -> bool:
-    """Prompt for and save a reusable Elementary CA experiment profile."""
+    """Prompt for and save a reusable generalized 1D experiment profile."""
     if active_dimension != "1d":
         set_status("Experiment profiles are available in the 1D workspace.")
         return False
@@ -1622,7 +1623,7 @@ def session_menu_geometry(
 
 
 def draw_session_menu() -> None:
-    """Draw the full-session and Elementary profile manager."""
+    """Draw the full-session and generalized 1D profile manager."""
     session_manager.draw()
 
 
@@ -1882,6 +1883,8 @@ def active_analysis_series() -> AnalysisSeries:
 
 def elementary_comparison_rules() -> tuple[int, ...]:
     """Compare the current Elementary rule with the featured reference set."""
+    if elementary_controller.state.family != FAMILY_ELEMENTARY:
+        return tuple(ECA_RULE_PRESETS)
     current = elementary_controller.state.rule
     return tuple(dict.fromkeys((current, *ECA_RULE_PRESETS)))
 
@@ -4076,7 +4079,11 @@ analysis_panel = ScientificAnalysisPanel(
         live_series=active_analysis_series,
         current_generation=lambda: active_workspace().controller.generation,
         comparison_rules=elementary_comparison_rules,
-        current_rule=lambda: elementary_controller.state.rule,
+        current_rule=lambda: (
+            elementary_controller.state.rule
+            if elementary_controller.state.family == FAMILY_ELEMENTARY
+            else -1
+        ),
         set_status=set_status,
     ),
     comparison_runner,

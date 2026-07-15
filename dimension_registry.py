@@ -22,14 +22,14 @@ class DimensionDefinition:
 DIMENSION_DEFINITIONS = (
     DimensionDefinition(
         key="1d",
-        name="1D · Elementary CA",
+        name="1D · General CA Lab",
         summary=(
-            "Evolve a binary row with Wolfram rules 0–255 and view time "
-            "flowing downward."
+            "Explore Elementary, totalistic, multi-state, extended-radius, "
+            "higher-order, and reversible rules."
         ),
         accent=(70, 205, 255),
         available=True,
-        status_hint="Choose a rule and seed, then grow its space-time diagram.",
+        status_hint="Choose a rule family, seed it, or compare two rules side by side.",
     ),
     DimensionDefinition(
         key="2d",

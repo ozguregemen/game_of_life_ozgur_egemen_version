@@ -20,6 +20,7 @@ from exporting import (
     save_png,
 )
 from mode_registry import MODE_BY_KEY
+from one_dimensional_ca import FAMILY_ELEMENTARY, RULE_FAMILY_BY_KEY, RuleSpec
 from scientific_analysis import AnalysisSeries
 from themes import THEMES
 from timeline_history import TimelineStatus
@@ -56,12 +57,26 @@ class ExperimentExportCoordinator:
         self.services = services
         self.runner = runner
 
+    def _one_d_spec(self) -> RuleSpec:
+        snapshot = self.services.elementary_snapshot()
+        raw_spec = snapshot.get("rule_spec")
+        if isinstance(raw_spec, Mapping):
+            return RuleSpec.from_mapping(raw_spec)
+        return RuleSpec(
+            FAMILY_ELEMENTARY,
+            int(snapshot.get("rule", self.services.elementary_rule())),
+            2,
+            1,
+        )
+
     def context_label(self) -> str:
         dimension = self.services.active_dimension()
         generation = self.services.current_generation()
         if dimension == "1d":
+            spec = self._one_d_spec()
             return (
-                f"1D Elementary Rule {self.services.elementary_rule()} | "
+                f"1D {spec.definition.name} Code {spec.code} | "
+                f"States: {spec.states} | Radius: {spec.radius} | "
                 f"Generation {generation} | "
                 f"Boundary: {self.services.elementary_boundary()}"
             )
@@ -79,11 +94,23 @@ class ExperimentExportCoordinator:
 
     @staticmethod
     def _from_1d_snapshot(snapshot: Mapping[str, Any]) -> RasterFrame:
+        primary_rows = tuple(
+            tuple(int(cell) for cell in row) for row in snapshot["rows"]
+        )
+        comparison = snapshot.get("comparison")
+        if isinstance(comparison, Mapping) and bool(comparison.get("enabled")):
+            secondary_rows = tuple(
+                tuple(int(cell) for cell in row)
+                for row in comparison.get("rows", ())
+            )
+            if len(secondary_rows) == len(primary_rows):
+                primary_rows = tuple(
+                    (*primary, 0, 0, 0, *secondary)
+                    for primary, secondary in zip(primary_rows, secondary_rows)
+                )
         return RasterFrame(
             generation=int(snapshot["generation"]),
-            rows=tuple(
-                tuple(int(cell) for cell in row) for row in snapshot["rows"]
-            ),
+            rows=primary_rows,
         )
 
     @staticmethod
@@ -132,7 +159,20 @@ class ExperimentExportCoordinator:
         theme = THEMES[self.services.theme_name()]
         background = theme["background"]
         if self.services.active_dimension() == "1d":
-            return {0: background, 1: theme["cell"]}
+            spec = self._one_d_spec()
+            palette = {0: background, 1: theme["cell"]}
+            for state in range(2, spec.states):
+                red, green, blue = colorsys.hsv_to_rgb(
+                    ((state - 1) / max(1, spec.states - 1) + 0.52) % 1.0,
+                    0.72,
+                    0.96,
+                )
+                palette[state] = (
+                    round(red * 255),
+                    round(green * 255),
+                    round(blue * 255),
+                )
+            return palette
         mode = self.services.active_mode()
         if mode == "life":
             return {0: background, 1: theme["cell"]}
@@ -248,8 +288,11 @@ class ExperimentExportCoordinator:
         mode = self.services.active_mode()
         generation = self.services.current_generation()
         if dimension == "1d":
-            rule = self.services.elementary_rule()
-            name = f"Elementary Rule {rule} generation {generation}"
+            spec = self._one_d_spec()
+            name = (
+                f"{RULE_FAMILY_BY_KEY[spec.family].name} Code {spec.code} "
+                f"generation {generation}"
+            )
         else:
             name = f"{MODE_BY_KEY[mode].name} generation {generation}"
         document = self.services.session_document(name)
@@ -259,7 +302,7 @@ class ExperimentExportCoordinator:
             "schema": "cellular-automata-lab/experiment-export",
             "version": 1,
             "dimension": dimension,
-            "mode": "elementary_ca" if dimension == "1d" else mode,
+            "mode": "one_dimensional_ca" if dimension == "1d" else mode,
             "generation": generation,
             "timeline": {
                 "frame_count": history.frame_count,
