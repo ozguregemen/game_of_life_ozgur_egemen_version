@@ -35,6 +35,15 @@ RULE_FAMILIES = (
     FAMILY_REVERSIBLE,
 )
 
+SEED_WIDTH_COMPACT = "compact"
+SEED_WIDTH_VIEWPORT = "viewport"
+SEED_WIDTH_WIDE = "wide"
+SEED_WIDTH_MODES = (
+    SEED_WIDTH_COMPACT,
+    SEED_WIDTH_VIEWPORT,
+    SEED_WIDTH_WIDE,
+)
+
 
 @dataclass(frozen=True)
 class RuleFamilyDefinition:

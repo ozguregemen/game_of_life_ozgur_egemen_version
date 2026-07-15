@@ -13,7 +13,13 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from elementary_ca import BOUNDARY_MODES
 from mode_registry import MODE_KEYS
-from one_dimensional_ca import FAMILY_ELEMENTARY, RULE_FAMILIES, RuleSpec
+from one_dimensional_ca import (
+    FAMILY_ELEMENTARY,
+    RULE_FAMILIES,
+    SEED_WIDTH_COMPACT,
+    SEED_WIDTH_MODES,
+    RuleSpec,
+)
 from rules import RULES
 from themes import THEMES
 
@@ -253,6 +259,12 @@ def _validate_camera(
 def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
     workspace = _mapping(value, "workspaces.1d")
     spec = _rule_spec(workspace, "workspaces.1d")
+    background = _integer(
+        workspace.get("background"),
+        "workspaces.1d.background",
+        minimum=0,
+        maximum=spec.states - 1,
+    )
     rows_source = _sequence(workspace.get("rows"), "workspaces.1d.rows")
     if not rows_source or len(rows_source) > 512:
         raise DocumentValidationError(
@@ -261,6 +273,26 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
     rows = [
         _state_row(row, f"workspaces.1d.rows[{index}]", spec.states)
         for index, row in enumerate(rows_source)
+    ]
+    row_backgrounds_source = _sequence(
+        workspace.get(
+            "row_backgrounds",
+            [0] * max(0, len(rows) - 1) + [background],
+        ),
+        "workspaces.1d.row_backgrounds",
+    )
+    if len(row_backgrounds_source) != len(rows):
+        raise DocumentValidationError(
+            "workspaces.1d.row_backgrounds must match the diagram row count."
+        )
+    row_backgrounds = [
+        _integer(
+            state,
+            f"workspaces.1d.row_backgrounds[{index}]",
+            minimum=0,
+            maximum=spec.states - 1,
+        )
+        for index, state in enumerate(row_backgrounds_source)
     ]
     seed = _state_row(workspace.get("seed"), "workspaces.1d.seed", spec.states)
     previous_row = _state_row(
@@ -307,6 +339,33 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
         raise DocumentValidationError(
             "workspaces.1d.comparison.previous_row must match the latest row width."
         )
+    comparison_background = _integer(
+        comparison.get("background", background),
+        "workspaces.1d.comparison.background",
+        minimum=0,
+        maximum=spec.states - 1,
+    )
+    comparison_backgrounds_source = _sequence(
+        comparison.get(
+            "row_backgrounds",
+            [0] * max(0, len(comparison_rows) - 1)
+            + [comparison_background],
+        ),
+        "workspaces.1d.comparison.row_backgrounds",
+    )
+    if len(comparison_backgrounds_source) != len(comparison_rows):
+        raise DocumentValidationError(
+            "workspaces.1d.comparison.row_backgrounds must match the diagram row count."
+        )
+    comparison_row_backgrounds = [
+        _integer(
+            state,
+            f"workspaces.1d.comparison.row_backgrounds[{index}]",
+            minimum=0,
+            maximum=spec.states - 1,
+        )
+        for index, state in enumerate(comparison_backgrounds_source)
+    ]
     return {
         "rule": spec.code,
         "rule_spec": spec.as_dict(),
@@ -315,12 +374,7 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
             "workspaces.1d.boundary",
             BOUNDARY_MODES,
         ),
-        "background": _integer(
-            workspace.get("background"),
-            "workspaces.1d.background",
-            minimum=0,
-            maximum=spec.states - 1,
-        ),
+        "background": background,
         "previous_background": _integer(
             workspace.get("previous_background", 0),
             "workspaces.1d.previous_background",
@@ -331,8 +385,14 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
             workspace.get("rule_change_reset"),
             "workspaces.1d.rule_change_reset",
         ),
+        "seed_width_mode": _choice(
+            workspace.get("seed_width_mode", SEED_WIDTH_COMPACT),
+            "workspaces.1d.seed_width_mode",
+            SEED_WIDTH_MODES,
+        ),
         "seed": seed,
         "rows": rows,
+        "row_backgrounds": row_backgrounds,
         "previous_row": previous_row,
         "comparison": {
             "enabled": _boolean(
@@ -346,13 +406,9 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
                 maximum=spec.max_code,
             ),
             "rows": comparison_rows,
+            "row_backgrounds": comparison_row_backgrounds,
             "previous_row": comparison_previous,
-            "background": _integer(
-                comparison.get("background", workspace.get("background")),
-                "workspaces.1d.comparison.background",
-                minimum=0,
-                maximum=spec.states - 1,
-            ),
+            "background": comparison_background,
             "previous_background": _integer(
                 comparison.get("previous_background", 0),
                 "workspaces.1d.comparison.previous_background",
@@ -699,6 +755,11 @@ def validate_profile_document(value: Any) -> dict[str, Any]:
             "rule_change_reset": _boolean(
                 experiment.get("rule_change_reset"),
                 "experiment.rule_change_reset",
+            ),
+            "seed_width_mode": _choice(
+                experiment.get("seed_width_mode", SEED_WIDTH_COMPACT),
+                "experiment.seed_width_mode",
+                SEED_WIDTH_MODES,
             ),
             "seed": _state_row(
                 experiment.get("seed"),

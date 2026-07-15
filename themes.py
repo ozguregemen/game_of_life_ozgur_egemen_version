@@ -1,4 +1,42 @@
+import colorsys
+
 import pygame
+
+# Shared semantic colors keep the interactive renderer and exported images aligned.
+COLORBLIND_BLUE = (0, 114, 178)
+COLORBLIND_SKY = (86, 180, 233)
+COLORBLIND_GREEN = (0, 158, 115)
+COLORBLIND_YELLOW = (240, 228, 66)
+COLORBLIND_MAGENTA = (204, 121, 167)
+COLORBLIND_ORANGE = (213, 94, 0)
+LIGHT_MODE_BLUE = (22, 86, 130)
+LIGHT_MODE_ORANGE = (145, 72, 20)
+LIGHT_MODE_TEAL = (0, 95, 120)
+LIGHT_MODE_PURPLE = (90, 62, 140)
+LIGHT_MODE_BURGUNDY = (135, 45, 85)
+LIGHT_MODE_OLIVE = (85, 90, 20)
+LIGHT_1D_BLUE = (0, 60, 100)
+LIGHT_1D_GOLD = (180, 125, 0)
+CYCLIC_PALETTE = (
+    (62, 45, 125),
+    (45, 85, 195),
+    (35, 165, 225),
+    (35, 205, 145),
+    (180, 220, 55),
+    (245, 190, 45),
+    (240, 90, 55),
+    (195, 55, 180),
+)
+COLORBLIND_CYCLIC_PALETTE = (
+    (30, 34, 40),
+    (230, 159, 0),
+    COLORBLIND_SKY,
+    COLORBLIND_GREEN,
+    COLORBLIND_YELLOW,
+    COLORBLIND_BLUE,
+    COLORBLIND_ORANGE,
+    COLORBLIND_MAGENTA,
+)
 
 # Color themes
 THEMES = {
@@ -43,8 +81,8 @@ THEMES = {
     },
     "colorblind": {
         "background": (16, 24, 32),
-        "grid": (72, 83, 94),
-        "cell": (240, 228, 66),
+        "grid": (88, 102, 116),
+        "cell": COLORBLIND_YELLOW,
         "text": (250, 250, 250),
         "info_bar": (25, 35, 45),
         "stats_bar": (20, 29, 38),
@@ -53,8 +91,73 @@ THEMES = {
         "button": (43, 58, 70),
         "button_hover": (57, 76, 90),
         "button_text": (255, 255, 255)
+    },
+    "midnight": {
+        "background": (8, 15, 26),
+        "grid": (76, 98, 120),
+        "cell": (76, 201, 240),
+        "text": (231, 238, 246),
+        "info_bar": (16, 27, 42),
+        "stats_bar": (12, 22, 35),
+        "menu": (21, 35, 52),
+        "menu_text": (215, 226, 238),
+        "button": (33, 51, 70),
+        "button_hover": (46, 70, 94),
+        "button_text": (245, 248, 252)
+    },
+    "paper": {
+        "background": (247, 244, 236),
+        "grid": (145, 140, 132),
+        "cell": (34, 104, 153),
+        "text": (45, 47, 52),
+        "info_bar": (235, 230, 218),
+        "stats_bar": (228, 222, 210),
+        "menu": (241, 236, 225),
+        "menu_text": (49, 52, 58),
+        "button": (216, 210, 197),
+        "button_hover": (199, 192, 178),
+        "button_text": (40, 43, 48)
     }
 }
+
+
+def one_d_state_color(
+    value: int,
+    state_count: int,
+    theme: str = "classic",
+    *,
+    secondary: bool = False,
+) -> tuple[int, int, int]:
+    """Return the shared screen/export color for one finite 1D state."""
+    if value <= 0:
+        return THEMES[theme]["background"]
+    if state_count < 2 or value >= state_count:
+        raise ValueError("1D state must fit the configured state count.")
+    if theme == "colorblind":
+        palette = (
+            (COLORBLIND_BLUE, COLORBLIND_GREEN, COLORBLIND_ORANGE)
+            if secondary
+            else (COLORBLIND_YELLOW, COLORBLIND_SKY, COLORBLIND_MAGENTA)
+        )
+        return palette[(value - 1) % len(palette)]
+    if theme in ("pastel", "paper"):
+        if state_count == 2:
+            return LIGHT_1D_GOLD if secondary else LIGHT_1D_BLUE
+        palette = (
+            (LIGHT_MODE_TEAL, LIGHT_MODE_BURGUNDY, LIGHT_MODE_OLIVE)
+            if secondary
+            else (LIGHT_MODE_BLUE, LIGHT_MODE_ORANGE, LIGHT_MODE_PURPLE)
+        )
+        return palette[(value - 1) % len(palette)]
+    if state_count == 2:
+        if secondary:
+            return (245, 170, 65)
+        return THEMES[theme]["cell"]
+    hue = ((value - 1) / max(1, state_count - 1) + 0.52) % 1.0
+    if secondary:
+        hue = (hue + 0.16) % 1.0
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.72, 0.96)
+    return round(red * 255), round(green * 255), round(blue * 255)
 
 # Age-based colors (for cell age visualization)
 def get_age_color(age, theme="classic"):
@@ -85,11 +188,12 @@ def get_age_color(age, theme="classic"):
             return (255, 150 - age * 10, 150 - age * 10)
         else:
             return (255, 100, 100)
-    elif theme == "colorblind":
+    elif theme in ("colorblind", "midnight", "paper"):
         if age <= 0:
             return THEMES[theme]["background"]
         brightness = min(1.0, 0.58 + age * 0.035)
         return tuple(int(channel * brightness) for channel in THEMES[theme]["cell"])
+    return THEMES[theme]["cell"]
 
 # Button class for UI elements
 class Button:

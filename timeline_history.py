@@ -9,7 +9,7 @@ from typing import Any, Callable, Literal, TypeAlias
 
 PathPart: TypeAlias = str | int
 StatePath: TypeAlias = tuple[PathPart, ...]
-OperationKind: TypeAlias = Literal["set", "append", "truncate"]
+OperationKind: TypeAlias = Literal["set", "append", "truncate", "roll"]
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,14 @@ def _diff_value(
         return
 
     if isinstance(previous, list):
+        if (
+            previous
+            and previous != current
+            and len(previous) == len(current)
+            and previous[1:] == current[:-1]
+        ):
+            operations.append(DeltaOperation("roll", path, deepcopy(current[-1])))
+            return
         shared_length = min(len(previous), len(current))
         for index in range(shared_length):
             _diff_value(
@@ -117,6 +125,14 @@ def apply_delta(state: Any, operations: list[DeltaOperation]) -> Any:
             if not isinstance(target, list):
                 raise TypeError("truncate operation target must be a list")
             del target[int(operation.value) :]
+        elif operation.kind == "roll":
+            target = _resolve_value(result, operation.path)
+            if not isinstance(target, list):
+                raise TypeError("roll operation target must be a list")
+            if not target:
+                raise ValueError("roll operation target must not be empty")
+            target.pop(0)
+            target.append(deepcopy(operation.value))
     return result
 
 

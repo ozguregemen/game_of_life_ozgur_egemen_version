@@ -113,7 +113,21 @@ from scientific_analysis import (
     ScientificAnalysisRegistry,
     StateObservation,
 )
-from themes import THEMES, Menu
+from themes import (
+    COLORBLIND_CYCLIC_PALETTE,
+    COLORBLIND_BLUE,
+    COLORBLIND_GREEN,
+    COLORBLIND_MAGENTA,
+    COLORBLIND_SKY,
+    COLORBLIND_YELLOW,
+    CYCLIC_PALETTE,
+    LIGHT_MODE_BLUE,
+    LIGHT_MODE_ORANGE,
+    LIGHT_MODE_PURPLE,
+    LIGHT_MODE_TEAL,
+    THEMES,
+    Menu,
+)
 from timeline_history import TimelineBinding, TimelineStatus
 from timeline_ui import TimelinePanel, TimelinePanelServices
 from ui_preferences import UIPreferences
@@ -159,7 +173,7 @@ GRID_TOP_MARGIN = 8
 
 ROWS = 48
 COLS = 72
-CELL_SIZE = 12
+CELL_SIZE = 11
 MIN_CELL_SIZE = 5
 MAX_CELL_SIZE = 40
 
@@ -168,26 +182,6 @@ TRAIL_MAX = 10
 PATTERN_ROW_HEIGHT = 30
 
 BLACK = (0, 0, 0)
-CYCLIC_PALETTE = (
-    (62, 45, 125),
-    (45, 85, 195),
-    (35, 165, 225),
-    (35, 205, 145),
-    (180, 220, 55),
-    (245, 190, 45),
-    (240, 90, 55),
-    (195, 55, 180),
-)
-COLORBLIND_CYCLIC_PALETTE = (
-    (30, 34, 40),
-    (230, 159, 0),
-    (86, 180, 233),
-    (0, 158, 115),
-    (240, 228, 66),
-    (0, 114, 178),
-    (213, 94, 0),
-    (204, 121, 167),
-)
 
 pygame.init()
 pygame.display.set_caption("Özgür Egemen's Cellular Automata Lab")
@@ -369,6 +363,34 @@ def _center_2d_view() -> None:
     grid_height = ROWS * CELL_SIZE
     view_offset_x = (viewport.width - grid_width) // 2
     view_offset_y = (viewport.height - GRID_TOP_MARGIN - grid_height) // 2
+
+
+def fitted_2d_cell_size() -> int:
+    """Return the largest whole-cell zoom that keeps the board visible."""
+    viewport = grid_viewport()
+    available_height = max(1, viewport.height - GRID_TOP_MARGIN)
+    target = min(viewport.width // COLS, available_height // ROWS)
+    return max(MIN_CELL_SIZE, min(MAX_CELL_SIZE, target))
+
+
+def fit_2d_view() -> None:
+    """Fit the fixed logical 2D board into the current application viewport."""
+    global CELL_SIZE
+    CELL_SIZE = fitted_2d_cell_size()
+    _center_2d_view()
+    set_status(
+        f"2D board {COLS}x{ROWS} fitted at {CELL_SIZE}px per cell.",
+        3.0,
+    )
+
+
+def describe_2d_board() -> None:
+    """Explain the fixed board size without mutating simulation state."""
+    set_status(
+        f"Finite 2D board: {COLS} columns x {ROWS} rows "
+        f"({ROWS * COLS:,} cells).",
+        3.5,
+    )
 
 
 def center_view() -> None:
@@ -1179,7 +1201,7 @@ def toggle_active_species() -> None:
     active_species = SPECIES_B if active_species == SPECIES_A else SPECIES_A
     if "main_menu" in globals():
         rebuild_context_menu()
-    label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
+    label = immigration_species_label(active_species)
     set_status(f"Active species: {label}")
 
 
@@ -1190,7 +1212,7 @@ def set_active_species(species: int) -> None:
         return
     active_species = species
     rebuild_context_menu()
-    label = "A (blue)" if species == SPECIES_A else "B (orange)"
+    label = immigration_species_label(species)
     set_status(f"Active species: {label}")
 
 
@@ -2423,21 +2445,70 @@ def draw_eca_grid() -> None:
     elementary_renderer.draw_base()
 
 
+def immigration_species_base_color(species: int) -> tuple[int, int, int]:
+    """Return the semantic full-brightness color for one Immigration species."""
+    if species not in (SPECIES_A, SPECIES_B):
+        raise ValueError(f"Unknown Immigration species: {species}")
+    if current_theme == "colorblind":
+        return COLORBLIND_BLUE if species == SPECIES_A else COLORBLIND_YELLOW
+    if current_theme in ("pastel", "paper"):
+        return LIGHT_MODE_BLUE if species == SPECIES_A else LIGHT_MODE_ORANGE
+    return (40, 180, 255) if species == SPECIES_A else (255, 135, 35)
+
+
+def immigration_species_label(species: int) -> str:
+    """Describe a species using both its identifier and current palette color."""
+    if species == SPECIES_A:
+        color = "deep blue" if current_theme == "colorblind" else "blue"
+        return f"A ({color})"
+    if species == SPECIES_B:
+        color = "yellow" if current_theme == "colorblind" else "orange"
+        return f"B ({color})"
+    raise ValueError(f"Unknown Immigration species: {species}")
+
+
 def immigration_species_color(value: int) -> tuple[int, int, int]:
-    """Return a theme-aware color for an Immigration cell."""
+    """Return an age-adjusted, theme-aware color for an Immigration cell."""
     age = cell_age(value)
-    brightness = min(1.0, 0.62 + age * 0.025)
-    if species_of(value) == SPECIES_A:
-        base = (0, 114, 178) if current_theme == "colorblind" else (40, 180, 255)
-    else:
-        base = (213, 94, 0) if current_theme == "colorblind" else (255, 135, 35)
+    brightness = (
+        min(1.0, 0.94 + age * 0.006)
+        if current_theme == "colorblind"
+        else min(1.0, 0.62 + age * 0.025)
+    )
+    base = immigration_species_base_color(species_of(value))
     return tuple(int(channel * brightness) for channel in base)
+
+
+def draw_immigration_marker(
+    rect: pygame.Rect,
+    value: int,
+    surface: pygame.Surface | None = None,
+) -> None:
+    """Add a non-color Species-B cue in the accessible palette."""
+    if current_theme != "colorblind" or species_of(value) != SPECIES_B:
+        return
+    target = screen if surface is None else surface
+    marker = rect.inflate(-max(4, CELL_SIZE // 3), -max(4, CELL_SIZE // 3))
+    if marker.width > 0 and marker.height > 0:
+        marker_color: tuple[int, ...] = THEMES[current_theme]["background"]
+        if target.get_flags() & pygame.SRCALPHA:
+            marker_color += (210,)
+        pygame.draw.rect(
+            target,
+            marker_color,
+            marker,
+            max(1, CELL_SIZE // 8),
+        )
 
 
 def brain_state_color(value: int) -> tuple[int, int, int]:
     """Return the conventional bright/dim colors for Brian's Brain."""
     if current_theme == "colorblind":
         return (240, 228, 66) if value == FIRING else (86, 180, 233)
+    if current_theme in ("pastel", "paper"):
+        return LIGHT_MODE_TEAL if value == FIRING else LIGHT_MODE_PURPLE
+    if current_theme == "midnight":
+        return (80, 235, 255) if value == FIRING else (170, 120, 230)
     return (80, 235, 255) if value == FIRING else (75, 55, 155)
 
 
@@ -2452,9 +2523,9 @@ def wireworld_state_color(value: int) -> tuple[int, int, int]:
     if current_theme == "colorblind":
         colors = {
             WIRE_EMPTY: (16, 24, 32),
-            ELECTRON_HEAD: (86, 180, 233),
-            ELECTRON_TAIL: (213, 94, 0),
-            CONDUCTOR: (240, 228, 66),
+            ELECTRON_HEAD: COLORBLIND_SKY,
+            ELECTRON_TAIL: COLORBLIND_MAGENTA,
+            CONDUCTOR: COLORBLIND_YELLOW,
         }
     return colors[value]
 
@@ -2490,6 +2561,7 @@ def draw_immigration_grid() -> None:
             if value:
                 color = immigration_species_color(value)
                 pygame.draw.rect(screen, color, rect)
+                draw_immigration_marker(rect, value)
                 if show_age_numbers and CELL_SIZE >= 14:
                     age_text = tiny_font.render(
                         str(cell_age(value)),
@@ -2703,6 +2775,13 @@ def ant_triangle_points(
     return [(left, center_y), (right, bottom), (right, top)]
 
 
+def ant_display_color(active: bool = True) -> tuple[int, int, int]:
+    """Return a theme-aware ant color; direction remains shape encoded."""
+    if current_theme == "colorblind":
+        return COLORBLIND_BLUE if active else COLORBLIND_MAGENTA
+    return (230, 35, 45) if active else (125, 35, 40)
+
+
 def draw_ant_grid() -> None:
     """Render Langton's black/white board and its directional ant."""
     viewport = grid_viewport()
@@ -2732,14 +2811,14 @@ def draw_ant_grid() -> None:
         center_y = origin_y + ROWS * CELL_SIZE // 2
         pygame.draw.line(
             screen,
-            (175, 40, 45),
+            COLORBLIND_BLUE if current_theme == "colorblind" else (175, 40, 45),
             (center_x, origin_y),
             (center_x, origin_y + ROWS * CELL_SIZE),
             2,
         )
         pygame.draw.line(
             screen,
-            (175, 40, 45),
+            COLORBLIND_BLUE if current_theme == "colorblind" else (175, 40, 45),
             (origin_x, center_y),
             (origin_x + COLS * CELL_SIZE, center_y),
             2,
@@ -2760,12 +2839,35 @@ def draw_ant_grid() -> None:
             CELL_SIZE,
             CELL_SIZE,
         )
-        ant_color = (230, 35, 45) if ant_state.active else (125, 35, 40)
+        points = ant_triangle_points(ant_rect, ant_state.direction)
+        ant_color = ant_display_color(ant_state.active)
+        outline = (
+            white_color
+            if ant_grid[ant_state.row][ant_state.col] == ANT_BLACK
+            else black_color
+        )
         pygame.draw.polygon(
             screen,
             ant_color,
-            ant_triangle_points(ant_rect, ant_state.direction),
+            points,
         )
+        pygame.draw.polygon(screen, outline, points, 1)
+        if not ant_state.active:
+            inset = max(2, CELL_SIZE // 4)
+            pygame.draw.line(
+                screen,
+                outline,
+                (ant_rect.left + inset, ant_rect.top + inset),
+                (ant_rect.right - inset, ant_rect.bottom - inset),
+                max(1, CELL_SIZE // 8),
+            )
+            pygame.draw.line(
+                screen,
+                outline,
+                (ant_rect.right - inset, ant_rect.top + inset),
+                (ant_rect.left + inset, ant_rect.bottom - inset),
+                max(1, CELL_SIZE // 8),
+            )
 
     screen.set_clip(old_clip)
 
@@ -2842,6 +2944,17 @@ def draw_pattern_preview() -> None:
                     CELL_SIZE,
                 ),
             )
+            if fits and pattern_mode == "immigration":
+                draw_immigration_marker(
+                    pygame.Rect(
+                        delta_col * CELL_SIZE,
+                        delta_row * CELL_SIZE,
+                        CELL_SIZE,
+                        CELL_SIZE,
+                    ),
+                    value,
+                    preview,
+                )
 
     if ant is not None:
         ant_rect = pygame.Rect(
@@ -2852,8 +2965,28 @@ def draw_pattern_preview() -> None:
         )
         pygame.draw.polygon(
             preview,
-            (230, 35, 45, 190) if fits else (255, 45, 45, 190),
+            ant_display_color(True) + (190,) if fits else (255, 45, 45, 190),
             ant_triangle_points(ant_rect, ant["direction"]),
+        )
+
+    if not fits:
+        invalid = (255, 45, 45, 220)
+        preview_rect = preview.get_rect()
+        line_width = max(2, CELL_SIZE // 6)
+        pygame.draw.rect(preview, invalid, preview_rect, line_width)
+        pygame.draw.line(
+            preview,
+            invalid,
+            preview_rect.topleft,
+            preview_rect.bottomright,
+            line_width,
+        )
+        pygame.draw.line(
+            preview,
+            invalid,
+            preview_rect.topright,
+            preview_rect.bottomleft,
+            line_width,
         )
 
     screen.blit(
@@ -2893,7 +3026,7 @@ def _draw_2d_info_bar() -> None:
             f"Generation: {brain_generation}   Rule: exactly 2 firing neighbors"
         )
     elif simulation_mode == "immigration":
-        species_label = "A (blue)" if active_species == SPECIES_A else "B (orange)"
+        species_label = immigration_species_label(active_species)
         text = (
             f"{state}   Mode: Immigration Game   Speed: {speed} gen/s   "
             f"Generation: {immigration_generation}   Brush: {species_label}"
@@ -3487,7 +3620,7 @@ def draw_workspace_status_controls() -> None:
     theme = THEMES[current_theme]
     content_width = max(1, WINDOW_WIDTH - MENU_WIDTH)
     run_rect = run_pause_rect()
-    run_color = (0, 114, 178) if simulation_active else (213, 94, 0)
+    run_color = COLORBLIND_BLUE if simulation_active else (95, 105, 115)
     pygame.draw.rect(screen, run_color, run_rect, border_radius=6)
     pygame.draw.rect(screen, theme["text"], run_rect, 1, border_radius=6)
     if simulation_active:
@@ -3553,6 +3686,7 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
             ("E", "Open the searchable Elementary rule catalogue"),
             ("Left / Right click", "Write the selected state / erase state"),
             ("Middle drag", "Pan the space-time diagram"),
+            ("Seed Width", "Choose compact, viewport, or wide initial rows"),
             ("Rule catalogue: F", "Show all rules or favorite rules only"),
             ("Catalogue right click", "Add or remove a favorite rule"),
             ("Timeline arrows", "Step backward or forward through recorded state"),
@@ -3560,6 +3694,7 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
     entries = [
         ("Left / Right click", "Draw with the active tool / erase a cell"),
         ("Middle drag", "Pan the grid"),
+        ("Ctrl+0", "Fit the complete finite board into the window"),
         ("T", "Cycle the current mode's brush or state"),
         ("1–9", "Select a visible mode-specific pattern"),
     ]
@@ -3709,21 +3844,26 @@ def add_context_action(menu: Menu, action: str) -> None:
         menu.add_button(
             "Brush: Species A",
             lambda: set_active_species(SPECIES_A),
-            accent=(40, 180, 255),
+            accent=immigration_species_base_color(SPECIES_A),
             active=active_species == SPECIES_A,
+            tooltip="Select Species A; its identity is also shown in text.",
         )
     elif action == "species_b":
         menu.add_button(
             "Brush: Species B",
             lambda: set_active_species(SPECIES_B),
-            accent=(255, 135, 35),
+            accent=immigration_species_base_color(SPECIES_B),
             active=active_species == SPECIES_B,
+            tooltip=(
+                "Select Species B; Colorblind mode also draws an inner marker."
+            ),
         )
     elif action == "rotate_ant":
         menu.add_button(
             "Rotate Ant Clockwise",
             toggle_active_species,
-            accent=(230, 35, 45),
+            accent=ant_display_color(ant_state.active),
+            tooltip="Rotate the triangular ant; its direction does not rely on color.",
         )
     elif action == "wire_conductor":
         menu.add_button(
@@ -3836,6 +3976,22 @@ def _build_2d_sidebar(menu: Menu) -> None:
         toggle_grid_lines,
         active=show_grid,
     )
+    menu.add_button(
+        f"Board: {COLS} x {ROWS} (Finite)",
+        describe_2d_board,
+        tooltip=(
+            f"The shared 2D board has {ROWS * COLS:,} logical cells. "
+            "Click for details; zoom and window size do not change its state."
+        ),
+    )
+    menu.add_button(
+        "Fit Board to Window (Ctrl+0)",
+        fit_2d_view,
+        tooltip=(
+            f"Choose the largest cell size that keeps all {COLS} x {ROWS} "
+            "cells visible."
+        ),
+    )
     menu.add_button(f"Theme: {current_theme.title()}", cycle_theme)
     menu.add_button("Center View", center_view)
     menu.add_button(
@@ -3880,6 +4036,12 @@ def update_window_size(new_width: int, new_height: int) -> None:
     main_menu.relayout()
 
     center_view()
+    rebuild_context_menu()
+    if active_dimension == "2d" and CELL_SIZE > fitted_2d_cell_size():
+        set_status(
+            "Part of the finite board is outside the viewport; press Ctrl+0 to fit.",
+            3.5,
+        )
 
 
 def select_pattern(pattern: dict[str, Any]) -> None:
@@ -3996,6 +4158,14 @@ def handle_keydown(event: pygame.event.Event) -> None:
         save_quick_session()
     elif event.key == pygame.K_o and modifiers & pygame.KMOD_CTRL:
         load_quick_session()
+    elif (
+        event.key in (pygame.K_0, pygame.K_KP0)
+        and modifiers & pygame.KMOD_CTRL
+    ):
+        if active_dimension == "2d":
+            fit_2d_view()
+        else:
+            set_status("Fit-to-window is available for the finite 2D board.")
     elif event.key == pygame.K_p:
         activate_session_menu()
     elif event.key == pygame.K_i:

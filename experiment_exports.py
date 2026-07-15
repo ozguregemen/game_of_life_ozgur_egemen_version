@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import colorsys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from cyclic_automaton import DEFAULT_STATE_COUNT as CYCLIC_STATE_COUNT
 from exporting import (
     ExportError,
     ExportRunner,
@@ -22,7 +20,20 @@ from exporting import (
 from mode_registry import MODE_BY_KEY
 from one_dimensional_ca import FAMILY_ELEMENTARY, RULE_FAMILY_BY_KEY, RuleSpec
 from scientific_analysis import AnalysisSeries
-from themes import THEMES
+from themes import (
+    COLORBLIND_CYCLIC_PALETTE,
+    COLORBLIND_BLUE,
+    COLORBLIND_MAGENTA,
+    COLORBLIND_SKY,
+    COLORBLIND_YELLOW,
+    CYCLIC_PALETTE,
+    LIGHT_MODE_BLUE,
+    LIGHT_MODE_ORANGE,
+    LIGHT_MODE_PURPLE,
+    LIGHT_MODE_TEAL,
+    THEMES,
+    one_d_state_color,
+)
 from timeline_history import TimelineStatus
 from wireworld import CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL, EMPTY as WIRE_EMPTY
 
@@ -94,14 +105,66 @@ class ExperimentExportCoordinator:
 
     @staticmethod
     def _from_1d_snapshot(snapshot: Mapping[str, Any]) -> RasterFrame:
-        primary_rows = tuple(
+        primary_source = tuple(
             tuple(int(cell) for cell in row) for row in snapshot["rows"]
         )
+
+        def align_outside_states(
+            rows: tuple[tuple[int, ...], ...],
+            raw_backgrounds: Any,
+            fallback: int,
+        ) -> tuple[tuple[int, ...], ...]:
+            """Center rows and materialize each generation's infinite background."""
+            if not rows:
+                return ()
+            backgrounds = (
+                tuple(int(value) for value in raw_backgrounds)
+                if isinstance(raw_backgrounds, Sequence)
+                else ()
+            )
+            if len(backgrounds) != len(rows):
+                backgrounds = (0,) * max(0, len(rows) - 1) + (fallback,)
+            width = max(len(row) for row in rows)
+            aligned: list[tuple[int, ...]] = []
+            for row, outside in zip(rows, backgrounds):
+                missing = width - len(row)
+                left = missing // 2
+                aligned.append(
+                    (outside,) * left
+                    + row
+                    + (outside,) * (missing - left)
+                )
+            return tuple(aligned)
+
+        primary_rows = align_outside_states(
+            primary_source,
+            snapshot.get("row_backgrounds"),
+            int(snapshot.get("background", 0)),
+        )
+        raw_spec = snapshot.get("rule_spec")
+        state_count = (
+            int(raw_spec.get("states", 2))
+            if isinstance(raw_spec, Mapping)
+            else 2
+        )
+        secondary_offset = max(1, state_count - 1)
         comparison = snapshot.get("comparison")
         if isinstance(comparison, Mapping) and bool(comparison.get("enabled")):
-            secondary_rows = tuple(
+            secondary_source = tuple(
                 tuple(int(cell) for cell in row)
                 for row in comparison.get("rows", ())
+            )
+            secondary_rows = align_outside_states(
+                secondary_source,
+                comparison.get("row_backgrounds"),
+                int(comparison.get("background", 0)),
+            )
+            secondary_rows = tuple(
+                tuple(
+                    0 if int(cell) == 0 else int(cell) + secondary_offset
+                    for cell in row
+                )
+                for row in secondary_rows
             )
             if len(secondary_rows) == len(primary_rows):
                 primary_rows = tuple(
@@ -137,11 +200,10 @@ class ExperimentExportCoordinator:
             row = int(ant["row"])
             column = int(ant["col"])
             if (
-                bool(ant["active"])
-                and 0 <= row < len(rows)
+                0 <= row < len(rows)
                 and 0 <= column < len(rows[0])
             ):
-                rows[row][column] = 2
+                rows[row][column] = 2 if bool(ant["active"]) else 3
         return tuple(tuple(row) for row in rows)
 
     @classmethod
@@ -161,79 +223,80 @@ class ExperimentExportCoordinator:
         background = theme["background"]
         if self.services.active_dimension() == "1d":
             spec = self._one_d_spec()
-            palette = {0: background, 1: theme["cell"]}
-            colorblind = ((240, 228, 66), (86, 180, 233), (213, 94, 0))
-            for state in range(2, spec.states):
-                if theme_name == "colorblind":
-                    palette[state] = colorblind[(state - 1) % len(colorblind)]
-                else:
-                    red, green, blue = colorsys.hsv_to_rgb(
-                        ((state - 1) / max(1, spec.states - 1) + 0.52) % 1.0,
-                        0.72,
-                        0.96,
-                    )
-                    palette[state] = (
-                        round(red * 255),
-                        round(green * 255),
-                        round(blue * 255),
-                    )
+            palette = {0: background}
+            secondary_offset = max(1, spec.states - 1)
+            for state in range(1, spec.states):
+                palette[state] = one_d_state_color(
+                    state,
+                    spec.states,
+                    theme_name,
+                )
+                palette[state + secondary_offset] = one_d_state_color(
+                    state,
+                    spec.states,
+                    theme_name,
+                    secondary=True,
+                )
             return palette
         mode = self.services.active_mode()
         if mode == "life":
             return {0: background, 1: theme["cell"]}
         if mode == "immigration":
             if theme_name == "colorblind":
-                return {0: background, 1: (0, 114, 178), 2: (213, 94, 0)}
+                return {
+                    0: background,
+                    1: COLORBLIND_BLUE,
+                    2: COLORBLIND_YELLOW,
+                }
+            if theme_name in ("pastel", "paper"):
+                return {0: background, 1: LIGHT_MODE_BLUE, 2: LIGHT_MODE_ORANGE}
             return {0: background, 1: (40, 180, 255), 2: (255, 135, 35)}
         if mode == "brians_brain":
             if theme_name == "colorblind":
-                return {0: background, 1: (240, 228, 66), 2: (86, 180, 233)}
-            return {0: background, 1: (75, 235, 255), 2: (45, 90, 155)}
+                return {
+                    0: background,
+                    1: COLORBLIND_YELLOW,
+                    2: COLORBLIND_SKY,
+                }
+            if theme_name in ("pastel", "paper"):
+                return {0: background, 1: LIGHT_MODE_TEAL, 2: LIGHT_MODE_PURPLE}
+            if theme_name == "midnight":
+                return {0: background, 1: (80, 235, 255), 2: (170, 120, 230)}
+            return {0: background, 1: (80, 235, 255), 2: (75, 55, 155)}
         if mode == "langtons_ant":
-            return {0: (245, 245, 240), 1: (25, 25, 25), 2: (235, 55, 60)}
+            ant = COLORBLIND_BLUE if theme_name == "colorblind" else (230, 35, 45)
+            stopped = (
+                COLORBLIND_MAGENTA
+                if theme_name == "colorblind"
+                else (125, 35, 40)
+            )
+            return {
+                0: (235, 235, 225),
+                1: (24, 25, 30),
+                2: ant,
+                3: stopped,
+            }
         if mode == "wireworld":
             if theme_name == "colorblind":
                 return {
                     WIRE_EMPTY: (16, 24, 32),
-                    ELECTRON_HEAD: (86, 180, 233),
-                    ELECTRON_TAIL: (213, 94, 0),
-                    CONDUCTOR: (240, 228, 66),
+                    ELECTRON_HEAD: COLORBLIND_SKY,
+                    ELECTRON_TAIL: COLORBLIND_MAGENTA,
+                    CONDUCTOR: COLORBLIND_YELLOW,
                 }
             return {
-                WIRE_EMPTY: (10, 10, 12),
-                ELECTRON_HEAD: (70, 165, 255),
-                ELECTRON_TAIL: (245, 65, 50),
-                CONDUCTOR: (245, 195, 35),
+                WIRE_EMPTY: (10, 12, 18),
+                ELECTRON_HEAD: (65, 170, 255),
+                ELECTRON_TAIL: (235, 65, 55),
+                CONDUCTOR: (245, 190, 35),
             }
         if mode == "cyclic_automaton":
-            if theme_name == "colorblind":
-                return dict(
-                    enumerate(
-                        (
-                            (30, 34, 40),
-                            (230, 159, 0),
-                            (86, 180, 233),
-                            (0, 158, 115),
-                            (240, 228, 66),
-                            (0, 114, 178),
-                            (213, 94, 0),
-                            (204, 121, 167),
-                        )
-                    )
-                )
-            palette: dict[int, tuple[int, int, int]] = {}
-            for state in range(CYCLIC_STATE_COUNT):
-                red, green, blue = colorsys.hsv_to_rgb(
-                    state / CYCLIC_STATE_COUNT,
-                    0.78,
-                    0.96,
-                )
-                palette[state] = (
-                    round(red * 255),
-                    round(green * 255),
-                    round(blue * 255),
-                )
-            return palette
+            cyclic = (
+                COLORBLIND_CYCLIC_PALETTE
+                if theme_name == "colorblind"
+                else CYCLIC_PALETTE
+            )
+            return dict(enumerate(cyclic))
         raise ValueError(f"Unknown export mode: {mode}")
 
     def capture_current_raster(self) -> RasterFrame:

@@ -42,8 +42,9 @@ satırı yine `import pygame` olarak kalır.
 - Her oyun moduna özel, durumları koruyan hazır ve kullanıcı patternleri
 - Pattern döndürme, yatay/dikey çevirme ve yerleştirme önizlemesi
 - Otomatik pattern recognition
-- Classic, Neon, Pastel ve renk-körü güvenli Colorblind temaları
-- Zoom, pan, koordinat ve quadrant görünümü
+- Classic, Neon, Pastel, Midnight, Paper ve renk-körü güvenli Colorblind temaları
+- Zoom, pan, koordinat, quadrant ve 2D tahtayı pencereye sığdırma görünümü
+- 1D'de tüm viewport'u kaplayan sanal grid ve Compact/Viewport/Wide seed genişlikleri
 - Yeniden boyutlandırıldığında simülasyonu koruyan sabit mantıksal grid
 - Tüm boyutları, modları ve kamera konumlarını içeren sürümlü JSON oturumları
 - Rule, boundary ve seed'i yeniden kullanılabilir yapan 1D deney profilleri
@@ -61,6 +62,7 @@ satırı yine `import pygame` olarak kalır.
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
+| Ctrl + 0 | Sonlu 2D tahtanın tamamını pencereye sığdır |
 | D | 1D / 2D / 3D boyut seçme panelini aç / kapat |
 | M | 2D çalışma alanında açıklamalı mod seçme panelini aç / kapat |
 | E | 1D çalışma alanında 0–255 rule kataloğunu aç / kapat |
@@ -326,6 +328,18 @@ ulaştığında çalışma alanı iki yana otomatik genişler; uzun koşularda p
 ucunu komşu yapar. Rule 4 gibi değişmeyen satırlar artık simülasyonu durdurmaz: her
 zaman adımı diyagrama eklenir ve referanstaki dikey zaman izi oluşur.
 
+Grid çizgileri gerçek satırın bittiği yerde kesilmez; görünür space-time alanındaki
+sanal hücrelerde aynı origin'e hizalı biçimde devam eder. `Infinite Background`
+0 dışında bir duruma evrildiğinde bu sanal hücreler de ilgili neslin durum rengiyle
+çizilir. `Seed Width`, yeni deneyin
+başlangıç satırını `Compact` (121), pencereye göre hesaplanan `Viewport` veya onun
+yaklaşık iki katı `Wide` seçeneğiyle kurar. Bu seçim session, timeline ve 1D deney
+profillerinde korunur; pencere yeniden boyutlandığında çalışan deney kendiliğinden
+değiştirilmez. Geniş başlangıçlar 801 hücreyle sınırlandırılır; saklanan space-time
+satır sayısı yaklaşık 64.000 hücrelik bütçeye göre dinamik ayarlanır ve kayan satırlar
+timeline'da tek delta olarak tutulur. Otomatik yatay büyüme 4.095 hücrelik güvenlik
+sınırına erişirse simülasyon veriyi kırpmak yerine kontrollü biçimde durur.
+
 ## Bağlamsal arayüz
 
 `M` tuşu veya sağ menüdeki `Select Mode` düğmesi, altı simülasyonu açıklamalı
@@ -340,6 +354,12 @@ Cyclic Automaton'da renk fırçası ve temas eşiği
 gösterilir. Seçili tür veya fırça renkli çerçeveyle belirtilir. Ortak temizleme,
 randomize, geri alma, pattern, tema ve görünüm kontrolleri her modda erişilebilir
 kalır.
+
+Altı 2D mod ortak, sonlu `72 × 48` (3.456 hücre) tahta kullanır. Bu boyut varsayılan
+pencere, timeline belleği ve yüksek generation hızları arasında dengeli tutulur;
+eski session'ların grid şekli de değişmez. `Fit Board to Window` veya `Ctrl+0`, mantıksal
+hücre sayısını ya da simülasyonu değiştirmeden en büyük tam hücre zoom'unu seçer.
+`Center View` ise mevcut zoom'u koruyarak yalnız kamerayı ortalar.
 
 ### Arayüz erişilebilirliği ve gezinme
 
@@ -361,10 +381,13 @@ Elementary rule kataloğunda sayı yazmak sonuçları anında filtreler; tam say
 `Session & Profiles` giriş ekranı ayrıca en son kullanılan session ve 1D profillerini
 tek tıklamayla yeniden açılabilen `Recent` satırları olarak gösterir.
 
-`Colorblind` teması Okabe–Ito tabanlı ayrıştırılabilir renkleri yüksek kontrast ve
-metinsel state etiketleriyle birlikte kullanır. Life, Immigration, Brian's Brain,
-Wireworld, Cyclic ve çok durumlu 1D görünümleri ile dışa aktarma paletleri bu temaya
-uyum sağlar. Tema, diğer temalar gibi sidebar'daki `Theme` düğmesiyle seçilir.
+`Colorblind` teması ayrıştırılabilir renkleri yüksek kontrast, metinsel state etiketleri
+ve mümkün olan yerlerde şekil işaretleriyle birlikte kullanır. Immigration'da A koyu
+mavi, B sarıdır; B hücrelerinde renk dışında bir iç işaret de çizilir. Langton
+karıncası yön üçgenini ve durmuşken `X` işaretini korur; Wireworld kuyruğu magenta
+çizilir. Ekran ve dışa aktarma paletleri ortak semantik renkleri kullanır. Tema,
+diğer temalar gibi sidebar'daki `Theme` düğmesiyle seçilir. `Midnight` düşük ışıkta
+rahat koyu bir seçenek, `Paper` ise açık ve baskı benzeri bir arayüz sunar.
 
 ## Moda özel patternler
 
@@ -394,8 +417,9 @@ Immigration Game, Conway'in `B3/S23` doğum ve hayatta kalma kurallarını iki t
 uygular. Hayatta kalan hücre türünü korur. Ölü bir hücrenin tam üç canlı komşusu
 varsa doğar ve bu üç ebeveyn arasındaki çoğunluk türünü alır.
 
-Tür A mavi, Tür B turuncu çizilir. Sol tık aktif türü yerleştirir, sağ tık hücreyi
-siler ve `T` aktif türü değiştirir. Randomize iki türü yaklaşık eşit dağıtır.
+Varsayılan paletlerde Tür A mavi, Tür B turuncu çizilir; Colorblind temasında koyu
+mavi/sarı ve B için ek iç işaret kullanılır. Sol tık aktif türü yerleştirir, sağ tık
+hücreyi siler ve `T` aktif türü değiştirir. Randomize iki türü yaklaşık eşit dağıtır.
 Life-like ve Immigration grid'leri ile geri alma geçmişleri ayrı tutulur; mod
 değiştirmek diğer simülasyonun durumunu bozmaz.
 
@@ -431,7 +455,8 @@ ise iletkene dönüşür. Bir iletken, sekiz komşusu arasında tam bir veya iki
 başı varsa yeni elektron başına dönüşür; aksi halde iletken kalır.
 
 Boş alan siyah, iletken sarı, elektron başı mavi ve elektron kuyruğu kırmızı
-çizilir. Sol tık seçili durumu yerleştirir, sağ tık hücreyi siler. `T`, iletken,
+çizilir; Colorblind temasında kuyruk magentadır. Sol tık seçili durumu yerleştirir,
+sağ tık hücreyi siler. `T`, iletken,
 elektron başı ve elektron kuyruğu fırçaları arasında geçer. Hazır devre patternleri
 üç durumu da doğrudan yerleştirir. Elle bir devreyi çalıştırmak için iletken hat
 üzerine en az bir elektron başı; yönlü bir başlangıç için başın arkasına bir
