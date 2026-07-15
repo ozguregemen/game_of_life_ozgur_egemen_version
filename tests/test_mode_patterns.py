@@ -173,15 +173,15 @@ class BuiltinModePatternBehaviorTests(unittest.TestCase):
 
     def test_binary_adder_outputs_three_plus_six_as_nine(self) -> None:
         generation = MODE_PATTERNS["wireworld_classic_binary_adder"]["pattern"]
-        for _ in range(47):
+        for _ in range(48):
             generation = apply_wireworld_rules(generation)
 
         output_heads = [
             col
-            for col in range(42, 61)
+            for col in range(43, 62)
             if generation[3][col] == ELECTRON_HEAD
         ]
-        self.assertEqual(output_heads, [42, 60])
+        self.assertEqual(output_heads, [43, 61])
 
     def test_wireworld_head_on_pulses_cancel(self) -> None:
         generation = MODE_PATTERNS["wireworld_collision"]["pattern"]
