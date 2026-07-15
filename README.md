@@ -111,6 +111,7 @@ satırı yine `import pygame` olarak kalır.
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
 - `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
+- `three_dimensional_ca.py`: Sınırlı uint8 volume, 3D komşuluk ve slice çekirdeği
 - `surface_rasterizer.py`: NumPy/surfarray tabanlı ortak 2D state-plane çizicisi
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
@@ -151,6 +152,32 @@ Genelleştirilmiş 1D CA kendi state/controller/renderer modülünde yaşar. Mev
 davranışları değiştirilmeden bir workspace adaptörüyle aynı akışa bağlanmıştır. Bu
 ayrım, ileride 3D workspace eklenirken ana event loop'a yeni boyut dalları ekleme
 zorunluluğunu ortadan kaldırır.
+
+## UI'dan bağımsız 3D çekirdek
+
+Planlanan 3D workspace'in state katmanı `three_dimensional_ca.py` içinde Pygame'den
+bağımsızdır. `Volume3D`, hücreleri kanonik `(z, y, x)` / `(depth, rows, columns)`
+sırasıyla C-contiguous NumPy `uint8` dizisinde tutar. İki ile 256 durum desteklenir;
+dışarı verilen volume ve sıfır-kopya slice görünümleri salt okunurdur. Hücre ve plane
+değişiklikleri state/shape doğrulaması yapan metotlardan geçer.
+
+Sınır politikaları sabit dış durum (`fixed`), periyodik uzay (`wrap`) ve aynalı kenar
+(`reflect`) seçeneklerini içerir. Sabit sınırın dış durumu ayrıca seçilebildiği için
+rule katmanı ileride tekdüze dış arka planı nesiller arasında evrimleştirebilir.
+Hazır komşuluklar radius-1 Moore (26 hücre) ve Von Neumann (6 hücre) tanımlarıdır;
+özel, merkezsiz ve tekrarsız `(dz, dy, dx)` offset kümeleri de kabul edilir. Seçilen
+durumların bütün volume için komşu sayısı NumPy ile toplu hesaplanır.
+
+Varsayılan güvenlik bütçesi eksen başına 256 hücre, tek volume için 16.777.216 hücre
+/ 16 MiB ve komşu hesabı geçici dizileri için 128 MiB'dir. Daha küçük limit profili
+enjekte edilebilir; allocation gerçekleşmeden önce axis, cell, byte ve çalışma seti
+kontrol edilir. `extract_slice()` Z için `(rows, columns)`, Y için
+`(depth, columns)`, X için `(depth, rows)` düzlemi verir. Bu 2D `uint8` plane'ler
+doğrudan ortak `StateGridRasterizer` ile çizilebilir.
+
+Bu aşamada boyut seçicideki 3D kartı hâlâ `PLANNED` durumundadır ve deneysel
+`life3d.py` ana uygulamaya bağlanmamıştır. Sonraki adım, bu çekirdeği kullanan ayrı
+controller/renderer tabanlı 3D Workspace iskeletidir.
 
 ## Timeline ve gelişmiş geçmiş
 
