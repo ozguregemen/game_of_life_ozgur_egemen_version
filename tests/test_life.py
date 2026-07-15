@@ -1097,6 +1097,9 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         life.simulation_active = False
         life.selected_pattern = None
+        life.pattern_menu_active = False
+        life.pattern_menu_category = None
+        life.pattern_scroll = 0
         life.rotation = 0
         life.flip_h = False
         life.flip_v = False
@@ -1132,6 +1135,46 @@ class ModeSpecificPatternIntegrationTests(unittest.TestCase):
                 self.assertTrue(
                     all(pattern["mode"] == mode for pattern in available.values())
                 )
+
+    def test_pattern_menu_opens_at_categories_then_selects_a_pattern(self) -> None:
+        life.set_simulation_mode("life")
+        life.activate_pattern_menu()
+
+        categories = life.pattern_menu_items()
+        self.assertEqual(categories[0], ("category", "all", "All Patterns", 20))
+        self.assertIn(
+            ("category", "still_lifes", "Still Lifes", 3),
+            categories,
+        )
+
+        life.handle_pattern_menu_event(
+            life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_2)
+        )
+        self.assertEqual(life.pattern_menu_category, "still_lifes")
+        self.assertTrue(
+            all(item[0] == "pattern" for item in life.pattern_menu_items())
+        )
+
+        life.handle_pattern_menu_event(
+            life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_1)
+        )
+        self.assertEqual(life.selected_pattern["name"], "Block")
+        self.assertFalse(life.pattern_menu_active)
+
+    def test_pattern_menu_backspace_returns_to_categories(self) -> None:
+        life.set_simulation_mode("wireworld")
+        life.activate_pattern_menu()
+        life.open_pattern_category("signals")
+
+        life.handle_pattern_menu_event(
+            life.pygame.event.Event(
+                life.pygame.KEYDOWN,
+                key=life.pygame.K_BACKSPACE,
+            )
+        )
+
+        self.assertIsNone(life.pattern_menu_category)
+        self.assertEqual(life.pattern_scroll, 0)
 
     def test_wireworld_pattern_preserves_all_signal_states(self) -> None:
         life.set_simulation_mode("wireworld")

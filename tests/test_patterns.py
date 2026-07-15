@@ -85,6 +85,49 @@ class PatternStorageTests(unittest.TestCase):
             patterns.get_patterns_for_mode("wireworld"),
         )
 
+    def test_builtin_catalog_sizes_respect_the_per_mode_cap(self) -> None:
+        expected_sizes = {
+            "life": 20,
+            "immigration": 10,
+            "brians_brain": 5,
+            "langtons_ant": 3,
+            "wireworld": 8,
+            "cyclic_automaton": 3,
+        }
+        for mode, expected in expected_sizes.items():
+            with self.subTest(mode=mode):
+                catalog = patterns.get_patterns_for_mode(mode)
+                self.assertEqual(len(catalog), expected)
+                self.assertLessEqual(
+                    len(catalog),
+                    patterns.MAX_BUILTIN_PATTERNS_PER_MODE,
+                )
+                self.assertTrue(
+                    all(pattern["category"] != "custom" for pattern in catalog.values())
+                )
+
+    def test_mode_categories_are_cached_and_cover_every_pattern(self) -> None:
+        categories = patterns.get_pattern_categories_for_mode("life")
+        self.assertEqual(categories[0], ("still_lifes", "Still Lifes", 3))
+        self.assertEqual(sum(count for _, _, count in categories), 20)
+        self.assertIs(
+            patterns.get_patterns_for_category("life", "still_lifes"),
+            patterns.get_patterns_for_category("life", "still_lifes"),
+        )
+
+    def test_custom_pattern_appears_in_automatic_custom_category(self) -> None:
+        saved = patterns.save_pattern([[1]], "My Seed", mode="life")
+
+        self.assertEqual(saved["category"], "custom")
+        self.assertIn(
+            ("custom", "Custom Patterns", 1),
+            patterns.get_pattern_categories_for_mode("life"),
+        )
+        self.assertIn(
+            "my seed",
+            patterns.get_patterns_for_category("life", "custom"),
+        )
+
     def test_legacy_json_without_mode_defaults_to_life(self) -> None:
         self.pattern_directory.mkdir(exist_ok=True)
         (self.pattern_directory / "legacy.json").write_text(
