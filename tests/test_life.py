@@ -104,6 +104,9 @@ class ApplicationSmokeTests(unittest.TestCase):
     def test_elementary_ca_dummy_video_driver_startup(self) -> None:
         self.run_smoke_test("life", "1d")
 
+    def test_three_dimensional_dummy_video_driver_startup(self) -> None:
+        self.run_smoke_test("life", "3d")
+
 
 class DimensionUITests(unittest.TestCase):
     def setUp(self) -> None:
@@ -142,13 +145,13 @@ class DimensionUITests(unittest.TestCase):
         self.assertEqual(life.active_dimension, "1d")
         self.assertFalse(life.dimension_menu_active)
 
-    def test_3d_card_is_visible_but_cannot_be_activated(self) -> None:
+    def test_3d_card_activates_the_spatial_workspace(self) -> None:
         life.activate_dimension_menu()
         event = life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_3)
         self.assertTrue(life.handle_dimension_menu_event(event))
-        self.assertEqual(life.active_dimension, "2d")
+        self.assertEqual(life.active_dimension, "3d")
         self.assertFalse(life.dimension_menu_active)
-        self.assertIn("planned", life.status_message.lower())
+        self.assertIn("playable", life.status_message.lower())
 
     def test_dimension_cards_fit_without_overlap(self) -> None:
         modal, cards = life.dimension_menu_geometry()

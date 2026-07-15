@@ -6,10 +6,20 @@ from .base import (
     WorkspaceRegistry,
     WorkspaceRenderer,
 )
+from .three_dimensional import (
+    ThreeDimensionalWorkspaceController,
+    ThreeDimensionalWorkspaceRenderer,
+    ThreeDimensionalWorkspaceServices,
+    ThreeDimensionalWorkspaceState,
+)
 
 __all__ = (
     "WorkspaceBundle",
     "WorkspaceController",
     "WorkspaceRegistry",
     "WorkspaceRenderer",
+    "ThreeDimensionalWorkspaceController",
+    "ThreeDimensionalWorkspaceRenderer",
+    "ThreeDimensionalWorkspaceServices",
+    "ThreeDimensionalWorkspaceState",
 )

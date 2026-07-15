@@ -18,7 +18,7 @@ class DimensionRegistryTests(unittest.TestCase):
         self.assertEqual(set(DIMENSION_BY_KEY), {"1d", "2d", "3d"})
         self.assertTrue(DIMENSION_BY_KEY["1d"].available)
         self.assertTrue(DIMENSION_BY_KEY["2d"].available)
-        self.assertFalse(DIMENSION_BY_KEY["3d"].available)
+        self.assertTrue(DIMENSION_BY_KEY["3d"].available)
 
     def test_all_dimensions_have_user_facing_metadata(self) -> None:
         for definition in DIMENSION_DEFINITIONS:

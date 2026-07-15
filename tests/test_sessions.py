@@ -91,6 +91,18 @@ class ApplicationSessionTests(unittest.TestCase):
         life.cyclic_brush = 7
         life.cyclic_threshold = 4
 
+        spatial = life.three_dimensional_controller.state
+        spatial.volume.set_cell((3, 4, 5), 1)
+        spatial.rule_key = "bays_4555"
+        spatial.volume.neighborhood = life.three_dimensional_controller.rule.neighborhood
+        spatial.volume.boundary = "wrap"
+        spatial.generation = 24
+        spatial.slice_axis = "y"
+        spatial.slice_index = 4
+        spatial.cell_size = 11
+        spatial.view_offset_x = -23
+        spatial.view_offset_y = 17
+
     def test_full_session_round_trip_restores_all_workspaces_and_ui(self) -> None:
         self.configure_distinct_state()
         document = life.capture_session_document("Round Trip")
@@ -105,6 +117,8 @@ class ApplicationSessionTests(unittest.TestCase):
         life.CELL_SIZE = 5
         life.view_offset_x = 0
         life.view_offset_y = 0
+        life.three_dimensional_controller.state.volume.set_cell((3, 4, 5), 0)
+        life.three_dimensional_controller.state.rule_key = "bays_5766"
 
         self.assertTrue(life.load_saved_session("round_trip"))
 
@@ -157,6 +171,17 @@ class ApplicationSessionTests(unittest.TestCase):
                 life.analysis_registry.get(f"2d:{mode}").summary.sample_count == 1
                 for mode in life.SIMULATION_MODES
             )
+        )
+        spatial = life.three_dimensional_controller.state
+        self.assertEqual(spatial.volume.get_cell((3, 4, 5)), 1)
+        self.assertEqual(spatial.rule_key, "bays_4555")
+        self.assertEqual(spatial.volume.boundary, "wrap")
+        self.assertEqual(spatial.generation, 24)
+        self.assertEqual((spatial.slice_axis, spatial.slice_index), ("y", 4))
+        self.assertEqual((spatial.view_offset_x, spatial.view_offset_y), (-23, 17))
+        self.assertEqual(
+            life.analysis_registry.get("3d:life_like").summary.sample_count,
+            1,
         )
         self.assertFalse(life.simulation_active)
 

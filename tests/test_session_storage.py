@@ -178,6 +178,27 @@ class SessionStorageTests(unittest.TestCase):
         ):
             session_storage.validate_session_document(document)
 
+    def test_legacy_session_without_3d_workspace_gets_an_empty_volume(self) -> None:
+        document = self.valid_session("Legacy 2D")
+        document["workspaces"].pop("3d")
+
+        normalized = session_storage.validate_session_document(document)
+
+        spatial = normalized["workspaces"]["3d"]
+        self.assertEqual(spatial["shape"], [24, 32, 32])
+        self.assertEqual(spatial["generation"], 0)
+        self.assertEqual(spatial["rule"], "bays_5766")
+
+    def test_invalid_3d_cell_is_rejected_before_storage(self) -> None:
+        document = self.valid_session("Invalid 3D")
+        document["workspaces"]["3d"]["cells"][0][0][0] = 2
+
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "workspaces.3d.cells",
+        ):
+            session_storage.validate_session_document(document)
+
 
 if __name__ == "__main__":
     unittest.main()

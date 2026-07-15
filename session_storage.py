@@ -22,6 +22,13 @@ from one_dimensional_ca import (
 )
 from rules import RULES
 from themes import THEMES
+from three_dimensional_ca import (
+    BOUNDARY_MODES as BOUNDARY_MODES_3D,
+    DEFAULT_MAX_AXIS_LENGTH,
+    DEFAULT_MAX_VOLUME_BYTES,
+    SLICE_AXES,
+)
+from three_dimensional_rules import DEFAULT_RULE_3D, RULE_KEYS_3D
 
 SESSION_SCHEMA = "cellular-automata-lab/session"
 PROFILE_SCHEMA = "cellular-automata-lab/elementary-profile"
@@ -657,6 +664,121 @@ def _validate_2d_workspace(value: Any) -> dict[str, Any]:
     }
 
 
+def _default_3d_workspace() -> dict[str, Any]:
+    """Return the empty 3D state used when upgrading a legacy session."""
+    depth, rows, columns = (24, 32, 32)
+    return {
+        "shape": [depth, rows, columns],
+        "cells": [
+            [[0 for _ in range(columns)] for _ in range(rows)]
+            for _ in range(depth)
+        ],
+        "rule": DEFAULT_RULE_3D.key,
+        "boundary": "fixed",
+        "generation": 0,
+        "slice": {"axis": "z", "index": depth // 2},
+        "camera": {"cell_size": 12, "offset": [0, 0]},
+    }
+
+
+def _validate_3d_workspace(value: Any) -> dict[str, Any]:
+    """Validate a bounded binary volume plus its active slice and camera."""
+    workspace = _mapping(value, "workspaces.3d")
+    raw_shape = _sequence(workspace.get("shape"), "workspaces.3d.shape")
+    if len(raw_shape) != 3:
+        raise DocumentValidationError(
+            "workspaces.3d.shape must contain depth, rows, and columns."
+        )
+    shape = [
+        _integer(
+            item,
+            f"workspaces.3d.shape[{index}]",
+            minimum=1,
+            maximum=DEFAULT_MAX_AXIS_LENGTH,
+        )
+        for index, item in enumerate(raw_shape)
+    ]
+    depth, rows, columns = shape
+    if depth * rows * columns > DEFAULT_MAX_VOLUME_BYTES:
+        raise DocumentValidationError(
+            "workspaces.3d volume exceeds the dense uint8 memory limit."
+        )
+
+    raw_planes = _sequence(workspace.get("cells"), "workspaces.3d.cells")
+    if len(raw_planes) != depth:
+        raise DocumentValidationError(
+            f"workspaces.3d.cells must contain {depth} depth planes."
+        )
+    cells: list[list[list[int]]] = []
+    for z, raw_plane in enumerate(raw_planes):
+        plane = _sequence(raw_plane, f"workspaces.3d.cells[{z}]")
+        if len(plane) != rows:
+            raise DocumentValidationError(
+                f"workspaces.3d.cells[{z}] must contain {rows} rows."
+            )
+        normalized_plane: list[list[int]] = []
+        for y, raw_row in enumerate(plane):
+            row = _sequence(raw_row, f"workspaces.3d.cells[{z}][{y}]")
+            if len(row) != columns:
+                raise DocumentValidationError(
+                    f"workspaces.3d.cells[{z}][{y}] must contain {columns} cells."
+                )
+            normalized_plane.append(
+                [
+                    _integer(
+                        cell,
+                        f"workspaces.3d.cells[{z}][{y}][{x}]",
+                        minimum=0,
+                        maximum=1,
+                    )
+                    for x, cell in enumerate(row)
+                ]
+            )
+        cells.append(normalized_plane)
+
+    slice_state = _mapping(workspace.get("slice"), "workspaces.3d.slice")
+    axis = _choice(
+        slice_state.get("axis"),
+        "workspaces.3d.slice.axis",
+        SLICE_AXES,
+    )
+    axis_length = shape[SLICE_AXES.index(axis)]
+    return {
+        "shape": shape,
+        "cells": cells,
+        "rule": _choice(
+            workspace.get("rule"),
+            "workspaces.3d.rule",
+            RULE_KEYS_3D,
+        ),
+        "boundary": _choice(
+            workspace.get("boundary"),
+            "workspaces.3d.boundary",
+            BOUNDARY_MODES_3D,
+        ),
+        "generation": _integer(
+            workspace.get("generation"),
+            "workspaces.3d.generation",
+            minimum=0,
+        ),
+        "slice": {
+            "axis": axis,
+            "index": _integer(
+                slice_state.get("index"),
+                "workspaces.3d.slice.index",
+                minimum=0,
+                maximum=axis_length - 1,
+            ),
+        },
+        "camera": _validate_camera(
+            workspace.get("camera"),
+            "workspaces.3d.camera",
+            minimum_size=2,
+            maximum_size=24,
+        ),
+    }
+
+
 def validate_session_document(value: Any) -> dict[str, Any]:
     """Validate and normalize a full application-session document."""
     document = _mapping(value, "session")
@@ -678,7 +800,7 @@ def validate_session_document(value: Any) -> dict[str, Any]:
             "dimension": _choice(
                 application.get("dimension"),
                 "application.dimension",
-                ("1d", "2d"),
+                ("1d", "2d", "3d"),
             ),
             "mode": _choice(
                 application.get("mode"),
@@ -716,6 +838,9 @@ def validate_session_document(value: Any) -> dict[str, Any]:
         "workspaces": {
             "1d": _validate_elementary_workspace(workspaces.get("1d")),
             "2d": _validate_2d_workspace(workspaces.get("2d")),
+            "3d": _validate_3d_workspace(
+                workspaces.get("3d", _default_3d_workspace())
+            ),
         },
     }
 

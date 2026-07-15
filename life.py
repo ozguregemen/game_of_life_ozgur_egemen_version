@@ -159,6 +159,13 @@ from workspaces.elementary_1d import (
     ElementaryWorkspaceServices,
     ElementaryWorkspaceState,
 )
+from workspaces.three_dimensional import (
+    THREE_D_RENDER_KEY,
+    ThreeDimensionalWorkspaceController,
+    ThreeDimensionalWorkspaceRenderer,
+    ThreeDimensionalWorkspaceServices,
+    ThreeDimensionalWorkspaceState,
+)
 from workspaces.two_dimensional import (
     TwoDimensionalControllerCallbacks,
     TwoDimensionalRendererCallbacks,
@@ -303,7 +310,10 @@ pattern_scan_executor = ThreadPoolExecutor(max_workers=1)
 grid_revision = 0
 stats_dirty = True
 
-render_revisions = {mode: 0 for mode in (*SIMULATION_MODES, ECA_RENDER_KEY)}
+render_revisions = {
+    mode: 0
+    for mode in (*SIMULATION_MODES, ECA_RENDER_KEY, THREE_D_RENDER_KEY)
+}
 rendered_grid_cache: dict[
     str,
     tuple[tuple[Any, ...], pygame.Surface],
@@ -1468,7 +1478,7 @@ def capture_session_document(name: str = "Last Session") -> dict[str, Any]:
         },
         "workspaces": {
             key: workspace_registry.get(key).controller.snapshot()
-            for key in ("1d", "2d")
+            for key in ("1d", "2d", "3d")
         },
     }
 
@@ -1493,6 +1503,7 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
     active_workspace().controller.deactivate()
     workspace_registry.get("1d").controller.restore(normalized["workspaces"]["1d"])
     workspace_registry.get("2d").controller.restore(normalized["workspaces"]["2d"])
+    workspace_registry.get("3d").controller.restore(normalized["workspaces"]["3d"])
 
     active_dimension = application["dimension"]
     simulation_mode = application["mode"]
@@ -1999,11 +2010,23 @@ def _prepare_export_menu() -> None:
 
 def activate_export_menu() -> None:
     """Open the contextual result export menu."""
+    if active_dimension == "3d":
+        set_status(
+            "3D volume export is not enabled yet; session save/load already preserves the full volume.",
+            4.0,
+        )
+        return
     export_manager.open()
 
 
 def toggle_export_menu() -> None:
     """Open or close result exports with the global X shortcut."""
+    if active_dimension == "3d":
+        set_status(
+            "3D volume export is not enabled yet; use P to save the complete session.",
+            4.0,
+        )
+        return
     export_manager.toggle()
 
 
@@ -3601,7 +3624,7 @@ def draw_dimension_menu() -> None:
             label = tiny_font.render("PLANNED", True, definition.accent)
             screen.blit(label, (card.x + 13, card.bottom - 28))
 
-    footer = "Click a card or press 1-3   ·   3D is visible as a roadmap item   ·   Esc closes"
+    footer = "Click a card or press 1-3   ·   workspace state is preserved   ·   Esc closes"
     footer_surface = tiny_font.render(footer, True, (188, 193, 204))
     screen.blit(
         footer_surface,
@@ -3682,6 +3705,9 @@ def active_tool_label() -> str:
     """Describe the currently effective drawing tool without relying on color."""
     if active_dimension == "1d":
         return f"Cell state {elementary_controller.state.brush_state}"
+    if active_dimension == "3d":
+        state = three_dimensional_controller.state
+        return f"Live voxel · {state.slice_axis.upper()} slice {state.slice_index + 1}"
     if selected_pattern is not None:
         return f"Pattern: {selected_pattern['name']}"
     if simulation_mode == "immigration":
@@ -3701,6 +3727,7 @@ def toggle_simulation_running() -> None:
     global simulation_active
     timeline_panel.stop()
     simulation_active = not simulation_active
+    rebuild_context_menu()
     set_status("Simulation running." if simulation_active else "Simulation paused.")
 
 
@@ -3749,8 +3776,8 @@ def draw_workspace_status_controls() -> None:
     )
     pygame.draw.rect(screen, theme["button"], tool_rect, border_radius=6)
     accent = (
-        DIMENSION_BY_KEY["1d"].accent
-        if active_dimension == "1d"
+        DIMENSION_BY_KEY[active_dimension].accent
+        if active_dimension in ("1d", "3d")
         else MODE_BY_KEY[simulation_mode].accent
     )
     pygame.draw.rect(screen, accent, tool_rect, 2, border_radius=6)
@@ -3766,6 +3793,8 @@ def draw_workspace_status_controls() -> None:
 def help_context_title() -> str:
     if active_dimension == "1d":
         return f"1D · {elementary_controller.family_name}"
+    if active_dimension == "3d":
+        return f"3D · {three_dimensional_controller.rule.name}"
     return f"2D · {MODE_BY_KEY[simulation_mode].name}"
 
 
@@ -3779,6 +3808,17 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
             ("Rule catalogue: F", "Show all rules or favorite rules only"),
             ("Catalogue right click", "Add or remove a favorite rule"),
             ("Timeline arrows", "Step backward or forward through recorded state"),
+        )
+    if active_dimension == "3d":
+        return (
+            ("Left / Right click", "Draw or erase a voxel on the visible slice"),
+            ("Middle drag", "Pan the current slice"),
+            ("Q", "Cycle through Z, Y, and X slice axes"),
+            (", / .", "Move to the previous or next slice"),
+            ("B", "Cycle fixed, wrapped, and reflected boundaries"),
+            ("K", "Switch between 26-neighbor and six-face rule families"),
+            ("Ctrl+0", "Fit the complete current slice into the viewport"),
+            ("Timeline arrows", "Step backward or forward through 3D generations"),
         )
     entries = [
         ("Left / Right click", "Draw with the active tool / erase a cell"),
@@ -4268,8 +4308,10 @@ def handle_keydown(event: pygame.event.Event) -> None:
     ):
         if active_dimension == "2d":
             fit_2d_view()
+        elif active_dimension == "3d":
+            three_dimensional_controller.fit_view()
         else:
-            set_status("Fit-to-window is available for the finite 2D board.")
+            set_status("The 1D workspace follows its active space-time diagram.")
     elif event.key == pygame.K_p:
         activate_session_menu()
     elif event.key == pygame.K_i:
@@ -4523,6 +4565,46 @@ elementary_renderer = ElementaryWorkspaceRenderer(
     elementary_services,
 )
 
+three_dimensional_state = ThreeDimensionalWorkspaceState()
+three_dimensional_services = ThreeDimensionalWorkspaceServices(
+    viewport=grid_viewport,
+    screen=lambda: screen,
+    window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+    theme_name=lambda: current_theme,
+    is_running=lambda: simulation_active,
+    speed=lambda: speed,
+    show_grid=lambda: show_grid,
+    set_running=_set_simulation_running,
+    set_status=set_status,
+    invalidate=invalidate_render_cache,
+    rebuild_sidebar=lambda: rebuild_context_menu(),
+    activate_dimension_menu=activate_dimension_menu,
+    activate_session_menu=activate_session_menu,
+    activate_analysis=toggle_analysis_panel,
+    activate_help=toggle_help_panel,
+    toggle_grid=toggle_grid_lines,
+    cycle_theme=cycle_theme,
+    cached_stats=cached_mode_stats,
+    render_revision=lambda key: render_revisions[key],
+    large_font=lambda: font,
+    small_font=lambda: small_font,
+    tiny_font=lambda: tiny_font,
+    menu_width=MENU_WIDTH,
+    info_bar_height=INFO_BAR_HEIGHT,
+    stats_height=STATS_HEIGHT,
+    grid_top_margin=GRID_TOP_MARGIN,
+    record_analysis=analysis_registry.observe,
+    reset_analysis=analysis_registry.reset,
+)
+three_dimensional_controller = ThreeDimensionalWorkspaceController(
+    three_dimensional_services,
+    three_dimensional_state,
+)
+three_dimensional_renderer = ThreeDimensionalWorkspaceRenderer(
+    three_dimensional_controller,
+    three_dimensional_services,
+)
+
 two_dimensional_controller = TwoDimensionalWorkspaceController(
     TwoDimensionalControllerCallbacks(
         generation=_two_d_generation,
@@ -4568,8 +4650,12 @@ workspace_registry.register(
     WorkspaceBundle(two_dimensional_controller, two_dimensional_renderer)
 )
 workspace_registry.register(WorkspaceBundle(elementary_controller, elementary_renderer))
+workspace_registry.register(
+    WorkspaceBundle(three_dimensional_controller, three_dimensional_renderer)
+)
 
 analysis_registry.reset(elementary_controller.analysis_observation())
+analysis_registry.reset(three_dimensional_controller.analysis_observation())
 for analysis_mode in SIMULATION_MODES:
     analysis_registry.reset(_analysis_observation_2d(analysis_mode))
 

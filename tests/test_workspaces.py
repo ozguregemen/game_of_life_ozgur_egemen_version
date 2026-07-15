@@ -159,7 +159,7 @@ class ApplicationWorkspaceTests(unittest.TestCase):
         life.set_simulation_mode("life")
 
     def test_application_registers_both_available_dimensions(self) -> None:
-        self.assertEqual(life.workspace_registry.keys, ("2d", "1d"))
+        self.assertEqual(life.workspace_registry.keys, ("2d", "1d", "3d"))
         self.assertIsInstance(
             life.workspace_registry.get("2d").controller,
             TwoDimensionalWorkspaceController,
