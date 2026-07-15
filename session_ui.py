@@ -195,7 +195,7 @@ class SessionMenu:
         return modal, cards, capacity
 
     def draw(self) -> None:
-        """Draw the full-session and Elementary profile manager."""
+        """Draw the full-session and generalized 1D profile manager."""
         if not self.active:
             return
         window_width, window_height = self.services.window_size()

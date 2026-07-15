@@ -9,6 +9,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
 import session_storage
+from one_dimensional_ca import FAMILY_MULTISTATE, default_rule_spec
 
 
 class ApplicationSessionTests(unittest.TestCase):
@@ -204,6 +205,44 @@ class ApplicationSessionTests(unittest.TestCase):
         self.assertEqual(eca.rows, [(1, 0, 1)])
         self.assertEqual(eca.generation, 0)
         self.assertFalse(eca.rule_change_reset)
+
+    def test_generalized_1d_session_preserves_rule_memory_and_comparison(self) -> None:
+        life.set_active_dimension("1d")
+        eca = life.elementary_controller.state
+        spec = default_rule_spec(FAMILY_MULTISTATE, states=3)
+        eca.family = spec.family
+        eca.rule = spec.code
+        eca.states = spec.states
+        eca.radius = spec.radius
+        eca.seed = (0, 2, 0)
+        eca.rows = [(0, 2, 0), (2, 1, 2)]
+        eca.previous_row = (0, 2, 0)
+        eca.background = 2
+        eca.previous_background = 1
+        eca.comparison_enabled = True
+        eca.comparison_rule = max(0, spec.code - 1)
+        eca.comparison_rows = [(0, 2, 0), (1, 2, 1)]
+        eca.comparison_previous_row = (0, 2, 0)
+        eca.comparison_background = 1
+        eca.comparison_previous_background = 2
+        eca.generation = 1
+
+        document = life.capture_session_document("Generalized 1D")
+        normalized = session_storage.validate_session_document(document)
+        eca.family = "elementary"
+        eca.rule = 30
+        eca.states = 2
+        eca.radius = 1
+
+        life.restore_session_document(normalized)
+
+        self.assertEqual(eca.family, FAMILY_MULTISTATE)
+        self.assertEqual(eca.states, 3)
+        self.assertEqual(eca.rows[-1], (2, 1, 2))
+        self.assertEqual(eca.previous_row, (0, 2, 0))
+        self.assertTrue(eca.comparison_enabled)
+        self.assertEqual(eca.comparison_rows[-1], (1, 2, 1))
+        self.assertEqual(eca.comparison_previous_background, 2)
 
     def test_session_manager_exposes_profiles_only_in_1d(self) -> None:
         life.set_active_dimension("2d")

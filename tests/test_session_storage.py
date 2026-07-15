@@ -12,6 +12,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
 import session_storage
+from one_dimensional_ca import FAMILY_TOTALISTIC, default_rule_spec
 
 
 class SessionStorageTests(unittest.TestCase):
@@ -103,6 +104,31 @@ class SessionStorageTests(unittest.TestCase):
 
         self.assertEqual(loaded["name"], "Kural 110 Deneyi")
         self.assertEqual(loaded["experiment"], document["experiment"])
+
+    def test_generalized_profile_preserves_family_states_and_comparison(self) -> None:
+        original = life.capture_session_document("Profile Restore")
+        try:
+            state = life.elementary_controller.state
+            spec = default_rule_spec(FAMILY_TOTALISTIC, states=3, radius=2)
+            state.family = spec.family
+            state.rule = spec.code
+            state.states = spec.states
+            state.radius = spec.radius
+            state.rows = [(0, 1, 2, 1, 0)]
+            state.seed = state.rows[-1]
+            state.previous_row = (0, 0, 0, 0, 0)
+            state.comparison_enabled = True
+            state.comparison_rule = max(0, spec.code - 1)
+            document = life.capture_experiment_profile("Totalistic Pair")
+
+            path = session_storage.save_profile(document)
+            loaded = session_storage.load_profile(path.stem)
+
+            self.assertEqual(loaded["experiment"]["rule_spec"], spec.as_dict())
+            self.assertEqual(loaded["experiment"]["seed"], [0, 1, 2, 1, 0])
+            self.assertTrue(loaded["experiment"]["comparison"]["enabled"])
+        finally:
+            life.restore_session_document(original)
 
     def test_unsupported_version_is_rejected(self) -> None:
         document = deepcopy(self.valid_session())

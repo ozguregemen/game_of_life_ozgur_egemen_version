@@ -11,8 +11,9 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from elementary_ca import BOUNDARY_MODES, MAX_RULE, MIN_RULE
+from elementary_ca import BOUNDARY_MODES
 from mode_registry import MODE_KEYS
+from one_dimensional_ca import FAMILY_ELEMENTARY, RULE_FAMILIES, RuleSpec
 from rules import RULES
 from themes import THEMES
 
@@ -156,16 +157,52 @@ def _pair(
     ]
 
 
-def _binary_row(value: Any, label: str) -> list[int]:
+def _state_row(value: Any, label: str, states: int) -> list[int]:
     row = _sequence(value, label)
     if not row:
         raise DocumentValidationError(f"{label} cannot be empty.")
     if len(row) > 20_000:
         raise DocumentValidationError(f"{label} is too wide.")
     return [
-        _integer(cell, f"{label}[{index}]", minimum=0, maximum=1)
+        _integer(cell, f"{label}[{index}]", minimum=0, maximum=states - 1)
         for index, cell in enumerate(row)
     ]
+
+
+def _rule_spec(value: Mapping[str, Any], label: str) -> RuleSpec:
+    """Validate a generalized rule spec or upgrade a legacy ECA rule field."""
+    raw_spec = value.get("rule_spec")
+    if raw_spec is None:
+        code = _integer(
+            value.get("rule"),
+            f"{label}.rule",
+            minimum=0,
+            maximum=255,
+        )
+        return RuleSpec(FAMILY_ELEMENTARY, code, 2, 1)
+    source = _mapping(raw_spec, f"{label}.rule_spec")
+    family = _choice(
+        source.get("family"),
+        f"{label}.rule_spec.family",
+        RULE_FAMILIES,
+    )
+    code = _integer(source.get("code"), f"{label}.rule_spec.code", minimum=0)
+    states = _integer(
+        source.get("states"),
+        f"{label}.rule_spec.states",
+        minimum=2,
+        maximum=4,
+    )
+    radius = _integer(
+        source.get("radius"),
+        f"{label}.rule_spec.radius",
+        minimum=1,
+        maximum=3,
+    )
+    try:
+        return RuleSpec(family, code, states, radius)
+    except (TypeError, ValueError) as exc:
+        raise DocumentValidationError(f"{label}.rule_spec is invalid: {exc}") from exc
 
 
 def _grid(
@@ -215,23 +252,64 @@ def _validate_camera(
 
 def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
     workspace = _mapping(value, "workspaces.1d")
+    spec = _rule_spec(workspace, "workspaces.1d")
     rows_source = _sequence(workspace.get("rows"), "workspaces.1d.rows")
     if not rows_source or len(rows_source) > 512:
         raise DocumentValidationError(
             "workspaces.1d.rows must contain between 1 and 512 rows."
         )
     rows = [
-        _binary_row(row, f"workspaces.1d.rows[{index}]")
+        _state_row(row, f"workspaces.1d.rows[{index}]", spec.states)
         for index, row in enumerate(rows_source)
     ]
-    seed = _binary_row(workspace.get("seed"), "workspaces.1d.seed")
+    seed = _state_row(workspace.get("seed"), "workspaces.1d.seed", spec.states)
+    previous_row = _state_row(
+        workspace.get("previous_row", [0] * len(rows[-1])),
+        "workspaces.1d.previous_row",
+        spec.states,
+    )
+    if len(previous_row) != len(rows[-1]):
+        raise DocumentValidationError(
+            "workspaces.1d.previous_row must match the latest row width."
+        )
+
+    comparison_source = workspace.get("comparison", {})
+    comparison = _mapping(comparison_source, "workspaces.1d.comparison")
+    comparison_rows_source = _sequence(
+        comparison.get("rows", rows),
+        "workspaces.1d.comparison.rows",
+    )
+    if not comparison_rows_source or len(comparison_rows_source) > 512:
+        raise DocumentValidationError(
+            "workspaces.1d.comparison.rows must contain between 1 and 512 rows."
+        )
+    comparison_rows = [
+        _state_row(
+            row,
+            f"workspaces.1d.comparison.rows[{index}]",
+            spec.states,
+        )
+        for index, row in enumerate(comparison_rows_source)
+    ]
+    if len(comparison_rows) != len(rows) or any(
+        len(primary) != len(secondary)
+        for primary, secondary in zip(rows, comparison_rows)
+    ):
+        raise DocumentValidationError(
+            "workspaces.1d comparison rows must match the primary diagram."
+        )
+    comparison_previous = _state_row(
+        comparison.get("previous_row", [0] * len(comparison_rows[-1])),
+        "workspaces.1d.comparison.previous_row",
+        spec.states,
+    )
+    if len(comparison_previous) != len(comparison_rows[-1]):
+        raise DocumentValidationError(
+            "workspaces.1d.comparison.previous_row must match the latest row width."
+        )
     return {
-        "rule": _integer(
-            workspace.get("rule"),
-            "workspaces.1d.rule",
-            minimum=MIN_RULE,
-            maximum=MAX_RULE,
-        ),
+        "rule": spec.code,
+        "rule_spec": spec.as_dict(),
         "boundary": _choice(
             workspace.get("boundary"),
             "workspaces.1d.boundary",
@@ -241,7 +319,13 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
             workspace.get("background"),
             "workspaces.1d.background",
             minimum=0,
-            maximum=1,
+            maximum=spec.states - 1,
+        ),
+        "previous_background": _integer(
+            workspace.get("previous_background", 0),
+            "workspaces.1d.previous_background",
+            minimum=0,
+            maximum=spec.states - 1,
         ),
         "rule_change_reset": _boolean(
             workspace.get("rule_change_reset"),
@@ -249,6 +333,33 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
         ),
         "seed": seed,
         "rows": rows,
+        "previous_row": previous_row,
+        "comparison": {
+            "enabled": _boolean(
+                comparison.get("enabled", False),
+                "workspaces.1d.comparison.enabled",
+            ),
+            "rule": _integer(
+                comparison.get("rule", min(90, spec.max_code)),
+                "workspaces.1d.comparison.rule",
+                minimum=0,
+                maximum=spec.max_code,
+            ),
+            "rows": comparison_rows,
+            "previous_row": comparison_previous,
+            "background": _integer(
+                comparison.get("background", workspace.get("background")),
+                "workspaces.1d.comparison.background",
+                minimum=0,
+                maximum=spec.states - 1,
+            ),
+            "previous_background": _integer(
+                comparison.get("previous_background", 0),
+                "workspaces.1d.comparison.previous_background",
+                minimum=0,
+                maximum=spec.states - 1,
+            ),
+        },
         "generation": _integer(
             workspace.get("generation"),
             "workspaces.1d.generation",
@@ -554,27 +665,26 @@ def validate_session_document(value: Any) -> dict[str, Any]:
 
 
 def validate_profile_document(value: Any) -> dict[str, Any]:
-    """Validate and normalize a reusable 1D elementary experiment profile."""
+    """Validate and normalize a reusable generalized 1D experiment profile."""
     document = _mapping(value, "profile")
     if document.get("schema") != PROFILE_SCHEMA:
-        raise DocumentValidationError("File is not an elementary experiment profile.")
+        raise DocumentValidationError("File is not a 1D experiment profile.")
     if document.get("version") != DOCUMENT_VERSION:
         raise DocumentValidationError(
             f"Unsupported profile version: {document.get('version')!r}."
         )
     experiment = _mapping(document.get("experiment"), "experiment")
+    spec = _rule_spec(experiment, "experiment")
+    comparison_source = experiment.get("comparison", {})
+    comparison = _mapping(comparison_source, "experiment.comparison")
     return {
         "schema": PROFILE_SCHEMA,
         "version": DOCUMENT_VERSION,
         "name": _text(document.get("name"), "name"),
         "saved_at": _text(document.get("saved_at"), "saved_at"),
         "experiment": {
-            "rule": _integer(
-                experiment.get("rule"),
-                "experiment.rule",
-                minimum=MIN_RULE,
-                maximum=MAX_RULE,
-            ),
+            "rule": spec.code,
+            "rule_spec": spec.as_dict(),
             "boundary": _choice(
                 experiment.get("boundary"),
                 "experiment.boundary",
@@ -584,13 +694,29 @@ def validate_profile_document(value: Any) -> dict[str, Any]:
                 experiment.get("background"),
                 "experiment.background",
                 minimum=0,
-                maximum=1,
+                maximum=spec.states - 1,
             ),
             "rule_change_reset": _boolean(
                 experiment.get("rule_change_reset"),
                 "experiment.rule_change_reset",
             ),
-            "seed": _binary_row(experiment.get("seed"), "experiment.seed"),
+            "seed": _state_row(
+                experiment.get("seed"),
+                "experiment.seed",
+                spec.states,
+            ),
+            "comparison": {
+                "enabled": _boolean(
+                    comparison.get("enabled", False),
+                    "experiment.comparison.enabled",
+                ),
+                "rule": _integer(
+                    comparison.get("rule", min(90, spec.max_code)),
+                    "experiment.comparison.rule",
+                    minimum=0,
+                    maximum=spec.max_code,
+                ),
+            },
         },
     }
 
@@ -668,7 +794,7 @@ def save_profile(
     *,
     overwrite: bool = False,
 ) -> Path:
-    """Validate and atomically save an elementary experiment profile."""
+    """Validate and atomically save a generalized 1D experiment profile."""
     normalized = validate_profile_document(document)
     return _write_document(
         PROFILE_DIRECTORY,
@@ -679,7 +805,7 @@ def save_profile(
 
 
 def load_profile(identifier: str) -> dict[str, Any]:
-    """Read and validate one elementary experiment profile."""
+    """Read and validate one generalized 1D experiment profile."""
     return validate_profile_document(
         _read_json(_document_path(PROFILE_DIRECTORY, identifier))
     )
@@ -715,5 +841,5 @@ def list_sessions() -> list[dict[str, str]]:
 
 
 def list_profiles() -> list[dict[str, str]]:
-    """Return readable metadata for all valid elementary profiles."""
+    """Return readable metadata for all valid 1D experiment profiles."""
     return _list_documents(PROFILE_DIRECTORY, validate_profile_document)

@@ -18,7 +18,8 @@ satırı yine `import pygame` olarak kalır.
 ## Ana özellikler
 
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
-- 0–255 arasındaki tüm Wolfram elementary cellular automata kuralları için 1D çalışma alanı
+- Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
+  kurallar için genelleştirilmiş 1D çalışma alanı
 - 3D için bozuk veya yarım bir moda geçmeden yol haritasını gösteren planlı alan
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
@@ -102,6 +103,7 @@ satırı yine `import pygame` olarak kalır.
 - `workspaces/two_dimensional.py`: Altı mevcut 2D modu ortak workspace akışına bağlayan adaptör
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
+- `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
@@ -135,7 +137,7 @@ viewport cache anahtarı, temel çizim, dinamik katmanlar, bilgi/istatistik barl
 modal çizimini üstlenir. Ana event loop seçili boyutun ayrıntılarını bilmeden bu
 ortak arayüzü çağırır.
 
-1D Elementary CA kendi state/controller/renderer modülünde yaşar. Mevcut 2D modlar
+Genelleştirilmiş 1D CA kendi state/controller/renderer modülünde yaşar. Mevcut 2D modlar
 davranışları değiştirilmeden bir workspace adaptörüyle aynı akışa bağlanmıştır. Bu
 ayrım, ileride 3D workspace eklenirken ana event loop'a yeni boyut dalları ekleme
 zorunluluğunu ortadan kaldırır.
@@ -231,8 +233,8 @@ kontrollü olarak yazar; `Quick Load` / `Ctrl+O` aynı kurtarma noktasını yük
 
 Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünüm
 seçenekleri, 1D/2D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
-generation değerleri, Life rule'u, moda özel fırçalar ve 1D Elementary CA'nın rule,
-boundary, seed, tam diyagram ve generation durumunu içerir. Yükleme simülasyonu
+generation değerleri, Life rule'u, moda özel fırçalar ve 1D alanının rule family/spec,
+boundary, seed, tam diyagram, second-order hafıza ve karşılaştırma durumunu içerir. Yükleme simülasyonu
 güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
 başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
@@ -241,7 +243,8 @@ workspace durumları her mod için yeni bir analiz başlangıç örneği oluştu
 
 1D çalışma alanında oturum yöneticisi ayrıca `Save 1D Experiment Profile` ve
 `Browse 1D Experiment Profiles` seçeneklerini gösterir. Bir profil mevcut rule,
-boundary, background ve güncel satırı yeniden kullanılabilir seed olarak saklar.
+family, state count, radius, boundary, background, karşılaştırma rule'u ve güncel
+satırı yeniden kullanılabilir seed olarak saklar.
 Profil yüklendiğinde deney generation `0` noktasından yeniden başlatılır.
 
 Oturum ve profil dosyaları UTF-8 JSON kullanır, sürüm numarası taşır, güvenli dosya
@@ -260,10 +263,10 @@ alınmaz. Mod istatistikleri de yalnızca ilgili grid değiştiğinde yeniden he
 Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
 [`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.
 
-## Boyut seçimi ve 1D Elementary CA
+## Boyut seçimi ve genelleştirilmiş 1D CA
 
 `D` tuşu veya sağ menüdeki `Select Dimension` düğmesi üç üst seviye çalışma alanını
-gösterir. `1D`, Wolfram elementary cellular automata alanını; `2D`, mevcut altı modu
+gösterir. `1D`, Wolfram'ın genel 1D cellular automata alanını; `2D`, mevcut altı modu
 açar. `3D` kartı şimdilik `PLANNED` durumundadır: kullanıcıya projenin yönünü gösterir
 fakat seçildiğinde çalışan alanı değiştirmez. 1D ve 2D durumları arasında geçiş yapmak
 gridleri ve geçmişleri sıfırlamaz.
@@ -275,8 +278,30 @@ numaralandırma [Wolfram Elementary Cellular Automaton açıklaması](https://ma
 ve [Wolfram Language CellularAutomaton dokümantasyonu](https://reference.wolfram.com/language/ref/CellularAutomaton.html)
 ile aynı sırayı kullanır.
 
+Sağ menüdeki `Family` denetimi altı 1D aile arasında geçiş yapar:
+
+- `Elementary`: İki durumlu, radius-1 ve 0–255 Wolfram kuralları.
+- `Totalistic`: Komşuluk toplamının çıktıyı seçtiği 2–4 durumlu, radius 1–3 kurallar.
+- `Multi-state`: Üç veya dört durumlu tam radius-1 lookup tablosu.
+- `Extended Radius`: Beş veya yedi hücrelik binary komşuluklar (radius 2–3).
+- `Higher-order`: Sonraki satırın hem güncel hem bir önceki nesle bağlı olduğu kurallar.
+- `Reversible`: Önceki satırın iki ardışık satırdan tam geri kazanılabildiği
+  second-order kurallar.
+
+Family değişiminde görsel olarak yararlı, deterministik bir başlangıç kuralı seçilir.
+Uygun ailelerde `States` ve `Radius` ayrı ayrı değiştirilebilir. Büyük lookup uzaylarının
+rule code'ları arayüzde kısaltılarak gösterilir, fakat hesaplama ve JSON içinde tam
+tamsayı korunur. Çok durumlu ailelerde `Brush State`, sol tıklamanın yazacağı durumu
+seçer; sağ tıklama her zaman `0` yazar.
+
+`Compare`, aynı seed, boundary, hız ve generation akışını paylaşan ikinci bir rule'u
+yan yana açar. `Compare −/+` yalnız ikinci rule code'unu değiştirir. Böylece farklı
+kuralların space-time diyagramları aynı deney koşullarında gözle karşılaştırılabilir;
+karşılaştırma durumu timeline, session, profil ve PNG/GIF/MP4 dışa aktarmalarında da
+korunur.
+
 1D alanında üstte sabit bir güncel-satır editörü, altta ise nesillerin aşağı doğru
-aktığı space-time diyagramı bulunur. Sol/sağ tıkla güncel satır açılıp kapatılabilir.
+aktığı space-time diyagramı bulunur. Sol tık seçili durumu, sağ tık sıfırı yazar.
 `Browse Rules 0–255` veya `E`, 16×16 rule kataloğunu açar; bir rule tıklanabilir ya da
 numarası yazılıp Enter'a basılabilir. `Previous Rule` ve `Next Rule` düğmeleri hedef
 numarayı açıkça gösterir; 0 ile 255 arasında sarar. 30, 54, 90, 110 ve 184 ayrıca
