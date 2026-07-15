@@ -23,6 +23,16 @@ Bir senaryonun profiler çıktısı:
 python benchmarks/render_benchmark.py --frames 160 --profile life_heatmap
 ```
 
+Büyük 1D diyagramda eski hücre-dikdörtgen yolu ile NumPy/surfarray yolunu aynı
+veri üzerinde karşılaştırma:
+
+```powershell
+python benchmarks/render_benchmark.py --scenario elementary_1d_large `
+  --invalidate-each-frame --one-d-backend rects
+python benchmarks/render_benchmark.py --scenario elementary_1d_large `
+  --invalidate-each-frame --one-d-backend surfarray
+```
+
 ## Referans sonuç
 
 Aşağıdaki değerler Windows, Python 3.14.0, pygame-ce 2.5.7, SDL dummy video
@@ -38,6 +48,12 @@ makineye göre değişir; performans testi için sabit geçme/kalma eşiği değ
 | Langton's Ant | 5.27 ms | 0.94 ms | %82.2 |
 | Wireworld | 5.21 ms | 1.00 ms | %80.8 |
 | Cyclic Automaton | 5.95 ms | 0.95 ms | %84.0 |
+
+1D senaryosu, yaklaşık 64.000 hücrelik 801×79 space-time verisinin görünür
+bölümünü ölçer. `1200x720` dummy pencere ve her frame zorunlu rebuild altında
+eski `pygame.draw.rect` yolu 33.65 ms, NumPy palet eşleme +
+`pygame.surfarray.blit_array` yolu 8.02 ms median vermiştir; azalma yaklaşık
+%76.2'dir. Küçük diyagramlar mevcut dikdörtgen yolunu kullanmayı sürdürür.
 
 Cache, grid nesiller arasında değişmediğinde aktif viewport piksellerini tekrar
 kullanır ve bellekte aynı anda yalnızca bir viewport yüzeyi tutar.

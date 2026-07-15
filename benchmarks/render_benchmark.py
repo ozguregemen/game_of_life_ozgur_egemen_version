@@ -22,6 +22,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
+from workspaces.elementary_1d import ECA_DIAGRAM_CELL_BUDGET
 
 ScenarioSetup = Callable[[], None]
 
@@ -121,6 +122,33 @@ def setup_cyclic_automaton() -> None:
     )
 
 
+def setup_elementary_1d_large() -> None:
+    """Create a repeatable large 1D diagram near its retained-cell budget."""
+    life.set_active_dimension("1d")
+    life.simulation_active = False
+    life.show_grid = True
+    life.status_message = ""
+    state = life.elementary_controller.state
+    state.cell_size = 2
+    state.comparison_enabled = False
+    rng = random.Random(18)
+    width = 801
+    row_count = ECA_DIAGRAM_CELL_BUDGET // width
+    state.rows = [
+        tuple(1 if rng.random() < 0.50 else 0 for _ in range(width))
+        for _ in range(row_count)
+    ]
+    state.row_backgrounds = [0] * row_count
+    state.seed = state.rows[0]
+    state.previous_row = (0,) * width
+    state.comparison_rows = list(state.rows)
+    state.comparison_row_backgrounds = list(state.row_backgrounds)
+    state.comparison_previous_row = state.previous_row
+    state.generation = row_count - 1
+    life.elementary_controller.center_view()
+    life.invalidate_render_cache(life.ECA_RENDER_KEY)
+
+
 SCENARIOS: dict[str, ScenarioSetup] = {
     "life_dense": setup_life_dense,
     "life_heatmap": setup_life_heatmap,
@@ -129,6 +157,7 @@ SCENARIOS: dict[str, ScenarioSetup] = {
     "langtons_ant": setup_langtons_ant,
     "wireworld": setup_wireworld,
     "cyclic_automaton": setup_cyclic_automaton,
+    "elementary_1d_large": setup_elementary_1d_large,
 }
 
 
@@ -140,7 +169,7 @@ def _draw_frames(
     durations_ms: list[float] = []
     for _ in range(frame_count):
         if invalidate_each_frame:
-            life.invalidate_render_cache()
+            life.invalidate_render_cache(life.active_render_key())
         start = time.perf_counter_ns()
         life.draw_scene()
         durations_ms.append((time.perf_counter_ns() - start) / 1_000_000)
@@ -183,6 +212,11 @@ def benchmark_scenario(
         "p95_ms": ordered[p95_index],
         "min_ms": ordered[0],
         "estimated_fps": 1000.0 / median_ms if median_ms else 0.0,
+        "render_backend": (
+            life.elementary_renderer.last_diagram_backend
+            if name == "elementary_1d_large"
+            else "workspace"
+        ),
     }
 
 
@@ -221,6 +255,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Mark the simulation as running at 60 gen/s during measurement.",
     )
+    parser.add_argument(
+        "--one-d-backend",
+        choices=("auto", "rects", "surfarray"),
+        default="auto",
+        help="Select the 1D renderer for repeatable before/after measurements.",
+    )
     return parser.parse_args()
 
 
@@ -230,6 +270,7 @@ def main() -> None:
         raise SystemExit("--frames must be positive and --warmup cannot be negative.")
 
     try:
+        life.elementary_renderer.diagram_backend = args.one_d_backend
         if args.profile:
             profile_scenario(
                 args.profile,

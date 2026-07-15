@@ -111,6 +111,7 @@ satırı yine `import pygame` olarak kalır.
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
 - `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
+- `surface_rasterizer.py`: NumPy/surfarray tabanlı ortak 2D state-plane çizicisi
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
 - `langtons_ant.py`: Langton karıncasının yön, renk çevirme ve hareket çekirdeği
@@ -268,6 +269,15 @@ cache'lenir. Pattern önizlemesi, durum mesajları ve menüler cache dışında 
 için etkileşimli kalır. Life geçiş animasyonları devam ederken cache kullanılmaz;
 `60 gen/s` çalışan ve her frame değişen simülasyonda gereksiz viewport kopyası
 alınmaz. Mod istatistikleri de yalnızca ilgili grid değiştiğinde yeniden hesaplanır.
+
+Büyük 1D space-time diyagramlarının görünür hücreleri NumPy ile tek bir durum
+matrisine dönüştürülür, palet topluca uygulanır ve Pygame surfarray üzerinden bir
+yüzeye aktarılır. Ölçeklenmiş scratch yüzeyleri yeniden kullanıldığı için hücre
+başına `pygame.draw.rect` çağrısı ve frame başına gereksiz yüzey tahsisi yapılmaz.
+Toplu yol 4.096 veya daha fazla görünür hücrede otomatik seçilir; küçük veya
+yarım-hücre hizalı özel diyagramlarda eski çizim yolu güvenli fallback olarak
+korunur. Aynı raster katmanı ileride 3D workspace slice görünümünde de
+kullanılabilecek şekilde workspace'ten bağımsızdır.
 
 Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
 [`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.
