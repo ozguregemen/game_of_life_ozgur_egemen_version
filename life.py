@@ -88,7 +88,14 @@ from mode_registry import (
     get_mode_definition,
 )
 from one_dimensional_ca import FAMILY_ELEMENTARY
-from patterns import get_patterns_for_mode, flip_pattern, rotate_pattern, save_pattern
+from patterns import (
+    flip_pattern,
+    get_pattern_categories_for_mode,
+    get_patterns_for_category,
+    get_patterns_for_mode,
+    rotate_pattern,
+    save_pattern,
+)
 from rules import RULES, apply_rules_2d, find_patterns
 from session_storage import (
     DOCUMENT_VERSION,
@@ -273,6 +280,7 @@ flip_h = False
 flip_v = False
 pattern_menu_active = False
 pattern_scroll = 0
+pattern_menu_category: str | None = None
 mode_menu_active = False
 dimension_menu_active = False
 
@@ -1282,12 +1290,13 @@ def zoom(factor: float) -> None:
 
 
 def activate_pattern_menu() -> None:
-    global pattern_menu_active, pattern_scroll
+    global pattern_menu_active, pattern_scroll, pattern_menu_category
     if active_dimension != "2d":
         set_status("Saved 2D patterns are available in the 2D workspace.")
         return
     pattern_menu_active = True
     pattern_scroll = 0
+    pattern_menu_category = None
 
 
 def toggle_heatmap() -> None:
@@ -3240,28 +3249,97 @@ def available_patterns() -> dict[str, dict[str, Any]]:
     return get_patterns_for_mode(simulation_mode)
 
 
+def available_pattern_categories() -> tuple[tuple[str, str, int], ...]:
+    """Return ordered category labels and counts for the active mode."""
+    return get_pattern_categories_for_mode(simulation_mode)
+
+
+def pattern_menu_items() -> list[tuple[str, str, str, Any]]:
+    """Build rows for the category level or the selected category level."""
+    if pattern_menu_category is None:
+        items: list[tuple[str, str, str, Any]] = [
+            ("category", "all", "All Patterns", len(available_patterns()))
+        ]
+        items.extend(
+            ("category", key, label, count)
+            for key, label, count in available_pattern_categories()
+        )
+        return items
+
+    return [
+        ("pattern", key, pattern["name"], pattern)
+        for key, pattern in get_patterns_for_category(
+            simulation_mode,
+            pattern_menu_category,
+        ).items()
+    ]
+
+
+def pattern_category_label(category: str) -> str:
+    """Return a display label for a cached category key."""
+    if category == "all":
+        return "All Patterns"
+    for key, label, _ in available_pattern_categories():
+        if key == category:
+            return label
+    return category.replace("_", " ").title()
+
+
+def open_pattern_category(category: str) -> None:
+    """Enter one pattern submenu and reset its independent scroll position."""
+    global pattern_menu_category, pattern_scroll
+    get_patterns_for_category(simulation_mode, category)
+    pattern_menu_category = category
+    pattern_scroll = 0
+
+
+def return_to_pattern_categories() -> None:
+    """Return to the category level without closing the menu."""
+    global pattern_menu_category, pattern_scroll
+    pattern_menu_category = None
+    pattern_scroll = 0
+
+
+def _fit_pattern_menu_text(text: str, width: int) -> str:
+    """Ellipsize a pattern-menu label to the available width."""
+    if tiny_font.size(text)[0] <= width:
+        return text
+    ellipsis = "..."
+    shortened = text
+    while shortened and tiny_font.size(shortened + ellipsis)[0] > width:
+        shortened = shortened[:-1]
+    return shortened.rstrip() + ellipsis
+
+
 def draw_pattern_menu() -> None:
     if not pattern_menu_active:
         return
 
-    patterns = list(available_patterns().items())
+    items = pattern_menu_items()
     menu_x, menu_y, menu_height, visible_rows = pattern_menu_geometry()
-    visible = patterns[pattern_scroll : pattern_scroll + visible_rows]
+    visible = items[pattern_scroll : pattern_scroll + visible_rows]
     theme = THEMES[current_theme]
 
     surface = pygame.Surface((MENU_WIDTH, menu_height))
     surface.fill(theme["menu"])
     pygame.draw.rect(surface, theme["menu_text"], surface.get_rect(), 2)
     mode_name = MODE_BY_KEY[simulation_mode].name
+    if pattern_menu_category is None:
+        heading_text = f"{mode_name} Pattern Categories · Esc closes"
+    else:
+        heading_text = (
+            f"< Categories · {pattern_category_label(pattern_menu_category)}"
+            " · Backspace returns"
+        )
     heading = tiny_font.render(
-        f"{mode_name} Patterns · Esc closes",
+        _fit_pattern_menu_text(heading_text, MENU_WIDTH - 20),
         True,
         theme["menu_text"],
     )
     surface.blit(heading, (10, 8))
 
     mouse_x, mouse_y = pygame.mouse.get_pos()
-    for index, (_, pattern) in enumerate(visible):
+    for index, (kind, _, label, payload) in enumerate(visible):
         row_y = 32 + index * PATTERN_ROW_HEIGHT
         absolute_rect = pygame.Rect(
             menu_x,
@@ -3277,13 +3355,24 @@ def draw_pattern_menu() -> None:
             )
 
         number = index + 1
-        label = f"{number}. {pattern['name']}" if number <= 9 else pattern["name"]
+        if kind == "category":
+            row_label = f"{number}. {label} ({payload})  >"
+        else:
+            row_label = f"{number}. {label}" if number <= 9 else label
         surface.blit(
-            tiny_font.render(label, True, theme["menu_text"]),
+            tiny_font.render(
+                _fit_pattern_menu_text(row_label, MENU_WIDTH - 20),
+                True,
+                theme["menu_text"],
+            ),
             (10, row_y + 8),
         )
 
-    footer = f"{pattern_scroll + 1}-{pattern_scroll + len(visible)} / {len(patterns)}"
+    footer = (
+        f"{pattern_scroll + 1}-{pattern_scroll + len(visible)} / {len(items)}"
+        if items
+        else "0 / 0"
+    )
     surface.blit(
         tiny_font.render(footer, True, theme["menu_text"]),
         (MENU_WIDTH - 90, menu_height - 19),
@@ -4064,19 +4153,30 @@ def handle_pattern_menu_event(event: pygame.event.Event) -> bool:
     if not pattern_menu_active:
         return False
 
-    patterns = list(available_patterns().items())
+    items = pattern_menu_items()
     _, menu_y, _, visible_rows = pattern_menu_geometry()
-    max_scroll = max(0, len(patterns) - visible_rows)
+    max_scroll = max(0, len(items) - visible_rows)
+
+    def activate_item(item: tuple[str, str, str, Any]) -> None:
+        kind, key, _, payload = item
+        if kind == "category":
+            open_pattern_category(key)
+        else:
+            select_pattern(payload)
 
     if event.type == pygame.KEYDOWN:
         if event.key == pygame.K_ESCAPE:
             pattern_menu_active = False
             return True
+        if event.key in (pygame.K_BACKSPACE, pygame.K_LEFT):
+            if pattern_menu_category is not None:
+                return_to_pattern_categories()
+            return True
         if pygame.K_1 <= event.key <= pygame.K_9:
             relative_index = event.key - pygame.K_1
             absolute_index = pattern_scroll + relative_index
-            if relative_index < visible_rows and absolute_index < len(patterns):
-                select_pattern(patterns[absolute_index][1])
+            if relative_index < visible_rows and absolute_index < len(items):
+                activate_item(items[absolute_index])
             return True
 
     if event.type == pygame.MOUSEWHEEL:
@@ -4087,12 +4187,16 @@ def handle_pattern_menu_event(event: pygame.event.Event) -> bool:
         mouse_x, mouse_y = event.pos
         menu_x = WINDOW_WIDTH - MENU_WIDTH
         if menu_x <= mouse_x < WINDOW_WIDTH:
+            if menu_y <= mouse_y < menu_y + 32:
+                if pattern_menu_category is not None:
+                    return_to_pattern_categories()
+                return True
             relative_y = mouse_y - menu_y - 32
             if relative_y >= 0:
                 relative_index = relative_y // PATTERN_ROW_HEIGHT
                 absolute_index = pattern_scroll + relative_index
-                if relative_index < visible_rows and absolute_index < len(patterns):
-                    select_pattern(patterns[absolute_index][1])
+                if relative_index < visible_rows and absolute_index < len(items):
+                    activate_item(items[absolute_index])
             return True
 
     return True

@@ -81,7 +81,8 @@ satırı yine `import pygame` olarak kalır.
 | F | Seçili patterni yatay çevir |
 | V | Seçili patterni dikey çevir |
 | Esc | Pattern seçimini iptal et |
-| 1–9 | İlk hazır patternlerden birini seç |
+| 1–9 | Pattern menüsünde görünen kategori veya patterni seç; gridde ilk hazır patternlerden birini seç |
+| Backspace / Sol ok | Pattern alt menüsünden kategori listesine dön |
 | `[` / `]` | Zoom out / zoom in |
 
 ## Düzeltilen temel sorunlar
@@ -391,17 +392,25 @@ rahat koyu bir seçenek, `Paper` ise açık ve baskı benzeri bir arayüz sunar.
 
 ## Moda özel patternler
 
-`Show Patterns` yalnızca açık olan simülasyona uygun patternleri gösterir. Life-like
-modu klasik block, blinker, glider ve benzeri Life patternlerini; Immigration iki
-türün dağılımını koruyan renkli block, blinker ve glider örneklerini; Brian's Brain
-ateşlenen ve ölmekte olan durumları birlikte kullanan osilatör ve wickstretcher
-örneklerini gösterir. Langton patternleri siyah/beyaz hücrelere ek olarak karıncanın
-göreli konumunu ve yönünü de saklar.
+`Show Patterns` yalnızca açık olan simülasyona uygun patternleri gösterir. Menü önce
+modun kategori listesini, ardından seçilen kategorinin patternlerini açar. `All
+Patterns` bütün aktif katalog için düz listeyi korur; `Backspace`, sol ok veya başlığa
+tıklama kategori seviyesine döner. Kullanıcının kaydettiği örnekler otomatik `Custom
+Patterns` kategorisinde görünür. Hazır kataloglar mod başına en fazla 20 pattern ile
+sınırlıdır.
 
-Wireworld menüsünde hareket eden düz sinyal, ileri/ters diyot çifti ve clocked XOR
-devresi bulunur. Bu patternlerde iletken, elektron başı ve elektron kuyruğu ayrı
-durumlar olarak korunur. Pattern döndürme ve çevirme işlemleri çok durumlu hücreleri;
-Langton modunda ayrıca karıncanın konum ve yönünü dönüştürür.
+Life-like kataloğundaki mevcut 20 örnek korunur ve still life, oscillator, spaceship,
+methuselah ile gun/puffer başlıklarına ayrılır. Immigration kataloğu; üç sabit form,
+üç osilatör, iki spaceship ve iki uzun rekabet seed'i olmak üzere 10 iki-türlü örnek
+içerir. Brian's Brain, doğrulanmış period-3/period-4 osilatörleri, genişleyen dalga
+seed'ini ve iki wickstretcher'ı gösterir. Langton patternleri siyah/beyaz hücrelere ek
+olarak karıncanın göreli konumunu ve yönünü de saklar.
+
+Wireworld kataloğunda düz ve köşe sinyalleri, paralel bus, pulse collision, üç-yollu
+splitter, 12-tick clock loop, ileri/ters diyot çifti ve clocked XOR devresi bulunur.
+Bu patternlerde iletken, elektron başı ve elektron kuyruğu ayrı durumlar olarak
+korunur. Pattern döndürme ve çevirme işlemleri çok durumlu hücreleri; Langton modunda
+ayrıca karıncanın konum ve yönünü dönüştürür.
 
 Cyclic Automaton menüsü diagonal faz gradyanı, iç içe renk halkaları ve sekiz
 durumlu renk çarkı başlangıçlarını içerir. Bu modda renk `0` boşluk değil gerçek bir
