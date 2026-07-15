@@ -20,7 +20,8 @@ satırı yine `import pygame` olarak kalır.
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
 - Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
   kurallar için genelleştirilmiş 1D çalışma alanı
-- 3D için bozuk veya yarım bir moda geçmeden yol haritasını gösteren planlı alan
+- B6/S567 ve B5/S45 spatial Life kurallarıyla çalışan, X/Y/Z dilimleri düzenlenebilen
+  oynanabilir 3D volume çalışma alanı
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
@@ -62,7 +63,7 @@ satırı yine `import pygame` olarak kalır.
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
-| Ctrl + 0 | Sonlu 2D tahtanın tamamını pencereye sığdır |
+| Ctrl + 0 | Sonlu 2D tahtayı veya güncel 3D dilimi pencereye sığdır |
 | D | 1D / 2D / 3D boyut seçme panelini aç / kapat |
 | M | 2D çalışma alanında açıklamalı mod seçme panelini aç / kapat |
 | E | 1D çalışma alanında 0–255 rule kataloğunu aç / kapat |
@@ -84,6 +85,10 @@ satırı yine `import pygame` olarak kalır.
 | 1–9 | Pattern menüsünde görünen kategori veya patterni seç; gridde ilk hazır patternlerden birini seç |
 | Backspace / Sol ok | Pattern alt menüsünden kategori listesine dön |
 | `[` / `]` | Zoom out / zoom in |
+| Q | 3D çalışma alanında Z / Y / X dilim eksenini değiştir |
+| `,` / `.` | 3D çalışma alanında önceki / sonraki dilime git |
+| B | 3D çalışma alanında fixed / wrap / reflect sınırını değiştir |
+| K | 3D çalışma alanında 26 komşulu Moore / 6 komşulu face ailesini değiştir |
 
 ## Düzeltilen temel sorunlar
 
@@ -108,10 +113,12 @@ satırı yine `import pygame` olarak kalır.
 - `workspaces/base.py`: Ortak workspace controller/renderer sözleşmesi ve registry
 - `workspaces/elementary_1d.py`: 1D state, history, input, sidebar ve renderer
 - `workspaces/two_dimensional.py`: Altı mevcut 2D modu ortak workspace akışına bağlayan adaptör
+- `workspaces/three_dimensional.py`: 3D volume state, slice input, timeline, sidebar ve renderer
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
 - `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
 - `three_dimensional_ca.py`: Sınırlı uint8 volume, 3D komşuluk ve slice çekirdeği
+- `three_dimensional_rules.py`: Binary 3D Life-like kural tanımları ve toplu geçiş motoru
 - `surface_rasterizer.py`: NumPy/surfarray tabanlı ortak 2D state-plane çizicisi
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
@@ -148,15 +155,14 @@ viewport cache anahtarı, temel çizim, dinamik katmanlar, bilgi/istatistik barl
 modal çizimini üstlenir. Ana event loop seçili boyutun ayrıntılarını bilmeden bu
 ortak arayüzü çağırır.
 
-Genelleştirilmiş 1D CA kendi state/controller/renderer modülünde yaşar. Mevcut 2D modlar
-davranışları değiştirilmeden bir workspace adaptörüyle aynı akışa bağlanmıştır. Bu
-ayrım, ileride 3D workspace eklenirken ana event loop'a yeni boyut dalları ekleme
-zorunluluğunu ortadan kaldırır.
+Genelleştirilmiş 1D ve slice tabanlı 3D CA kendi state/controller/renderer modüllerinde
+yaşar. Mevcut 2D modlar davranışları değiştirilmeden bir workspace adaptörüyle aynı
+akışa bağlanmıştır. Ana event loop üç boyutta da aynı workspace sözleşmesini kullanır.
 
 ## UI'dan bağımsız 3D çekirdek
 
-Planlanan 3D workspace'in state katmanı `three_dimensional_ca.py` içinde Pygame'den
-bağımsızdır. `Volume3D`, hücreleri kanonik `(z, y, x)` / `(depth, rows, columns)`
+3D workspace'in state katmanı `three_dimensional_ca.py` içinde Pygame'den bağımsızdır.
+`Volume3D`, hücreleri kanonik `(z, y, x)` / `(depth, rows, columns)`
 sırasıyla C-contiguous NumPy `uint8` dizisinde tutar. İki ile 256 durum desteklenir;
 dışarı verilen volume ve sıfır-kopya slice görünümleri salt okunurdur. Hücre ve plane
 değişiklikleri state/shape doğrulaması yapan metotlardan geçer.
@@ -175,14 +181,22 @@ kontrol edilir. `extract_slice()` Z için `(rows, columns)`, Y için
 `(depth, columns)`, X için `(depth, rows)` düzlemi verir. Bu 2D `uint8` plane'ler
 doğrudan ortak `StateGridRasterizer` ile çizilebilir.
 
-Bu aşamada boyut seçicideki 3D kartı hâlâ `PLANNED` durumundadır ve deneysel
-`life3d.py` ana uygulamaya bağlanmamıştır. Sonraki adım, bu çekirdeği kullanan ayrı
-controller/renderer tabanlı 3D Workspace iskeletidir.
+Ana uygulamadaki 3D kartı bu çekirdeği kullanan ayrı bir controller/renderer açar.
+Varsayılan 24×32×32 binary volume, Carter Bays'in 26-komşulu B6/S567 kuralıyla başlar;
+B5/S45 alternatifi ve altı yüz komşulu deneysel B3/S23 seçeneği sidebar'dan
+değiştirilebilir. Kullanıcı X/Y/Z düzlemleri arasında gezebilir, görünür dilimde voxel
+çizip silebilir, fixed/wrap/reflect sınırlarını seçebilir, simülasyonu çalıştırabilir ve
+ortak timeline üzerinden geri/ileri gidebilir. Varsayılan iki Bays kuralının kaynağı:
+[Carter Bays, “A Note About the Discovery of Many New Rules for the Game of
+Three-Dimensional Life”](https://doi.org/10.25088/complexsystems.16.4.381).
+
+`life3d.py` önceki deneysel prototip olarak korunur; ana uygulamanın 3D state kaynağı
+değildir.
 
 ## Timeline ve gelişmiş geçmiş
 
-Viewport ile istatistik çubuğu arasındaki ortak timeline, 1D çalışma alanı ile altı
-2D modun tamamında aynı kontrolleri sunar. Tek oklar bir frame geri/ileri gider;
+Viewport ile istatistik çubuğu arasındaki ortak timeline, 1D ve 3D çalışma alanları ile
+altı 2D modun tamamında aynı kontrolleri sunar. Tek oklar bir frame geri/ileri gider;
 çift oklar kayıtlı geçmişi iki yönde oynatır, orta düğme oynatmayı durdurur. Çubuk
 sürüklenerek herhangi bir kronolojik frame'e gidilebilir. Dikey işaretler tam-state
 checkpoint'lerini gösterir. `J` veya `Go to gen`, timeline içinde bulunan kesin bir
@@ -192,8 +206,10 @@ bulunuyorsa en yeni kayıt seçilir.
 Geçmiş motoru her adımda bütün grid'i kopyalamaz. Periyodik checkpoint'ler arasında
 yalnızca değişen hücreler; 1D diyagramlarda ise eklenen/kısaltılan satırlar delta
 olarak tutulur. Bir checkpoint'e atlamak en yakın önceki checkpoint'ten sınırlı sayıda
-delta uygulayarak gerçekleştirilir. Varsayılan üst sınır workspace/mod başına 2000
-frame'dir. Kullanıcı geçmişteki bir frame'e dönüp düzenleme yaparsa yalnız o
+delta uygulayarak gerçekleştirilir. 1D/2D için varsayılan üst sınır workspace/mod
+başına 2000 frame'dir. 3D timeline, Python hücre nesneleri üretmek yerine C-order
+volume byte snapshot'ları kullanır ve bellek kontrolü için son 300 frame'i tutar.
+Kullanıcı geçmişteki bir frame'e dönüp düzenleme yaparsa yalnız o
 workspace'in ileri dalı atılır; diğer boyut ve 2D mod timeline'ları korunur.
 
 ## Bilimsel analiz paneli
@@ -210,7 +226,9 @@ imzasına karıncanın konumunu, yönünü ve aktifliğini; Cyclic Automaton ise
 ve threshold'u dahil eder. Böylece görsel yaş sayaçları veya farklı deney parametreleri
 yanlış değişim ve periyot sonucu üretmez. Clear, randomize, rule/threshold değişimi ya
 da aynı generation'da elle müdahale yeni bir ölçüm koşusu başlatır. Seriler mod ve
-workspace başına bağımsız tutulur ve en fazla 2000 örnek saklar.
+workspace başına bağımsız tutulur ve en fazla 2000 örnek saklar. 3D çalışma alanında
+population ve density bütün volume, değişim/periyot imzası da tüm voxel dizisi üzerinden
+hesaplanır.
 
 `1D Rule Comparison` sekmesi, seçili Elementary rule ile 30, 54, 90, 110 ve 184
 referans kurallarını arayüzü dondurmayan bir arka plan işinde karşılaştırır. Her rule
@@ -221,8 +239,9 @@ gösterir.
 
 ## Dışa aktarma
 
-Sağ menüdeki `Export Results` düğmesi veya `X`, aktif workspace'i duraklatıp güncel
-düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar:
+1D ve 2D sağ menülerindeki `Export Results` düğmesi veya `X`, aktif workspace'i
+duraklatıp güncel düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar. 3D volume
+export henüz etkin değildir; tam volume oturum JSON'u içinde güvenle saklanır.
 
 - `PNG Diagram`: 1D'de tüm space-time diyagramını, 2D'de güncel durum grid'ini
   kayıpsız ve nearest-neighbor ölçeklemeyle yazar.
@@ -231,7 +250,7 @@ düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar:
 - `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar.
 - `Generation Metrics CSV`: Population, density, normalize entropy, değişim oranı,
   algılanan periyot ve stabilizasyon generation'ını UTF-8 CSV olarak verir.
-- `Shareable Experiment JSON`: Bütün 1D/2D durumlarını taşıyan yüklenebilir session
+- `Shareable Experiment JSON`: Bütün 1D/2D/3D durumlarını taşıyan yüklenebilir session
   belgesine aktif timeline ve bilimsel ölçüm metadatasını ekler.
 
 Kodlama işlemleri Pygame event thread'i dışında sırayla çalışır; tamamlanma veya hata
@@ -258,8 +277,8 @@ bağlamsal menü davranışını; workspace registry/controller/renderer sözle�
 checkpoint/delta round-trip, timeline dallanması, ileri/geri gezinme ve sürükleme davranışını;
 bilimsel metrikleri, periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
 PNG/GIF/MP4 raster kodlamayı, CSV/JSON güvenliğini ve export menü entegrasyonunu;
-oturum/profile güvenliğini ve tam-state round-trip davranışını; altı 2D mod ile 1D
-alanın SDL dummy video driver ile başlangıcını kapsar.
+oturum/profile güvenliğini ve tam-state round-trip davranışını; 3D volume/rule/slice
+çekirdeğini ve üç workspace'in SDL dummy video driver ile başlangıcını kapsar.
 
 ## Tam oturum kaydetme ve yükleme
 
@@ -269,9 +288,10 @@ kontrollü olarak yazar; `Quick Load` / `Ctrl+O` aynı kurtarma noktasını yük
 İsimlendirilmiş oturumlar ayrıca kaydedilebilir ve yöneticideki katalogdan seçilebilir.
 
 Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünüm
-seçenekleri, 1D/2D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
-generation değerleri, Life rule'u, moda özel fırçalar ve 1D alanının rule family/spec,
-boundary, seed, tam diyagram, second-order hafıza ve karşılaştırma durumunu içerir. Yükleme simülasyonu
+seçenekleri, 1D/2D/3D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
+generation değerleri, Life rule'u, moda özel fırçalar, 1D alanının rule family/spec,
+boundary, seed, tam diyagram, second-order hafıza ve karşılaştırma durumu ile 3D
+volume'un hücreleri, kuralı, sınırı ve seçili dilimini içerir. Yükleme simülasyonu
 güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
 başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
@@ -303,8 +323,8 @@ yüzeye aktarılır. Ölçeklenmiş scratch yüzeyleri yeniden kullanıldığı 
 başına `pygame.draw.rect` çağrısı ve frame başına gereksiz yüzey tahsisi yapılmaz.
 Toplu yol 4.096 veya daha fazla görünür hücrede otomatik seçilir; küçük veya
 yarım-hücre hizalı özel diyagramlarda eski çizim yolu güvenli fallback olarak
-korunur. Aynı raster katmanı ileride 3D workspace slice görünümünde de
-kullanılabilecek şekilde workspace'ten bağımsızdır.
+korunur. Aynı raster katmanı 3D workspace'in X/Y/Z slice görünümlerini de hücre başına
+surface oluşturmadan toplu çizer.
 
 Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
 [`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.
@@ -313,9 +333,8 @@ Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonr
 
 `D` tuşu veya sağ menüdeki `Select Dimension` düğmesi üç üst seviye çalışma alanını
 gösterir. `1D`, Wolfram'ın genel 1D cellular automata alanını; `2D`, mevcut altı modu
-açar. `3D` kartı şimdilik `PLANNED` durumundadır: kullanıcıya projenin yönünü gösterir
-fakat seçildiğinde çalışan alanı değiştirmez. 1D ve 2D durumları arasında geçiş yapmak
-gridleri ve geçmişleri sıfırlamaz.
+açar; `3D` ise oynanabilir spatial Life volume'unu açar. Boyutlar arasında geçiş
+yapmak gridleri, volume'u ve geçmişleri sıfırlamaz.
 
 Elementary CA, iki hücre durumu ve sol/merkez/sağ üçlüsünden oluşan sekiz olası
 komşuluk kullanır. 0–255 kural numarası, `111` ile `000` arasındaki bu komşulukların
