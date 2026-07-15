@@ -1,4 +1,5 @@
 import unittest
+from copy import deepcopy
 
 from brians_brain import apply_brain_rules
 from cyclic_automaton import apply_cyclic_rules
@@ -89,6 +90,98 @@ class BuiltinModePatternBehaviorTests(unittest.TestCase):
         for _ in range(12):
             generation = apply_wireworld_rules(generation)
         self.assertEqual(generation, initial)
+
+    def test_classic_diode_passes_forward_and_blocks_reverse(self) -> None:
+        generation = MODE_PATTERNS["wireworld_classic_diode"]["pattern"]
+        for _ in range(8):
+            generation = apply_wireworld_rules(generation)
+
+        self.assertEqual(generation[1][16], ELECTRON_HEAD)
+        self.assertFalse(
+            any(
+                generation[row][col] == ELECTRON_HEAD
+                for row in (4, 5, 6)
+                for col in range(10, len(generation[0]))
+            )
+        )
+
+    def test_classic_or_gate_accepts_either_or_both_inputs(self) -> None:
+        initial = MODE_PATTERNS["wireworld_classic_or"]["pattern"]
+        both_inputs = deepcopy(initial)
+        both_inputs[4][2:4] = [2, 1]
+
+        for case in (initial, both_inputs):
+            with self.subTest(inputs="both" if case is both_inputs else "one"):
+                generation = case
+                for _ in range(10):
+                    generation = apply_wireworld_rules(generation)
+                self.assertEqual(generation[2][13], ELECTRON_HEAD)
+
+    def test_classic_xor_gate_cancels_simultaneous_inputs(self) -> None:
+        one_input = MODE_PATTERNS["wireworld_classic_xor"]["pattern"]
+        both_inputs = deepcopy(one_input)
+        both_inputs[6][2:4] = [2, 1]
+
+        one_output = one_input
+        both_output = both_inputs
+        for _ in range(10):
+            one_output = apply_wireworld_rules(one_output)
+            both_output = apply_wireworld_rules(both_output)
+
+        self.assertEqual(one_output[3][13], ELECTRON_HEAD)
+        self.assertFalse(
+            any(cell == ELECTRON_HEAD for cell in both_output[3][11:])
+        )
+
+    def test_classic_and_not_gate_matches_truth_cases(self) -> None:
+        source = MODE_PATTERNS["wireworld_classic_and_not"]["pattern"]
+        a_only = deepcopy(source)
+        a_only[0][2:4] = [3, 3]
+        a_only[6][0:2] = [2, 1]
+        both_inputs = deepcopy(source)
+        both_inputs[6][0:2] = [2, 1]
+
+        for _ in range(10):
+            a_only = apply_wireworld_rules(a_only)
+            both_inputs = apply_wireworld_rules(both_inputs)
+
+        self.assertEqual(a_only[4][11], ELECTRON_HEAD)
+        self.assertFalse(
+            any(cell == ELECTRON_HEAD for cell in both_inputs[4][10:])
+        )
+
+    def test_clocked_and_gate_repeats_every_ten_ticks(self) -> None:
+        initial = MODE_PATTERNS["wireworld_classic_and"]["pattern"]
+        generation = initial
+        for _ in range(10):
+            generation = apply_wireworld_rules(generation)
+        self.assertEqual(generation, initial)
+
+    def test_flip_flop_keeps_a_circulating_state(self) -> None:
+        generation = MODE_PATTERNS["wireworld_classic_flip_flop"]["pattern"]
+        for _ in range(6):
+            generation = apply_wireworld_rules(generation)
+        for _ in range(24):
+            generation = apply_wireworld_rules(generation)
+            self.assertTrue(
+                any(
+                    generation[row][col] == ELECTRON_HEAD
+                    for row in range(2, 7)
+                    for col in range(11, 17)
+                )
+            )
+
+    def test_binary_adder_outputs_three_plus_six_as_nine(self) -> None:
+        generation = MODE_PATTERNS["wireworld_classic_binary_adder"]["pattern"]
+        for _ in range(47):
+            generation = apply_wireworld_rules(generation)
+
+        output_heads = [
+            col
+            for col in range(42, 61)
+            if generation[3][col] == ELECTRON_HEAD
+        ]
+        self.assertEqual(output_heads, [42, 60])
 
     def test_wireworld_head_on_pulses_cancel(self) -> None:
         generation = MODE_PATTERNS["wireworld_collision"]["pattern"]

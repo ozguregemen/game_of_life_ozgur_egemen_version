@@ -91,7 +91,7 @@ class PatternStorageTests(unittest.TestCase):
             "immigration": 10,
             "brians_brain": 5,
             "langtons_ant": 3,
-            "wireworld": 8,
+            "wireworld": 15,
             "cyclic_automaton": 3,
         }
         for mode, expected in expected_sizes.items():
@@ -105,6 +105,12 @@ class PatternStorageTests(unittest.TestCase):
                 self.assertTrue(
                     all(pattern["category"] != "custom" for pattern in catalog.values())
                 )
+
+    def test_every_wireworld_catalog_pattern_fits_the_finite_board(self) -> None:
+        for pattern in patterns.get_patterns_for_mode("wireworld").values():
+            with self.subTest(pattern=pattern["name"]):
+                self.assertLessEqual(len(pattern["pattern"]), 48)
+                self.assertLessEqual(len(pattern["pattern"][0]), 72)
 
     def test_mode_categories_are_cached_and_cover_every_pattern(self) -> None:
         categories = patterns.get_pattern_categories_for_mode("life")
