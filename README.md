@@ -36,10 +36,13 @@ satırı yine `import pygame` olarak kalır.
 - Population, density, entropy ve değişim oranı zaman serilerini gösteren bilimsel panel
 - Periyot/stabilizasyon algılama ve ortak koşullarda 1D Wolfram rule karşılaştırması
 - 1D space-time PNG, 2D grid PNG, timeline GIF/MP4, ölçüm CSV ve deney JSON dışa aktarma
+- Katlanabilir sidebar, tooltip, bağlamsal F1 yardımı ve belirgin run/pause/araç rozetleri
+- Aranabilir/favorilenebilir Elementary rule kataloğu ve son kullanılan deneyler
+- Durumları yalnız renkle anlatmayan, renk körlüğüne uygun yüksek kontrastlı tema
 - Her oyun moduna özel, durumları koruyan hazır ve kullanıcı patternleri
 - Pattern döndürme, yatay/dikey çevirme ve yerleştirme önizlemesi
 - Otomatik pattern recognition
-- Classic, Neon ve Pastel temaları
+- Classic, Neon, Pastel ve renk-körü güvenli Colorblind temaları
 - Zoom, pan, koordinat ve quadrant görünümü
 - Yeniden boyutlandırıldığında simülasyonu koruyan sabit mantıksal grid
 - Tüm boyutları, modları ve kamera konumlarını içeren sürümlü JSON oturumları
@@ -53,7 +56,8 @@ satırı yine `import pygame` olarak kalır.
 | Sağ tık/sürükle | Hücre sil |
 | Orta tuş/sürükle | Görünümü taşı |
 | Fare tekerleği | Zoom |
-| Space | Başlat / durdur |
+| Space veya üstteki RUN/PAUSE rozeti | Başlat / durdur |
+| F1 veya `?` | Bağlamsal klavye ve etkileşim yardımını aç / kapat |
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
@@ -119,6 +123,8 @@ satırı yine `import pygame` olarak kalır.
 - `timeline_ui.py`: Sürüklenebilir ortak timeline, ileri/geri oynatma ve checkpoint göstergeleri
 - `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
 - `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
+- `help_ui.py`: F1 / `?` ile açılan bağlamsal kısayol ve etkileşim yardım paneli
+- `ui_preferences.py`: Rule favorileri ve son kullanılan deneyler için yerel tercihler
 - `exporting.py`: Güvenli raster, GIF/MP4, CSV/JSON kodlama ve arka plan export motoru
 - `experiment_exports.py`: Workspace snapshot'larını bağlamsal çıktı formatlarına dönüştüren coordinator
 - `export_ui.py`: Aktif workspace'e göre değişen dışa aktarma paneli
@@ -334,6 +340,31 @@ Cyclic Automaton'da renk fırçası ve temas eşiği
 gösterilir. Seçili tür veya fırça renkli çerçeveyle belirtilir. Ortak temizleme,
 randomize, geri alma, pattern, tema ve görünüm kontrolleri her modda erişilebilir
 kalır.
+
+### Arayüz erişilebilirliği ve gezinme
+
+Sidebar kontrolleri `Workspace`, `Mode & Active Tool` / `Rule & Comparison`,
+`Experiment` / `Seed & Boundary` ve `View` başlıkları altında toplanır. Başlığa
+tıklamak bölümü açar veya kapatır; seçim aynı uygulama çalışması boyunca korunur.
+Bir kontrolün üzerinde kısa süre beklemek, işlevi ve etkisini açıklayan tooltip'i
+gösterir. `F1` veya `?`, aktif dimension ve moda göre değişen klavye/etkileşim yardım
+panelini açar; `Esc`, `F1` veya `?` paneli kapatır.
+
+Üst bilgi çubuğundaki yüksek kontrastlı `RUNNING` / `PAUSED` rozeti yalnız renge
+dayanmaz; simge ve metin de kullanır. Rozete tıklamak Space ile aynı run/pause
+komutunu çalıştırır. Sağındaki `TOOL` rozeti aktif species, Wireworld state'i,
+Cyclic state'i, 1D fırça state'i veya seçili pattern adını sürekli görünür tutar.
+
+Elementary rule kataloğunda sayı yazmak sonuçları anında filtreler; tam sayı ve
+`Enter` doğrudan seçer. Bir karta sağ tıklamak rule'u favorilere ekler/çıkarır,
+`F` yalnız favorileri gösterir. Favoriler yerel tercih dosyasında saklanır.
+`Session & Profiles` giriş ekranı ayrıca en son kullanılan session ve 1D profillerini
+tek tıklamayla yeniden açılabilen `Recent` satırları olarak gösterir.
+
+`Colorblind` teması Okabe–Ito tabanlı ayrıştırılabilir renkleri yüksek kontrast ve
+metinsel state etiketleriyle birlikte kullanır. Life, Immigration, Brian's Brain,
+Wireworld, Cyclic ve çok durumlu 1D görünümleri ile dışa aktarma paletleri bu temaya
+uyum sağlar. Tema, diğer temalar gibi sidebar'daki `Theme` düğmesiyle seçilir.
 
 ## Moda özel patternler
 
