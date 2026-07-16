@@ -8,6 +8,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame
 
 from themes import Menu
+from three_dimensional_patterns import BAYS_5766_GLIDER
 from workspaces.three_dimensional import (
     THREE_D_RENDER_KEY,
     ThreeDimensionalWorkspaceController,
@@ -146,7 +147,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         services = replace(
             self.controller.services,
             hardware_3d=lambda: True,
-            render_volume=lambda volume, _camera, _viewport, _revision, selected: (
+            render_volume=lambda volume, _camera, _viewport, _revision, _settings, selected: (
                 rendered.append((volume, selected)) or True
             ),
         )
@@ -163,6 +164,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         labels = [entry["button"].text for entry in menu.buttons]
         self.assertIn("Fit Full Volume (Ctrl+0)", labels)
         self.assertFalse(any(label.startswith("Axis:") for label in labels))
+        self.assertTrue(any(label.startswith("Display:") for label in labels))
 
         center = self.viewport.center
         initial_yaw = controller.state.camera.yaw
@@ -194,6 +196,36 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
             pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=center)
         )
         self.assertEqual(int((controller.state.volume.cells != 0).sum()), before - 1)
+
+    def test_view_filters_and_documented_glider_are_session_persistent(self) -> None:
+        hardware_services = replace(
+            self.controller.services,
+            hardware_3d=lambda: True,
+        )
+        controller = ThreeDimensionalWorkspaceController(
+            hardware_services,
+            ThreeDimensionalWorkspaceState(),
+        )
+        controller.seed_pattern(BAYS_5766_GLIDER)
+        self.assertEqual(controller.state.rule_key, "bays_5766")
+        self.assertEqual(controller.state.volume.boundary, "wrap")
+        self.assertEqual(int((controller.state.volume.cells != 0).sum()), 10)
+
+        controller.cycle_view_mode()
+        controller.cycle_axis()
+        controller.move_slice(2)
+        controller.toggle_clip_side()
+        controller.cycle_opacity()
+        snapshot = controller.snapshot()
+
+        restored = ThreeDimensionalWorkspaceController(
+            hardware_services,
+            ThreeDimensionalWorkspaceState(),
+        )
+        restored.restore(snapshot)
+        self.assertEqual(restored.snapshot(), snapshot)
+        self.assertEqual(restored.render_settings().mode, "clip")
+        self.assertEqual(restored.render_settings().opacity, 0.65)
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ from three_dimensional_ca import (
     SLICE_AXES,
     Volume3D,
 )
+from three_dimensional_patterns import BAYS_5766_GLIDER, Pattern3D
 from three_dimensional_rules import (
     DEFAULT_RULE_3D,
     FACE_LIFE,
@@ -30,7 +31,13 @@ from three_dimensional_rules import (
     RULES_3D,
     step_life_like_3d,
 )
-from three_dimensional_rendering import OrbitCamera3D, pick_voxel
+from three_dimensional_rendering import (
+    FILTER_MODES,
+    OrbitCamera3D,
+    VoxelRenderSettings,
+    pick_voxel,
+    voxel_is_visible,
+)
 from timeline_history import TimelineBinding, TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
 
@@ -39,6 +46,12 @@ DEFAULT_VOLUME_SHAPE = (24, 32, 32)
 THREE_D_MIN_CELL_SIZE = 2
 THREE_D_MAX_CELL_SIZE = 24
 THREE_D_TIMELINE_FRAMES = 300
+THREE_D_OPACITIES = (1.0, 0.65, 0.35)
+THREE_D_VIEW_LABELS = {
+    "all": "Full Volume",
+    "clip": "Clipping Plane",
+    "layer": "Single Layer",
+}
 
 
 def _new_default_volume() -> Volume3D:
@@ -71,6 +84,9 @@ class ThreeDimensionalWorkspaceState:
     pointer_button: int = 0
     pointer_origin: tuple[int, int] | None = None
     pointer_dragged: bool = False
+    view_mode: str = "all"
+    clip_keep_lower: bool = True
+    voxel_opacity: float = 1.0
     brush_state: int = 1
     drawing: bool = False
     drawing_value: int = 1
@@ -112,9 +128,16 @@ class ThreeDimensionalWorkspaceServices:
     reset_analysis: Callable[[StateObservation], None]
     hardware_3d: Callable[[], bool] = lambda: False
     render_volume: Callable[
-        [Volume3D, OrbitCamera3D, pygame.Rect, int, tuple[int, int, int] | None],
+        [
+            Volume3D,
+            OrbitCamera3D,
+            pygame.Rect,
+            int,
+            VoxelRenderSettings,
+            tuple[int, int, int] | None,
+        ],
         bool,
-    ] = lambda _volume, _camera, _viewport, _revision, _selected: False
+    ] = lambda _volume, _camera, _viewport, _revision, _settings, _selected: False
 
 
 class ThreeDimensionalWorkspaceController(WorkspaceController):
@@ -365,6 +388,34 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self._replace_initial_cells(cells, "Centered seven-voxel 3D seed created.")
         self.center_view()
 
+    def seed_pattern(self, pattern: Pattern3D) -> None:
+        """Load a documented rule-compatible pattern as one history change."""
+        cells = pattern.centered_cells(self.state.volume.shape)
+        if (
+            self.state.rule_key == pattern.rule_key
+            and self.state.volume.boundary == pattern.boundary
+            and np.array_equal(cells, self.state.volume.cells)
+            and self.state.generation == 0
+        ):
+            self._status(f"{pattern.name} is already loaded.")
+            return
+        self.save_history()
+        rule = RULES_3D[pattern.rule_key]
+        self.state.rule_key = rule.key
+        self.state.volume.neighborhood = rule.neighborhood
+        self.state.volume.boundary = pattern.boundary
+        self.state.volume.replace_cells(cells)
+        self.state.generation = 0
+        self.state.slice_axis = AXIS_Z
+        self.state.slice_index = self.slice_count() // 2
+        self.state.view_mode = "all"
+        self.services.set_running(False)
+        self._invalidate()
+        self.sync_history()
+        self.center_view()
+        self.services.rebuild_sidebar()
+        self._status(f"Loaded {pattern.name}: {pattern.description}", 5.0)
+
     def set_rule(self, rule_key: str) -> None:
         rule = RULES_3D[rule_key]
         if rule.key == self.state.rule_key:
@@ -402,9 +453,10 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         index = SLICE_AXES.index(self.state.slice_axis)
         self.state.slice_axis = SLICE_AXES[(index + 1) % len(SLICE_AXES)]
         self.state.slice_index = self.slice_count() // 2
-        self.center_view()
+        if not self.services.hardware_3d():
+            self.center_view()
         self.services.rebuild_sidebar()
-        self._status(f"Viewing {self.state.slice_axis.upper()}-axis slices.")
+        self._status(f"3D filter axis: {self.state.slice_axis.upper()}.")
 
     def move_slice(self, amount: int) -> None:
         target = max(0, min(self.slice_count() - 1, self.state.slice_index + amount))
@@ -412,8 +464,42 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self._status("Already at the outermost slice.")
             return
         self.state.slice_index = target
-        self._invalidate()
+        if not self.services.hardware_3d():
+            self._invalidate()
         self.services.rebuild_sidebar()
+
+    def cycle_view_mode(self) -> None:
+        index = FILTER_MODES.index(self.state.view_mode)
+        self.state.view_mode = FILTER_MODES[(index + 1) % len(FILTER_MODES)]
+        self.state.selected_voxel = None
+        self.services.rebuild_sidebar()
+        self._status(f"3D display: {THREE_D_VIEW_LABELS[self.state.view_mode]}.")
+
+    def toggle_clip_side(self) -> None:
+        self.state.clip_keep_lower = not self.state.clip_keep_lower
+        self.services.rebuild_sidebar()
+        relation = "0 to plane" if self.state.clip_keep_lower else "plane to maximum"
+        self._status(f"Clipping keeps layers from {relation}.")
+
+    def cycle_opacity(self) -> None:
+        try:
+            index = THREE_D_OPACITIES.index(self.state.voxel_opacity)
+        except ValueError:
+            index = 0
+        self.state.voxel_opacity = THREE_D_OPACITIES[
+            (index + 1) % len(THREE_D_OPACITIES)
+        ]
+        self.services.rebuild_sidebar()
+        self._status(f"Voxel opacity: {self.state.voxel_opacity:.0%}.")
+
+    def render_settings(self) -> VoxelRenderSettings:
+        return VoxelRenderSettings(
+            mode=self.state.view_mode,
+            axis=self.state.slice_axis,
+            layer=self.state.slice_index,
+            keep_lower=self.state.clip_keep_lower,
+            opacity=self.state.voxel_opacity,
+        )
 
     def toggle_running(self) -> None:
         running = not self.services.is_running()
@@ -462,6 +548,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 "index": self.state.slice_index,
             },
             "camera": self.state.camera.as_dict(),
+            "view": {
+                "mode": self.state.view_mode,
+                "keep_lower": self.state.clip_keep_lower,
+                "opacity": self.state.voxel_opacity,
+            },
         }
 
     def restore(self, snapshot: Mapping[str, Any]) -> None:
@@ -480,12 +571,26 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         if axis not in SLICE_AXES or not 0 <= index < volume.shape[SLICE_AXES.index(axis)]:
             raise ValueError("3D session slice is outside the saved volume.")
         camera = snapshot["camera"]
+        view_state = snapshot.get(
+            "view",
+            {"mode": "all", "keep_lower": True, "opacity": 1.0},
+        )
+        render_settings = VoxelRenderSettings(
+            mode=str(view_state["mode"]),
+            axis=axis,
+            layer=index,
+            keep_lower=view_state["keep_lower"],
+            opacity=float(view_state["opacity"]),
+        )
 
         self.state.volume = volume
         self.state.rule_key = rule.key
         self.state.generation = int(snapshot["generation"])
         self.state.slice_axis = axis
         self.state.slice_index = index
+        self.state.view_mode = render_settings.mode
+        self.state.clip_keep_lower = render_settings.keep_lower
+        self.state.voxel_opacity = render_settings.opacity
         if "target" in camera:
             self.state.camera = OrbitCamera3D.from_mapping(camera)
         else:
@@ -549,6 +654,12 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.cycle_boundary()
         elif event.key == pygame.K_k:
             self.cycle_neighborhood()
+        elif event.key == pygame.K_l:
+            self.cycle_view_mode()
+        elif event.key == pygame.K_o:
+            self.cycle_opacity()
+        elif event.key == pygame.K_SLASH:
+            self.toggle_clip_side()
         elif event.key == pygame.K_t:
             self._status("The current 3D Life workspace is binary: draw alive or erase.")
         elif event.key == pygame.K_m:
@@ -570,7 +681,12 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             position,
             (viewport.x, viewport.y, viewport.width, viewport.height),
         )
-        return pick_voxel(self.state.volume, origin, direction)
+        return pick_voxel(
+            self.state.volume,
+            origin,
+            direction,
+            self.render_settings(),
+        )
 
     def _handle_voxel_pointer_event(self, event: pygame.event.Event) -> bool:
         viewport = self.services.viewport()
@@ -619,6 +735,10 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                     )
                 elif result.adjacent is None:
                     self._status("That voxel is on the camera-facing volume boundary.")
+                elif not voxel_is_visible(result.adjacent, self.render_settings()):
+                    self._status(
+                        "The adjacent cell is outside the visible layer filter."
+                    )
                 else:
                     self.state.stroke_history_pending = False
                     changed = self.draw_cell(result.adjacent, 1)
@@ -717,6 +837,15 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.cycle_boundary,
         )
         menu.add_button("Centered Seed", self.seed_cluster)
+        menu.add_button(
+            "Bays 5766 Glider",
+            lambda: self.seed_pattern(BAYS_5766_GLIDER),
+            accent=(245, 185, 70),
+            tooltip=(
+                "Load Carter Bays' documented ten-voxel, period-four glider "
+                "and select its B6/S567 rule."
+            ),
+        )
         menu.add_button("Randomize Volume", lambda: self.randomize(0.18))
         menu.add_button("Clear Volume", self.clear)
 
@@ -731,6 +860,42 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             f"Theme: {self.services.theme_name().title()}",
             self.services.cycle_theme,
         )
+
+        if self.services.hardware_3d():
+            menu.begin_section(
+                "3d_inspection",
+                "Volume Inspection",
+                tooltip="Clip the volume, isolate one layer, or reveal interior voxels.",
+            )
+            menu.add_button(
+                f"Display: {THREE_D_VIEW_LABELS[self.state.view_mode]} (L)",
+                self.cycle_view_mode,
+                accent=accent,
+                active=self.state.view_mode != "all",
+            )
+            menu.add_button(
+                f"Filter Axis: {self.state.slice_axis.upper()} (Q)",
+                self.cycle_axis,
+            )
+            menu.add_button(
+                f"Plane - ({self.state.slice_index + 1}/{self.slice_count()})",
+                lambda: self.move_slice(-1),
+            )
+            menu.add_button(
+                f"Plane + ({self.state.slice_index + 1}/{self.slice_count()})",
+                lambda: self.move_slice(1),
+            )
+            if self.state.view_mode == "clip":
+                relation = "≤" if self.state.clip_keep_lower else "≥"
+                menu.add_button(
+                    f"Keep Layers: {relation} Plane (/)",
+                    self.toggle_clip_side,
+                )
+            menu.add_button(
+                f"Voxel Opacity: {self.state.voxel_opacity:.0%} (O)",
+                self.cycle_opacity,
+                active=self.state.voxel_opacity < 1.0,
+            )
 
         if not self.services.hardware_3d():
             menu.begin_section(
@@ -797,6 +962,9 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             state.camera.yaw,
             state.camera.pitch,
             state.camera.distance,
+            state.view_mode,
+            state.clip_keep_lower,
+            state.voxel_opacity,
             self.services.theme_name(),
             self.services.show_grid(),
         )
@@ -811,6 +979,7 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
                 self.controller.state.camera,
                 viewport,
                 self.services.render_revision(THREE_D_RENDER_KEY),
+                self.controller.render_settings(),
                 self.controller.state.selected_voxel,
             )
             return
@@ -885,10 +1054,16 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
         history = self.controller.history_status()
         shape = state.volume.shape
         if self.services.hardware_3d():
+            filter_label = THREE_D_VIEW_LABELS[state.view_mode]
+            if state.view_mode != "all":
+                filter_label += (
+                    f" {state.slice_axis.upper()}:{state.slice_index + 1}"
+                )
             first_line = (
                 f"Live voxels: {stats['alive']}/{state.volume.cell_count}   "
                 f"Density: {stats['density']:.2f}%   "
                 f"Volume: {shape[2]}×{shape[1]}×{shape[0]}   "
+                f"View: {filter_label} @ {state.voxel_opacity:.0%}   "
                 f"Timeline: {history.cursor + 1}/{history.frame_count}"
             )
             second_line = (

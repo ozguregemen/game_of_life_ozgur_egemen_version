@@ -3850,6 +3850,10 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
             ("Middle drag", "Pan the camera target"),
             ("Left click", "Add a voxel beside the highlighted voxel"),
             ("Right click", "Erase the highlighted voxel"),
+            ("L", "Cycle full volume, clipping plane, and single-layer views"),
+            ("Q / , / .", "Change filter axis or move its layer plane"),
+            ("/", "Reverse which side of the clipping plane stays visible"),
+            ("O", "Cycle solid, 65%, and 35% voxel opacity"),
             ("B", "Cycle fixed, wrapped, and reflected boundaries"),
             ("K", "Switch between 26-neighbor and six-face rule families"),
             ("Ctrl+0 / C", "Fit or reset the complete volume view"),
@@ -4643,7 +4647,7 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
     record_analysis=analysis_registry.observe,
     reset_analysis=analysis_registry.reset,
     hardware_3d=lambda: display_backend.is_opengl,
-    render_volume=lambda volume, camera, viewport, revision, selected: (
+    render_volume=lambda volume, camera, viewport, revision, settings, selected: (
         display_backend.render_volume(
             volume,
             camera,
@@ -4652,6 +4656,7 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
             alive_color=THEMES[current_theme]["cell"],
             accent_color=DIMENSION_BY_KEY["3d"].accent,
             selected=selected,
+            settings=settings,
         )
     ),
 )

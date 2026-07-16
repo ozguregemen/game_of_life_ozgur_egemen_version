@@ -224,6 +224,27 @@ class SessionStorageTests(unittest.TestCase):
         ):
             session_storage.validate_session_document(document)
 
+    def test_legacy_3d_session_gets_default_volume_view(self) -> None:
+        document = self.valid_session("Legacy 3D View")
+        document["workspaces"]["3d"].pop("view")
+
+        normalized = session_storage.validate_session_document(document)
+
+        self.assertEqual(
+            normalized["workspaces"]["3d"]["view"],
+            {"mode": "all", "keep_lower": True, "opacity": 1.0},
+        )
+
+    def test_invalid_3d_view_opacity_is_rejected(self) -> None:
+        document = self.valid_session("Invalid 3D Opacity")
+        document["workspaces"]["3d"]["view"]["opacity"] = 1.5
+
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "opacity",
+        ):
+            session_storage.validate_session_document(document)
+
 
 if __name__ == "__main__":
     unittest.main()

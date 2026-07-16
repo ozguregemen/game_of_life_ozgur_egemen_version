@@ -6,9 +6,11 @@ import numpy as np
 from three_dimensional_ca import Volume3D
 from three_dimensional_rendering import (
     OrbitCamera3D,
+    VoxelRenderSettings,
     look_at_matrix,
     perspective_matrix,
     pick_voxel,
+    voxel_is_visible,
     volume_position_to_world,
     voxel_instance_data,
 )
@@ -59,6 +61,20 @@ class Camera3DTests(unittest.TestCase):
 
 
 class VoxelGeometryTests(unittest.TestCase):
+    def test_render_settings_validate_filter_and_opacity(self) -> None:
+        settings = VoxelRenderSettings(
+            mode="clip",
+            axis="y",
+            layer=4,
+            keep_lower=False,
+            opacity=0.65,
+        )
+        self.assertEqual(settings.axis, "y")
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(mode="unknown")
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(opacity=0.0)
+
     def test_instance_data_centers_volume_and_keeps_states(self) -> None:
         volume = Volume3D.empty((3, 5, 7), state_count=3)
         volume.set_cell((1, 2, 3), 2)
@@ -97,6 +113,21 @@ class VoxelGeometryTests(unittest.TestCase):
         self.assertEqual(boundary.hit, (2, 1, 1))
         self.assertIsNone(boundary.adjacent)
         self.assertIsNone(miss)
+
+    def test_layer_filter_hides_voxels_from_ray_picking_too(self) -> None:
+        volume = Volume3D.empty((3, 3, 3))
+        volume.set_cell((2, 1, 1), 1)
+        volume.set_cell((1, 1, 1), 1)
+        settings = VoxelRenderSettings(mode="layer", axis="z", layer=1)
+
+        result = pick_voxel(volume, (0, 0, 10), (0, 0, -1), settings)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.hit, (1, 1, 1))
+        self.assertIsNone(result.adjacent)
+        self.assertFalse(voxel_is_visible((2, 1, 1), settings))
+        self.assertTrue(voxel_is_visible((1, 1, 1), settings))
 
 
 if __name__ == "__main__":

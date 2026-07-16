@@ -34,6 +34,7 @@ SESSION_SCHEMA = "cellular-automata-lab/session"
 PROFILE_SCHEMA = "cellular-automata-lab/elementary-profile"
 DOCUMENT_VERSION = 1
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
+VIEW_MODES_3D = ("all", "clip", "layer")
 
 SESSION_DIRECTORY = Path(__file__).resolve().with_name("sessions")
 PROFILE_DIRECTORY = SESSION_DIRECTORY / "eca_profiles"
@@ -678,6 +679,7 @@ def _default_3d_workspace() -> dict[str, Any]:
         "generation": 0,
         "slice": {"axis": "z", "index": depth // 2},
         "camera": _default_3d_orbit_camera((depth, rows, columns)),
+        "view": {"mode": "all", "keep_lower": True, "opacity": 1.0},
     }
 
 
@@ -786,12 +788,28 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
         cells.append(normalized_plane)
 
     slice_state = _mapping(workspace.get("slice"), "workspaces.3d.slice")
+    view_state = _mapping(
+        workspace.get(
+            "view",
+            {"mode": "all", "keep_lower": True, "opacity": 1.0},
+        ),
+        "workspaces.3d.view",
+    )
     axis = _choice(
         slice_state.get("axis"),
         "workspaces.3d.slice.axis",
         SLICE_AXES,
     )
     axis_length = shape[SLICE_AXES.index(axis)]
+    opacity = _number(
+        view_state.get("opacity"),
+        "workspaces.3d.view.opacity",
+        minimum=0.05,
+    )
+    if opacity > 1.0:
+        raise DocumentValidationError(
+            "workspaces.3d.view.opacity must be at most 1.0."
+        )
     return {
         "shape": shape,
         "cells": cells,
@@ -824,6 +842,18 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
             "workspaces.3d.camera",
             shape,
         ),
+        "view": {
+            "mode": _choice(
+                view_state.get("mode"),
+                "workspaces.3d.view.mode",
+                VIEW_MODES_3D,
+            ),
+            "keep_lower": _boolean(
+                view_state.get("keep_lower"),
+                "workspaces.3d.view.keep_lower",
+            ),
+            "opacity": opacity,
+        },
     }
 
 

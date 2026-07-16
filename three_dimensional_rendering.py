@@ -22,6 +22,33 @@ FloatVector: TypeAlias = NDArray[np.float32]
 FloatMatrix: TypeAlias = NDArray[np.float32]
 Viewport: TypeAlias = tuple[int, int, int, int]
 RGBColor: TypeAlias = tuple[int, int, int]
+FILTER_MODES = ("all", "clip", "layer")
+FILTER_AXES = ("x", "y", "z")
+
+
+@dataclass(frozen=True)
+class VoxelRenderSettings:
+    """GPU view filters applied without mutating the simulated volume."""
+
+    mode: str = "all"
+    axis: str = "z"
+    layer: int = 0
+    keep_lower: bool = True
+    opacity: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.mode not in FILTER_MODES:
+            raise ValueError(f"Unknown 3D filter mode: {self.mode!r}.")
+        if self.axis not in FILTER_AXES:
+            raise ValueError(f"Unknown 3D filter axis: {self.axis!r}.")
+        if isinstance(self.layer, bool) or not isinstance(self.layer, int):
+            raise TypeError("3D filter layer must be an integer.")
+        if not isinstance(self.keep_lower, bool):
+            raise TypeError("3D clipping direction must be boolean.")
+        if isinstance(self.opacity, bool) or not isinstance(self.opacity, Real):
+            raise TypeError("Voxel opacity must be a number.")
+        if not 0.05 <= self.opacity <= 1.0:
+            raise ValueError("Voxel opacity must be between 0.05 and 1.0.")
 
 
 def _vector3(value: Any, label: str) -> FloatVector:
@@ -277,10 +304,27 @@ class VoxelPick:
     distance: float
 
 
+def voxel_is_visible(
+    position: Position3D,
+    settings: VoxelRenderSettings,
+) -> bool:
+    """Return whether one canonical voxel passes the active layer filter."""
+    if settings.mode == "all":
+        return True
+    coordinates = {"z": position[0], "y": position[1], "x": position[2]}
+    coordinate = coordinates[settings.axis]
+    if settings.mode == "layer":
+        return coordinate == settings.layer
+    if settings.keep_lower:
+        return coordinate <= settings.layer
+    return coordinate >= settings.layer
+
+
 def pick_voxel(
     volume: Volume3D,
     ray_origin: Any,
     ray_direction: Any,
+    settings: VoxelRenderSettings | None = None,
 ) -> VoxelPick | None:
     """Traverse a dense volume with an exact 3D DDA ray test."""
     origin_world = _vector3(ray_origin, "ray origin")
@@ -335,9 +379,12 @@ def pick_voxel(
     while np.all(voxel >= 0) and np.all(voxel < limits):
         x, y, z = (int(value) for value in voxel)
         position = (z, y, x)
-        if volume.get_cell(position) != 0:
+        cell_state = volume.get_cell(position)
+        if cell_state != 0 and (
+            settings is None or voxel_is_visible(position, settings)
+        ):
             return VoxelPick(position, previous, entry)
-        previous = position
+        previous = position if cell_state == 0 else None
         axis = int(np.argmin(boundary_time))
         entry = float(boundary_time[axis])
         if entry > exit_distance + 1e-7:
@@ -390,6 +437,28 @@ def _box_vertex_data(shape: VolumeShape) -> NDArray[np.float32]:
     return np.asarray([corners[index] for edge in edges for index in edge], dtype=np.float32)
 
 
+def _filter_plane_vertex_data(
+    shape: VolumeShape,
+    settings: VoxelRenderSettings,
+) -> NDArray[np.float32]:
+    """Return four line segments outlining the selected canonical layer."""
+    depth, rows, columns = shape
+    x0, x1 = -columns / 2.0, columns / 2.0
+    y0, y1 = -rows / 2.0, rows / 2.0
+    z0, z1 = -depth / 2.0, depth / 2.0
+    if settings.axis == "x":
+        x = settings.layer - (columns - 1) / 2.0
+        corners = ((x, y0, z0), (x, y1, z0), (x, y1, z1), (x, y0, z1))
+    elif settings.axis == "y":
+        y = (rows - 1) / 2.0 - settings.layer
+        corners = ((x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1))
+    else:
+        z = settings.layer - (depth - 1) / 2.0
+        corners = ((x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z))
+    edges = ((0, 1), (1, 2), (2, 3), (3, 0))
+    return np.asarray([corners[index] for edge in edges for index in edge], dtype=np.float32)
+
+
 class ModernGLVoxelRenderer:
     """Draw non-empty volume cells as instanced, depth-tested cubes."""
 
@@ -401,6 +470,8 @@ class ModernGLVoxelRenderer:
             vertex_shader="""
                 #version 330
                 uniform mat4 mvp;
+                uniform vec3 volume_shape;
+                uniform int filter_axis;
                 in vec3 in_position;
                 in vec3 in_normal;
                 in vec3 in_offset;
@@ -408,10 +479,18 @@ class ModernGLVoxelRenderer:
                 out vec3 v_normal;
                 flat out vec3 v_offset;
                 flat out float v_state;
+                flat out float v_layer;
                 void main() {
                     v_normal = in_normal;
                     v_offset = in_offset;
                     v_state = in_state;
+                    if (filter_axis == 0) {
+                        v_layer = in_offset.x + (volume_shape.x - 1.0) * 0.5;
+                    } else if (filter_axis == 1) {
+                        v_layer = (volume_shape.y - 1.0) * 0.5 - in_offset.y;
+                    } else {
+                        v_layer = in_offset.z + (volume_shape.z - 1.0) * 0.5;
+                    }
                     gl_Position = mvp * vec4(in_position + in_offset, 1.0);
                 }
             """,
@@ -420,18 +499,29 @@ class ModernGLVoxelRenderer:
                 uniform vec3 alive_color;
                 uniform vec3 selected_world;
                 uniform int selection_enabled;
+                uniform int filter_mode;
+                uniform int filter_layer;
+                uniform int keep_lower;
+                uniform float voxel_opacity;
                 in vec3 v_normal;
                 flat in vec3 v_offset;
                 flat in float v_state;
+                flat in float v_layer;
                 out vec4 frag_color;
                 void main() {
+                    if (filter_mode == 1) {
+                        if (keep_lower == 1 && v_layer > float(filter_layer) + 0.1) discard;
+                        if (keep_lower == 0 && v_layer < float(filter_layer) - 0.1) discard;
+                    } else if (filter_mode == 2 && abs(v_layer - float(filter_layer)) > 0.1) {
+                        discard;
+                    }
                     vec3 light_direction = normalize(vec3(0.55, 0.85, 0.35));
                     float diffuse = max(dot(normalize(v_normal), light_direction), 0.0);
                     vec3 base = alive_color;
                     if (selection_enabled == 1 && distance(v_offset, selected_world) < 0.1) {
                         base = vec3(1.0, 0.78, 0.18);
                     }
-                    frag_color = vec4(base * (0.34 + 0.66 * diffuse), 1.0);
+                    frag_color = vec4(base * (0.34 + 0.66 * diffuse), voxel_opacity);
                 }
             """,
         )
@@ -464,7 +554,14 @@ class ModernGLVoxelRenderer:
             self.line_program,
             ((self.box_buffer, "3f", "in_position"),),
         )
+        self.filter_buffer = self.ctx.buffer(reserve=8 * 3 * 4, dynamic=True)
+        self.filter_vao = self.ctx.vertex_array(
+            self.line_program,
+            ((self.filter_buffer, "3f", "in_position"),),
+        )
         self.instance_count = 0
+        self._instance_data = np.empty((0, 4), dtype=np.float32)
+        self._buffer_order_key: tuple[Any, ...] | None = None
         self._revision: int | None = None
         self._shape: VolumeShape | None = None
 
@@ -477,12 +574,38 @@ class ModernGLVoxelRenderer:
             self.instance_buffer.orphan(byte_count)
         if data.nbytes:
             self.instance_buffer.write(data.tobytes())
+        self._instance_data = data
+        self._buffer_order_key = ("native", revision)
         self.instance_count = len(data)
         self._revision = revision
         if self._shape != volume.shape:
             box = _box_vertex_data(volume.shape)
             self.box_buffer.write(box.tobytes())
             self._shape = volume.shape
+
+    def _order_transparent_instances(
+        self,
+        camera: OrbitCamera3D,
+        revision: int,
+    ) -> None:
+        if not len(self._instance_data):
+            return
+        eye_key = tuple(round(float(value), 4) for value in camera.eye)
+        order_key = ("transparent", revision, eye_key)
+        if self._buffer_order_key == order_key:
+            return
+        distances = np.sum((self._instance_data[:, :3] - camera.eye) ** 2, axis=1)
+        ordered = self._instance_data[np.argsort(distances)[::-1]]
+        self.instance_buffer.write(ordered.tobytes())
+        self._buffer_order_key = order_key
+
+    def _restore_native_instance_order(self, revision: int) -> None:
+        order_key = ("native", revision)
+        if self._buffer_order_key == order_key:
+            return
+        if self._instance_data.nbytes:
+            self.instance_buffer.write(self._instance_data.tobytes())
+        self._buffer_order_key = order_key
 
     def render(
         self,
@@ -495,7 +618,9 @@ class ModernGLVoxelRenderer:
         alive_color: RGBColor,
         accent_color: RGBColor,
         selected: Position3D | None = None,
+        settings: VoxelRenderSettings | None = None,
     ) -> None:
+        settings = VoxelRenderSettings() if settings is None else settings
         self.update_volume(volume, revision)
         x, y, width, height = viewport
         if width < 1 or height < 1:
@@ -505,6 +630,19 @@ class ModernGLVoxelRenderer:
         matrix = camera.view_projection(width / height)
         self.program["mvp"].write(matrix_bytes(matrix))
         self.program["alive_color"].value = tuple(channel / 255.0 for channel in alive_color)
+        axis_index = FILTER_AXES.index(settings.axis)
+        axis_length = (volume.shape[2], volume.shape[1], volume.shape[0])[axis_index]
+        layer = max(0, min(axis_length - 1, settings.layer))
+        self.program["volume_shape"].value = (
+            float(volume.shape[2]),
+            float(volume.shape[1]),
+            float(volume.shape[0]),
+        )
+        self.program["filter_axis"].value = axis_index
+        self.program["filter_mode"].value = FILTER_MODES.index(settings.mode)
+        self.program["filter_layer"].value = layer
+        self.program["keep_lower"].value = int(settings.keep_lower)
+        self.program["voxel_opacity"].value = settings.opacity
         if selected is None:
             self.program["selection_enabled"].value = 0
             self.program["selected_world"].value = (0.0, 0.0, 0.0)
@@ -513,9 +651,24 @@ class ModernGLVoxelRenderer:
             self.program["selected_world"].value = tuple(
                 float(value) for value in volume_position_to_world(selected, volume.shape)
             )
-        self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
+        transparent = settings.opacity < 0.999
+        if transparent:
+            self._order_transparent_instances(camera, revision)
+            self.ctx.enable_only(
+                moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND
+            )
+            self.ctx.blend_func = (
+                moderngl.SRC_ALPHA,
+                moderngl.ONE_MINUS_SRC_ALPHA,
+            )
+            self.ctx.depth_mask = False
+        else:
+            self._restore_native_instance_order(revision)
+            self.ctx.enable_only(moderngl.DEPTH_TEST | moderngl.CULL_FACE)
+            self.ctx.depth_mask = True
         if self.instance_count:
             self.vao.render(instances=self.instance_count)
+        self.ctx.depth_mask = True
 
         self.line_program["mvp"].write(matrix_bytes(matrix))
         self.line_program["line_color"].value = tuple(
@@ -523,10 +676,25 @@ class ModernGLVoxelRenderer:
         )
         self.ctx.enable_only(moderngl.DEPTH_TEST)
         self.box_vao.render(mode=moderngl.LINES, vertices=24)
+        if settings.mode != "all":
+            plane_settings = VoxelRenderSettings(
+                mode=settings.mode,
+                axis=settings.axis,
+                layer=layer,
+                keep_lower=settings.keep_lower,
+                opacity=settings.opacity,
+            )
+            self.filter_buffer.write(
+                _filter_plane_vertex_data(volume.shape, plane_settings).tobytes()
+            )
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.filter_vao.render(mode=moderngl.LINES, vertices=8)
         self.ctx.scissor = None
 
     def release(self) -> None:
         for resource in (
+            self.filter_vao,
+            self.filter_buffer,
             self.box_vao,
             self.box_buffer,
             self.line_program,

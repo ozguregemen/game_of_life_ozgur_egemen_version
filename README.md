@@ -26,6 +26,9 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
   kurallar için genelleştirilmiş 1D çalışma alanı
 - B6/S567 ve B5/S45 spatial Life kurallarıyla çalışan, depth test ve ışıklandırmalı
   voxel görünümü, orbit kamera ve doğrudan voxel düzenleme sunan 3D çalışma alanı
+- Tam hacim, clipping plane ve tek katman filtreleri; iki yönlü kesim ve sıralanmış
+  %65/%35 saydam voxel görünümleri
+- Carter Bays'in yayımlanmış 10 voxel'lik, period-4 Life 5766 glider hazır deneyi
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
@@ -93,6 +96,11 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 | 3D'de orta sürükle | Kamera hedefini düzlem üzerinde taşı |
 | 3D'de sol tık | İşaretlenen voxel'in yanına yeni voxel ekle |
 | 3D'de sağ tık | İşaretlenen voxel'i sil |
+| L | 3D'de tam hacim / clipping plane / tek katman görünümünü değiştir |
+| Q | 3D görünüm filtresinin X / Y / Z eksenini değiştir |
+| `,` / `.` | 3D kesim veya katman düzlemini geri / ileri taşı |
+| `/` | Clipping plane'in görünür tarafını tersine çevir |
+| O | 3D voxel opacity değerini %100 / %65 / %35 arasında değiştir |
 | B | 3D çalışma alanında fixed / wrap / reflect sınırını değiştir |
 | K | 3D çalışma alanında 26 komşulu Moore / 6 komşulu face ailesini değiştir |
 
@@ -125,6 +133,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
 - `three_dimensional_ca.py`: Sınırlı uint8 volume, 3D komşuluk ve slice çekirdeği
 - `three_dimensional_rules.py`: Binary 3D Life-like kural tanımları ve toplu geçiş motoru
+- `three_dimensional_patterns.py`: Kaynaklı 3D hazır pattern koordinatları ve yerleştirme modeli
 - `three_dimensional_rendering.py`: Orbit kamera, ray/voxel seçimi ve instanced cube renderer
 - `three_dimensional_display.py`: Pygame yazılım ekranı ile ModernGL 3D ekranı arasında geçiş ve UI compositing
 - `surface_rasterizer.py`: NumPy/surfarray tabanlı ortak 2D state-plane çizicisi
@@ -208,6 +217,22 @@ seçebilir, simülasyonu çalıştırabilir ve ortak timeline üzerinden geri/il
 Varsayılan iki Bays kuralının kaynağı:
 [Carter Bays, “A Note About the Discovery of Many New Rules for the Game of
 Three-Dimensional Life”](https://doi.org/10.25088/complexsystems.16.4.381).
+
+`Volume Inspection` bölümü simülasyon state'ini değiştirmeden üç görünüm sağlar.
+`Full Volume` bütün canlı hücreleri; `Clipping Plane`, seçilen X/Y/Z indeksinin bir
+tarafını; `Single Layer` yalnız o indeksteki hücreleri gösterir. Kesim düzlemi hacim
+içinde ayrı bir çerçeveyle işaretlenir. Saydam modda instance'lar kamera uzaklığına
+göre arkadan öne sıralanır, alpha blending sırasında depth yazımı kapatılır ve böylece
+iç yapılar yaklaşık olarak görülebilir. Clipping ve katman filtresi ray seçimine de
+uygulanır; görünmeyen voxel'ler fareyle yanlışlıkla düzenlenmez.
+
+`Bays 5766 Glider` düğmesi yayımlanmış 10 koordinatlı ortak 3D glider'ı yükler,
+`B6/S567` kuralını ve sürekli dolaşım için `wrap` sınırını seçer. Desen dört nesilde
+aynı biçime dönerek bir hücre çapraz ötelenir. Başlangıç koordinatları:
+[3D Gliders](https://www.ibiblio.org/e-notes/Life/Gliders.htm). Glider'ın Life 5766
+içindeki tarihsel bağlamı ve diğer fazları Carter Bays'in
+[“The Discovery of a New Glider for the Game of Three-Dimensional Life”](https://www.complex-systems.com/abstracts/v04_i06_a02/)
+makalesinde açıklanır.
 
 `life3d.py` önceki deneysel prototip olarak korunur; ana uygulamanın 3D state kaynağı
 değildir.
@@ -312,7 +337,8 @@ Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünü
 seçenekleri, 1D/2D/3D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
 generation değerleri, Life rule'u, moda özel fırçalar, 1D alanının rule family/spec,
 boundary, seed, tam diyagram, second-order hafıza ve karşılaştırma durumu ile 3D
-volume'un hücreleri, kuralı, sınırı, inceleme dilimi ve orbit kamerasını içerir. Yükleme simülasyonu
+volume'un hücreleri, kuralı, sınırı, clipping/katman/opacity görünümü ve orbit
+kamerasını içerir. Yükleme simülasyonu
 güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
 başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
@@ -347,6 +373,10 @@ yarım-hücre hizalı özel diyagramlarda eski çizim yolu güvenli fallback ola
 korunur. 3D çalışma alanı ise yalnız canlı voxel'ler için kompakt bir instance
 buffer günceller ve bütün küpleri tek instanced draw call ile çizer. X/Y/Z slice
 rasterizer yalnız OpenGL'siz SDL dummy smoke test yolunda kullanılır.
+Saydam görünümde instance buffer yalnız volume veya kamera değiştiğinde NumPy ile
+arkadan öne sıralanır; opaque moda dönüldüğünde doğal buffer sırası geri yüklenir.
+Clipping ve tek katman seçimleri CPU'da volume kopyalamak yerine shader uniform'ları
+ve fragment discard ile uygulanır.
 
 Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
 [`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.
