@@ -2,6 +2,8 @@ import os
 import unittest
 from dataclasses import replace
 
+import numpy as np
+
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
@@ -9,7 +11,9 @@ import pygame
 
 from themes import Menu
 from three_dimensional_patterns import BAYS_5766_GLIDER
+from three_dimensional_modes import MODE_GENERATIONS, MODE_SPATIAL_LIFE
 from workspaces.three_dimensional import (
+    DEFAULT_VOLUME_SHAPE,
     THREE_D_RENDER_KEY,
     ThreeDimensionalWorkspaceController,
     ThreeDimensionalWorkspaceRenderer,
@@ -226,6 +230,59 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertEqual(restored.snapshot(), snapshot)
         self.assertEqual(restored.render_settings().mode, "clip")
         self.assertEqual(restored.render_settings().opacity, 0.65)
+
+    def test_generations_is_a_distinct_playable_mode_with_multistate_history(self) -> None:
+        self.controller.set_mode(MODE_GENERATIONS)
+
+        self.assertEqual(self.controller.state.mode_key, MODE_GENERATIONS)
+        self.assertEqual(self.controller.state.rule_key, "generations_445")
+        self.assertEqual(self.controller.state.volume.state_count, 5)
+        self.assertGreater(int(np.count_nonzero(self.controller.state.volume.cells)), 0)
+        initial = self.controller.snapshot()
+
+        self.controller.advance()
+
+        self.assertEqual(self.controller.generation, 1)
+        self.assertTrue(
+            set(np.unique(self.controller.state.volume.cells)).issubset({0, 1, 2, 3, 4})
+        )
+        self.controller.step_back()
+        self.assertEqual(self.controller.snapshot(), initial)
+
+        self.controller.cycle_rule()
+        self.assertEqual(self.controller.state.rule_key, "generations_3d_brain")
+        self.assertEqual(self.controller.state.volume.state_count, 2)
+        self.controller.cycle_mode()
+        self.assertEqual(self.controller.state.mode_key, MODE_SPATIAL_LIFE)
+        self.assertEqual(self.controller.state.volume.state_count, 2)
+
+    def test_generations_snapshot_restores_mode_rule_and_refractory_states(self) -> None:
+        self.controller.set_mode(MODE_GENERATIONS)
+        self.controller.state.volume.set_cell((3, 4, 5), 4)
+        snapshot = self.controller.snapshot()
+
+        restored = ThreeDimensionalWorkspaceController(
+            self.controller.services,
+            ThreeDimensionalWorkspaceState(),
+        )
+        restored.restore(snapshot)
+
+        self.assertEqual(restored.state.mode_key, MODE_GENERATIONS)
+        self.assertEqual(restored.state.volume.state_count, 5)
+        self.assertEqual(restored.state.volume.get_cell((3, 4, 5)), 4)
+        self.assertEqual(restored.snapshot(), snapshot)
+
+    def test_volume_presets_are_cubic_and_resizing_is_timeline_reversible(self) -> None:
+        self.assertEqual(self.controller.state.volume.shape, DEFAULT_VOLUME_SHAPE)
+        self.assertEqual(DEFAULT_VOLUME_SHAPE, (48, 48, 48))
+        original = self.controller.snapshot()
+
+        self.controller.cycle_volume_shape()
+
+        self.assertEqual(self.controller.state.volume.shape, (64, 64, 64))
+        self.assertEqual(self.controller.generation, 0)
+        self.controller.step_back()
+        self.assertEqual(self.controller.snapshot(), original)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Playable hardware-rendered workspace for binary 3D cellular automata."""
+"""Playable hardware-rendered workspace for multiple 3D automata families."""
 
 from __future__ import annotations
 
@@ -23,12 +23,23 @@ from three_dimensional_ca import (
     Volume3D,
 )
 from three_dimensional_patterns import BAYS_5766_GLIDER, Pattern3D
+from three_dimensional_generations import GenerationsRule3D, step_generations_3d
+from three_dimensional_modes import (
+    ALL_RULES_3D,
+    DEFAULT_RULE_BY_MODE_3D,
+    MODE_GENERATIONS,
+    MODE_KEYS_3D,
+    MODE_LABELS_3D,
+    MODE_SPATIAL_LIFE,
+    RULES_BY_MODE_3D,
+    Rule3D,
+    mode_for_rule,
+    rule_state_count,
+)
 from three_dimensional_rules import (
     DEFAULT_RULE_3D,
     FACE_LIFE,
     LifeLikeRule3D,
-    RULE_KEYS_3D,
-    RULES_3D,
     step_life_like_3d,
 )
 from three_dimensional_rendering import (
@@ -42,7 +53,17 @@ from timeline_history import TimelineBinding, TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
 
 THREE_D_RENDER_KEY = "3d:life_like"
-DEFAULT_VOLUME_SHAPE = (24, 32, 32)
+VOLUME_SHAPES_3D = (
+    (32, 32, 32),
+    (48, 48, 48),
+    (64, 64, 64),
+)
+VOLUME_SHAPE_LABELS_3D = {
+    (32, 32, 32): "Small · 32³",
+    (48, 48, 48): "Medium · 48³",
+    (64, 64, 64): "Large · 64³",
+}
+DEFAULT_VOLUME_SHAPE = (48, 48, 48)
 THREE_D_MIN_CELL_SIZE = 2
 THREE_D_MAX_CELL_SIZE = 24
 THREE_D_TIMELINE_FRAMES = 300
@@ -72,11 +93,12 @@ class ThreeDimensionalWorkspaceState:
     """Persistent simulation, orbit-camera, and interaction state."""
 
     volume: Volume3D = field(default_factory=_new_default_volume)
+    mode_key: str = MODE_SPATIAL_LIFE
     rule_key: str = DEFAULT_RULE_3D.key
     generation: int = 0
     slice_axis: str = AXIS_Z
     slice_index: int = DEFAULT_VOLUME_SHAPE[0] // 2
-    cell_size: int = 12
+    cell_size: int = 8
     view_offset_x: int = 0
     view_offset_y: int = 0
     camera: OrbitCamera3D = field(default_factory=_new_default_camera)
@@ -165,8 +187,12 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         return self.state.generation
 
     @property
-    def rule(self) -> LifeLikeRule3D:
-        return RULES_3D[self.state.rule_key]
+    def rule(self) -> Rule3D:
+        return ALL_RULES_3D[self.state.rule_key]
+
+    @property
+    def mode_label(self) -> str:
+        return MODE_LABELS_3D[self.state.mode_key]
 
     def _status(self, message: str, duration: float = 2.5) -> None:
         self.services.set_status(message, duration)
@@ -309,15 +335,24 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def analysis_observation(self) -> StateObservation:
         return StateObservation(
-            key="3d:life_like",
-            title=f"3D {self.rule.name} {self.rule.notation}",
+            key=(
+                "3d:generations"
+                if self.state.mode_key == MODE_GENERATIONS
+                else "3d:life_like"
+            ),
+            title=f"{self.mode_label}: {self.rule.name} {self.rule.notation}",
             generation=self.state.generation,
             values=tuple(int(value) for value in self.state.volume.cells.flat),
-            state_count=2,
+            state_count=self.state.volume.state_count,
             active_states=(1,),
-            population_label="Live voxels",
+            population_label=(
+                "Active voxels"
+                if self.state.mode_key == MODE_GENERATIONS
+                else "Live voxels"
+            ),
             alignment="center",
             experiment_context=(
+                self.state.mode_key,
                 self.state.rule_key,
                 self.state.volume.boundary,
                 self.rule.neighborhood.key,
@@ -328,7 +363,10 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
     def advance(self) -> bool:
         self.save_history()
         self.state.volume.neighborhood = self.rule.neighborhood
-        following = step_life_like_3d(self.state.volume, self.rule)
+        if isinstance(self.rule, GenerationsRule3D):
+            following = step_generations_3d(self.state.volume, self.rule)
+        else:
+            following = step_life_like_3d(self.state.volume, self.rule)
         self.state.volume.replace_cells(following)
         self.state.generation += 1
         self._invalidate()
@@ -354,6 +392,9 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         )
 
     def randomize(self, density: float = 0.20) -> None:
+        if isinstance(self.rule, GenerationsRule3D):
+            self.seed_generations_core(density)
+            return
         density = max(0.01, min(0.50, float(density)))
         cells = np.fromiter(
             (
@@ -370,6 +411,9 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def seed_cluster(self) -> None:
         """Create a compact deterministic seed around the volume center."""
+        if isinstance(self.rule, GenerationsRule3D):
+            self.seed_generations_core()
+            return
         cells = np.zeros(self.state.volume.shape, dtype=np.uint8)
         center = tuple(length // 2 for length in self.state.volume.shape)
         z, y, x = center
@@ -388,11 +432,100 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self._replace_initial_cells(cells, "Centered seven-voxel 3D seed created.")
         self.center_view()
 
+    def _generations_core_cells(
+        self,
+        rule: GenerationsRule3D,
+        density: float | None = None,
+        shape: tuple[int, int, int] | None = None,
+    ) -> np.ndarray:
+        """Return the small central random cluster used by documented 3D rules."""
+        selected_density = rule.seed_density if density is None else float(density)
+        selected_density = max(0.01, min(0.99, selected_density))
+        selected_shape = self.state.volume.shape if shape is None else shape
+        cells = np.zeros(selected_shape, dtype=np.uint8)
+        extents = tuple(min(10, length) for length in selected_shape)
+        starts = tuple(
+            (length - extent) // 2
+            for length, extent in zip(selected_shape, extents, strict=True)
+        )
+        core_size = int(np.prod(extents))
+        core = np.fromiter(
+            (
+                1 if self.state.rng.random() < selected_density else 0
+                for _ in range(core_size)
+            ),
+            dtype=np.uint8,
+            count=core_size,
+        ).reshape(extents)
+        if not np.any(core):
+            core[tuple(length // 2 for length in extents)] = 1
+        slices = tuple(
+            slice(start, start + extent)
+            for start, extent in zip(starts, extents, strict=True)
+        )
+        cells[slices] = core
+        return cells
+
+    def seed_generations_core(self, density: float | None = None) -> None:
+        """Seed the active Generations rule inside a bounded central cube."""
+        if not isinstance(self.rule, GenerationsRule3D):
+            self._status("Random core seeds belong to the 3D Generations mode.")
+            return
+        cells = self._generations_core_cells(self.rule, density)
+        selected_density = self.rule.seed_density if density is None else float(density)
+        self._replace_initial_cells(
+            cells,
+            f"{self.rule.name} central random core created at {selected_density:.0%} density.",
+        )
+        self.center_view()
+
+    def set_volume_shape(self, shape: tuple[int, int, int]) -> None:
+        """Resize to a supported cubic experiment volume and reset its seed."""
+        if shape not in VOLUME_SHAPES_3D:
+            raise ValueError(f"Unsupported 3D workspace volume: {shape}")
+        if shape == self.state.volume.shape:
+            return
+        self.save_history()
+        rule = self.rule
+        cells = (
+            self._generations_core_cells(rule, shape=shape)
+            if isinstance(rule, GenerationsRule3D)
+            else np.zeros(shape, dtype=np.uint8)
+        )
+        self.state.volume = Volume3D(
+            cells,
+            state_count=rule_state_count(rule),
+            boundary=self.state.volume.boundary,
+            neighborhood=rule.neighborhood,
+        )
+        self.state.generation = 0
+        self.state.slice_index = shape[SLICE_AXES.index(self.state.slice_axis)] // 2
+        self.state.view_mode = "all"
+        self.state.selected_voxel = None
+        self.services.set_running(False)
+        self._invalidate()
+        self.sync_history()
+        self.center_view()
+        self.services.rebuild_sidebar()
+        self._status(
+            f"3D volume: {VOLUME_SHAPE_LABELS_3D[shape]}. Experiment reset.",
+            4.0,
+        )
+
+    def cycle_volume_shape(self) -> None:
+        current = self.state.volume.shape
+        if current not in VOLUME_SHAPES_3D:
+            self.set_volume_shape(DEFAULT_VOLUME_SHAPE)
+            return
+        index = VOLUME_SHAPES_3D.index(current)
+        self.set_volume_shape(VOLUME_SHAPES_3D[(index + 1) % len(VOLUME_SHAPES_3D)])
+
     def seed_pattern(self, pattern: Pattern3D) -> None:
         """Load a documented rule-compatible pattern as one history change."""
         cells = pattern.centered_cells(self.state.volume.shape)
         if (
-            self.state.rule_key == pattern.rule_key
+            self.state.mode_key == MODE_SPATIAL_LIFE
+            and self.state.rule_key == pattern.rule_key
             and self.state.volume.boundary == pattern.boundary
             and np.array_equal(cells, self.state.volume.cells)
             and self.state.generation == 0
@@ -400,11 +533,15 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self._status(f"{pattern.name} is already loaded.")
             return
         self.save_history()
-        rule = RULES_3D[pattern.rule_key]
+        rule = RULES_BY_MODE_3D[MODE_SPATIAL_LIFE][pattern.rule_key]
+        self.state.mode_key = MODE_SPATIAL_LIFE
         self.state.rule_key = rule.key
-        self.state.volume.neighborhood = rule.neighborhood
-        self.state.volume.boundary = pattern.boundary
-        self.state.volume.replace_cells(cells)
+        self.state.volume = Volume3D(
+            cells,
+            state_count=2,
+            neighborhood=rule.neighborhood,
+            boundary=pattern.boundary,
+        )
         self.state.generation = 0
         self.state.slice_axis = AXIS_Z
         self.state.slice_index = self.slice_count() // 2
@@ -416,24 +553,80 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.services.rebuild_sidebar()
         self._status(f"Loaded {pattern.name}: {pattern.description}", 5.0)
 
+    def set_mode(self, mode_key: str) -> None:
+        """Switch between independent 3D rule families with a suitable seed."""
+        if mode_key not in MODE_KEYS_3D:
+            raise ValueError(f"Unknown 3D mode: {mode_key}")
+        if mode_key == self.state.mode_key:
+            return
+        self.save_history()
+        rule = DEFAULT_RULE_BY_MODE_3D[mode_key]
+        if isinstance(rule, GenerationsRule3D):
+            cells = self._generations_core_cells(rule)
+        else:
+            cells = np.zeros(self.state.volume.shape, dtype=np.uint8)
+        self.state.mode_key = mode_key
+        self.state.rule_key = rule.key
+        self.state.volume = Volume3D(
+            cells,
+            state_count=rule_state_count(rule),
+            boundary=self.state.volume.boundary,
+            neighborhood=rule.neighborhood,
+        )
+        self.state.generation = 0
+        self.state.selected_voxel = None
+        self.state.slice_index = min(self.state.slice_index, self.slice_count() - 1)
+        self.services.set_running(False)
+        self._invalidate()
+        self.sync_history()
+        self.center_view()
+        self.services.rebuild_sidebar()
+        self._status(
+            f"3D mode: {self.mode_label}. {rule.name} {rule.notation} loaded.",
+            4.0,
+        )
+
+    def cycle_mode(self) -> None:
+        index = MODE_KEYS_3D.index(self.state.mode_key)
+        self.set_mode(MODE_KEYS_3D[(index + 1) % len(MODE_KEYS_3D)])
+
     def set_rule(self, rule_key: str) -> None:
-        rule = RULES_3D[rule_key]
+        registry = RULES_BY_MODE_3D[self.state.mode_key]
+        rule = registry[rule_key]
         if rule.key == self.state.rule_key:
             return
         self.save_history()
         self.state.rule_key = rule.key
-        self.state.volume.neighborhood = rule.neighborhood
+        if isinstance(rule, GenerationsRule3D):
+            cells = self._generations_core_cells(rule)
+            self.state.volume = Volume3D(
+                cells,
+                state_count=rule.state_count,
+                boundary=self.state.volume.boundary,
+                neighborhood=rule.neighborhood,
+            )
+            self.state.generation = 0
+            self.services.set_running(False)
+            self.center_view()
+        else:
+            self.state.volume.neighborhood = rule.neighborhood
         self._invalidate()
         self.sync_history()
         self.services.rebuild_sidebar()
         self._status(f"3D rule: {rule.name} ({rule.notation}).")
 
     def cycle_rule(self) -> None:
-        index = RULE_KEYS_3D.index(self.state.rule_key)
-        self.set_rule(RULE_KEYS_3D[(index + 1) % len(RULE_KEYS_3D)])
+        keys = tuple(RULES_BY_MODE_3D[self.state.mode_key])
+        index = keys.index(self.state.rule_key)
+        self.set_rule(keys[(index + 1) % len(keys)])
 
     def cycle_neighborhood(self) -> None:
         """Switch between 26-neighbor and six-face rule families safely."""
+        if not isinstance(self.rule, LifeLikeRule3D):
+            self._status(
+                "The neighborhood is part of each 3D Generations rule preset."
+            )
+            return
         if self.rule.neighborhood.key == NEIGHBORHOODS_3D["moore"].key:
             self.set_rule(FACE_LIFE.key)
         else:
@@ -510,28 +703,51 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
     def _timeline_snapshot(self) -> dict[str, Any]:
         """Capture compact immutable bytes for bounded 3D timeline storage."""
         return {
+            "mode": self.state.mode_key,
             "rule": self.state.rule_key,
+            "state_count": self.state.volume.state_count,
             "boundary": self.state.volume.boundary,
             "shape": self.state.volume.shape,
             "cells": self.state.volume.cells.tobytes(order="C"),
             "generation": self.state.generation,
+            "slice_axis": self.state.slice_axis,
+            "slice_index": self.state.slice_index,
         }
 
     def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        previous_shape = self.state.volume.shape
         shape = tuple(int(value) for value in snapshot["shape"])
         cells = np.frombuffer(snapshot["cells"], dtype=np.uint8).reshape(shape)
-        rule = RULES_3D[str(snapshot["rule"])]
+        rule_key = str(snapshot["rule"])
+        rule = ALL_RULES_3D[rule_key]
+        mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
+        if mode_for_rule(rule_key) != mode_key:
+            raise ValueError("3D timeline rule does not belong to its saved mode.")
+        state_count = int(snapshot.get("state_count", rule_state_count(rule)))
+        if state_count != rule_state_count(rule):
+            raise ValueError("3D timeline state count does not match its rule.")
+        self.state.mode_key = mode_key
         self.state.rule_key = rule.key
         self.state.volume = Volume3D(
             cells,
+            state_count=state_count,
             boundary=str(snapshot["boundary"]),
             neighborhood=rule.neighborhood,
         )
         self.state.generation = int(snapshot["generation"])
-        self.state.slice_index = min(self.state.slice_index, self.slice_count() - 1)
+        self.state.slice_axis = str(snapshot.get("slice_axis", self.state.slice_axis))
+        self.state.slice_index = min(
+            int(snapshot.get("slice_index", self.state.slice_index)),
+            self.slice_count() - 1,
+        )
         self.state.drawing = False
         self.state.stroke_history_pending = False
         self.state.selected_voxel = None
+        if previous_shape != shape:
+            if self.services.hardware_3d():
+                self.state.camera.reset_for_shape(shape)
+            else:
+                self.center_view()
         self._invalidate()
         self.services.rebuild_sidebar()
 
@@ -540,7 +756,9 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         return {
             "shape": list(self.state.volume.shape),
             "cells": self.state.volume.cells.tolist(),
+            "mode": self.state.mode_key,
             "rule": self.state.rule_key,
+            "state_count": self.state.volume.state_count,
             "boundary": self.state.volume.boundary,
             "generation": self.state.generation,
             "slice": {
@@ -557,9 +775,17 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def restore(self, snapshot: Mapping[str, Any]) -> None:
         """Restore a validated complete 3D workspace snapshot."""
-        rule = RULES_3D[str(snapshot["rule"])]
+        rule_key = str(snapshot["rule"])
+        rule = ALL_RULES_3D[rule_key]
+        mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
+        if mode_for_rule(rule_key) != mode_key:
+            raise ValueError("3D session rule does not belong to its saved mode.")
+        state_count = int(snapshot.get("state_count", rule_state_count(rule)))
+        if state_count != rule_state_count(rule):
+            raise ValueError("3D session state count does not match its rule.")
         volume = Volume3D(
             snapshot["cells"],
+            state_count=state_count,
             boundary=str(snapshot["boundary"]),
             neighborhood=rule.neighborhood,
         )
@@ -584,6 +810,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         )
 
         self.state.volume = volume
+        self.state.mode_key = mode_key
         self.state.rule_key = rule.key
         self.state.generation = int(snapshot["generation"])
         self.state.slice_axis = axis
@@ -652,6 +879,8 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.move_slice(1)
         elif event.key == pygame.K_b:
             self.cycle_boundary()
+        elif event.key == pygame.K_v:
+            self.cycle_volume_shape()
         elif event.key == pygame.K_k:
             self.cycle_neighborhood()
         elif event.key == pygame.K_l:
@@ -661,9 +890,14 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         elif event.key == pygame.K_SLASH:
             self.toggle_clip_side()
         elif event.key == pygame.K_t:
-            self._status("The current 3D Life workspace is binary: draw alive or erase.")
+            if isinstance(self.rule, GenerationsRule3D):
+                self._status(
+                    "Draw active state 1 or erase; refractory states are generated by the rule."
+                )
+            else:
+                self._status("Spatial Life is binary: draw alive or erase.")
         elif event.key == pygame.K_m:
-            self._status("2D modes are separate; press D to switch dimensions.")
+            self.cycle_mode()
         else:
             return False
         return True
@@ -783,7 +1017,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
     def build_sidebar(self, menu: Menu) -> None:
         accent = DIMENSION_BY_KEY["3d"].accent
         menu.clear_buttons()
-        menu.set_header("3D · Spatial Life")
+        menu.set_header(f"3D · {self.mode_label}")
         menu.begin_section(
             "3d_workspace",
             "Workspace",
@@ -813,7 +1047,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         menu.begin_section(
             "3d_simulation",
             "Rule & Volume",
-            tooltip="Configure the binary 3D rule, neighborhood, and boundary.",
+            tooltip="Choose a 3D automata family, rule, neighborhood, and boundary.",
         )
         menu.add_button(
             f"{'Pause' if self.services.is_running() else 'Run'} Simulation",
@@ -822,7 +1056,15 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             active=self.services.is_running(),
         )
         menu.add_button(
-            f"Rule: {self.rule.notation}",
+            f"Mode: {self.mode_label} (M)",
+            self.cycle_mode,
+            accent=accent,
+            tooltip=(
+                "Switch between binary Spatial Life and multi-state 3D Generations."
+            ),
+        )
+        menu.add_button(
+            f"Rule: {self.rule.notation} · {self.rule.name}",
             self.cycle_rule,
             accent=accent,
             tooltip=self.rule.description,
@@ -830,23 +1072,57 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         menu.add_button(
             f"Neighborhood: {self.rule.neighborhood.size} cells",
             self.cycle_neighborhood,
-            tooltip="Switch between the 26-cell Moore and six-face neighborhoods.",
+            tooltip=(
+                "Spatial Life can switch neighborhood families; Generations "
+                "presets carry their documented neighborhood."
+            ),
         )
         menu.add_button(
             f"Boundary: {self.state.volume.boundary.title()}",
             self.cycle_boundary,
         )
-        menu.add_button("Centered Seed", self.seed_cluster)
+        volume_label = VOLUME_SHAPE_LABELS_3D.get(
+            self.state.volume.shape,
+            "×".join(str(length) for length in reversed(self.state.volume.shape)),
+        )
         menu.add_button(
-            "Bays 5766 Glider",
-            lambda: self.seed_pattern(BAYS_5766_GLIDER),
-            accent=(245, 185, 70),
+            f"Volume: {volume_label} (V)",
+            self.cycle_volume_shape,
             tooltip=(
-                "Load Carter Bays' documented ten-voxel, period-four glider "
-                "and select its B6/S567 rule."
+                "Cycle 32³, 48³, and 64³ experiment volumes. Resizing resets "
+                "the current experiment and records the previous state in the timeline."
             ),
         )
-        menu.add_button("Randomize Volume", lambda: self.randomize(0.18))
+        if self.state.mode_key == MODE_SPATIAL_LIFE:
+            menu.add_button("Centered Seed", self.seed_cluster)
+            menu.add_button(
+                "Bays 5766 Glider",
+                lambda: self.seed_pattern(BAYS_5766_GLIDER),
+                accent=(245, 185, 70),
+                tooltip=(
+                    "Load Carter Bays' documented ten-voxel, period-four glider "
+                    "and select its B6/S567 rule."
+                ),
+            )
+            menu.add_button("Randomize Volume", lambda: self.randomize(0.18))
+        else:
+            menu.add_button(
+                "Random Central Core",
+                self.seed_generations_core,
+                accent=(245, 185, 70),
+                tooltip=(
+                    "Create the small central random state-1 seed used for the "
+                    "documented 3D Generations experiments."
+                ),
+            )
+            menu.add_button(
+                "Explain Current Rule",
+                lambda: self._status(
+                    f"{self.rule.name} {self.rule.notation}: {self.rule.description}",
+                    7.0,
+                ),
+                tooltip=self.rule.description,
+            )
         menu.add_button("Clear Volume", self.clear)
 
         menu.begin_section(
@@ -952,6 +1228,9 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
         state = self.controller.state
         return (
             self.services.render_revision(THREE_D_RENDER_KEY),
+            state.mode_key,
+            state.rule_key,
+            state.volume.state_count,
             self.services.viewport().size,
             state.slice_axis,
             state.slice_index,
@@ -968,6 +1247,27 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             self.services.theme_name(),
             self.services.show_grid(),
         )
+
+    @staticmethod
+    def _state_palette(
+        background: tuple[int, int, int],
+        active: tuple[int, int, int],
+        state_count: int,
+    ) -> tuple[tuple[int, int, int], ...]:
+        """Build a bright-to-warm palette for active and refractory states."""
+        if state_count == 2:
+            return background, active
+        decay = (255, 42, 10)
+        colors = [background, active]
+        for state in range(2, state_count):
+            amount = (state - 1) / max(1, state_count - 2)
+            colors.append(
+                tuple(
+                    round(source + (target - source) * amount)
+                    for source, target in zip(active, decay, strict=True)
+                )
+            )
+        return tuple(colors)
 
     def draw_base(self) -> None:
         screen = self.services.screen()
@@ -991,7 +1291,11 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
         self.rasterizer.blit(
             screen,
             plane,
-            (theme["background"], theme["cell"]),
+            self._state_palette(
+                theme["background"],
+                theme["cell"],
+                self.controller.state.volume.state_count,
+            ),
             origin,
             cell_size=self.controller.state.cell_size,
         )
@@ -1010,12 +1314,16 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
 
     def _stats(self) -> dict[str, Any]:
         volume = self.controller.state.volume
-        alive = int(np.count_nonzero(volume.cells))
-        slice_alive = int(np.count_nonzero(self.controller.current_slice()))
+        active = int(np.count_nonzero(volume.cells == 1))
+        refractory = int(np.count_nonzero(volume.cells > 1))
+        occupied = active + refractory
+        slice_active = int(np.count_nonzero(self.controller.current_slice() == 1))
         return {
-            "alive": alive,
-            "density": 100.0 * alive / volume.cell_count,
-            "slice_alive": slice_alive,
+            "active": active,
+            "refractory": refractory,
+            "occupied": occupied,
+            "density": 100.0 * active / volume.cell_count,
+            "slice_active": slice_active,
         }
 
     def draw_bars(self) -> None:
@@ -1032,7 +1340,8 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
         state = self.controller.state
         rule = self.controller.rule
         info = (
-            f"{state_label}   Dimension: 3D   Rule: {rule.notation}   "
+            f"{state_label}   Dimension: 3D   Mode: {self.controller.mode_label}   "
+            f"Rule: {rule.notation}   "
             f"Neighbors: {rule.neighborhood.size}   Speed: {self.services.speed()} gen/s   "
             f"Generation: {state.generation}   Boundary: {state.volume.boundary.title()}"
         )
@@ -1060,20 +1369,21 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
                     f" {state.slice_axis.upper()}:{state.slice_index + 1}"
                 )
             first_line = (
-                f"Live voxels: {stats['alive']}/{state.volume.cell_count}   "
+                f"Active voxels: {stats['active']}/{state.volume.cell_count}   "
                 f"Density: {stats['density']:.2f}%   "
                 f"Volume: {shape[2]}×{shape[1]}×{shape[0]}   "
                 f"View: {filter_label} @ {state.voxel_opacity:.0%}   "
                 f"Timeline: {history.cursor + 1}/{history.frame_count}"
             )
             second_line = (
-                f"{rule.name} {rule.notation}   ·   left drag: orbit   ·   "
+                f"{rule.name} {rule.notation}   ·   refractory: {stats['refractory']}   ·   "
+                "left drag: orbit   ·   "
                 "wheel: zoom   ·   middle drag: pan   ·   left click: add   ·   right click: erase"
             )
         else:
             first_line = (
-                f"Live voxels: {stats['alive']}/{state.volume.cell_count}   "
-                f"Density: {stats['density']:.2f}%   Slice live: {stats['slice_alive']}   "
+                f"Active voxels: {stats['active']}/{state.volume.cell_count}   "
+                f"Density: {stats['density']:.2f}%   Slice active: {stats['slice_active']}   "
                 f"Volume: {shape[2]}×{shape[1]}×{shape[0]}   "
                 f"Timeline: {history.cursor + 1}/{history.frame_count}"
             )

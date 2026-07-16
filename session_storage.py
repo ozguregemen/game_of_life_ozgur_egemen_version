@@ -28,7 +28,15 @@ from three_dimensional_ca import (
     DEFAULT_MAX_VOLUME_BYTES,
     SLICE_AXES,
 )
-from three_dimensional_rules import DEFAULT_RULE_3D, RULE_KEYS_3D
+from three_dimensional_modes import (
+    ALL_RULE_KEYS_3D,
+    ALL_RULES_3D,
+    MODE_KEYS_3D,
+    MODE_SPATIAL_LIFE,
+    mode_for_rule,
+    rule_state_count,
+)
+from three_dimensional_rules import DEFAULT_RULE_3D
 
 SESSION_SCHEMA = "cellular-automata-lab/session"
 PROFILE_SCHEMA = "cellular-automata-lab/elementary-profile"
@@ -667,14 +675,16 @@ def _validate_2d_workspace(value: Any) -> dict[str, Any]:
 
 def _default_3d_workspace() -> dict[str, Any]:
     """Return the empty 3D state used when upgrading a legacy session."""
-    depth, rows, columns = (24, 32, 32)
+    depth, rows, columns = (48, 48, 48)
     return {
         "shape": [depth, rows, columns],
         "cells": [
             [[0 for _ in range(columns)] for _ in range(rows)]
             for _ in range(depth)
         ],
+        "mode": MODE_SPATIAL_LIFE,
         "rule": DEFAULT_RULE_3D.key,
+        "state_count": 2,
         "boundary": "fixed",
         "generation": 0,
         "slice": {"axis": "z", "index": depth // 2},
@@ -733,7 +743,7 @@ def _validate_3d_orbit_camera(
 
 
 def _validate_3d_workspace(value: Any) -> dict[str, Any]:
-    """Validate a bounded binary volume plus its active slice and camera."""
+    """Validate a bounded multi-mode volume plus its slice and camera."""
     workspace = _mapping(value, "workspaces.3d")
     raw_shape = _sequence(workspace.get("shape"), "workspaces.3d.shape")
     if len(raw_shape) != 3:
@@ -753,6 +763,33 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
     if depth * rows * columns > DEFAULT_MAX_VOLUME_BYTES:
         raise DocumentValidationError(
             "workspaces.3d volume exceeds the dense uint8 memory limit."
+        )
+
+    rule_key = _choice(
+        workspace.get("rule"),
+        "workspaces.3d.rule",
+        ALL_RULE_KEYS_3D,
+    )
+    inferred_mode = mode_for_rule(rule_key)
+    mode_key = _choice(
+        workspace.get("mode", inferred_mode),
+        "workspaces.3d.mode",
+        MODE_KEYS_3D,
+    )
+    if mode_key != inferred_mode:
+        raise DocumentValidationError(
+            "workspaces.3d.rule does not belong to workspaces.3d.mode."
+        )
+    expected_state_count = rule_state_count(ALL_RULES_3D[rule_key])
+    state_count = _integer(
+        workspace.get("state_count", expected_state_count),
+        "workspaces.3d.state_count",
+        minimum=2,
+        maximum=256,
+    )
+    if state_count != expected_state_count:
+        raise DocumentValidationError(
+            "workspaces.3d.state_count does not match the selected rule."
         )
 
     raw_planes = _sequence(workspace.get("cells"), "workspaces.3d.cells")
@@ -780,7 +817,7 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
                         cell,
                         f"workspaces.3d.cells[{z}][{y}][{x}]",
                         minimum=0,
-                        maximum=1,
+                        maximum=state_count - 1,
                     )
                     for x, cell in enumerate(row)
                 ]
@@ -813,11 +850,9 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
     return {
         "shape": shape,
         "cells": cells,
-        "rule": _choice(
-            workspace.get("rule"),
-            "workspaces.3d.rule",
-            RULE_KEYS_3D,
-        ),
+        "mode": mode_key,
+        "rule": rule_key,
+        "state_count": state_count,
         "boundary": _choice(
             workspace.get("boundary"),
             "workspaces.3d.boundary",

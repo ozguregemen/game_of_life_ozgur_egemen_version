@@ -199,9 +199,12 @@ kontrol edilir. `extract_slice()` Z için `(rows, columns)`, Y için
 doğrudan ortak `StateGridRasterizer` ile çizilebilir.
 
 Ana uygulamadaki 3D kartı bu çekirdeği kullanan ayrı bir controller/renderer açar.
-Varsayılan 24×32×32 binary volume, Carter Bays'in 26-komşulu B6/S567 kuralıyla başlar;
-B5/S45 alternatifi ve altı yüz komşulu deneysel B3/S23 seçeneği sidebar'dan
-değiştirilebilir. Canlı hücreler ModernGL ile tek tek draw call yerine instanced cube
+Varsayılan hacim 48×48×48'dir; sidebar'daki `Volume` kontrolüyle daha hızlı 32³,
+varsayılan 48³ ve daha geniş 64³ deney alanları arasında geçilebilir. Boyut değişimi
+mevcut deneyi sıfırlar fakat önceki hacmi timeline'a kaydeder. `Spatial Life` modu
+Carter Bays'in 26-komşulu B6/S567 kuralıyla başlar; B5/S45 alternatifi ve altı yüz
+komşulu deneysel B3/S23 seçeneği sidebar'dan değiştirilebilir. Canlı hücreler ModernGL
+ile tek tek draw call yerine instanced cube
 olarak, perspektif projection, depth test ve yönlü ışıkla çizilir. Sol sürükleme orbit,
 orta sürükleme pan, tekerlek zoom yapar. İmlecin ışını 3D DDA ile volume içinde gezerek
 ilk canlı voxel'i bulur; sol tık önündeki boş komşuya ekler, sağ tık seçili voxel'i
@@ -233,6 +236,16 @@ aynı biçime dönerek bir hücre çapraz ötelenir. Başlangıç koordinatları
 içindeki tarihsel bağlamı ve diğer fazları Carter Bays'in
 [“The Discovery of a New Glider for the Game of Three-Dimensional Life”](https://www.complex-systems.com/abstracts/v04_i06_a02/)
 makalesinde açıklanır.
+
+`M` tuşu 3D workspace içinde `Spatial Life` ile ayrı `3D Generations` modu arasında
+geçiş yapar. Generations modunda state 0 boş, state 1 aktif, daha yüksek state'ler
+refractory/soğuma evreleridir; yalnız state 1 komşu sayımına katılır. Öne çıkan
+`4/4/5/M` (`445`) kuralında aktif voxel tam dört aktif komşuyla yaşar, boş voxel tam
+dört komşuyla doğar; ölen voxel 2→3→4→0 zincirini izler. Kural değiştirici ayrıca
+`3D Brain`, `Clouds 1` ve `Pyroclastic` preset'lerini sunar. Her preset bütün hacmi
+doldurmak yerine belgelenen deney düzenine uygun küçük bir merkez kümesiyle başlar.
+Kuralların tanımları ve düzeltilmiş state geçiş mantığı:
+[Softology, “3D Cellular Automata 3”](https://softologyblog.wordpress.com/2019/12/28/3d-cellular-automata-3/).
 
 `life3d.py` önceki deneysel prototip olarak korunur; ana uygulamanın 3D state kaynağı
 değildir.

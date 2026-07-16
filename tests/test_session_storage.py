@@ -185,7 +185,7 @@ class SessionStorageTests(unittest.TestCase):
         normalized = session_storage.validate_session_document(document)
 
         spatial = normalized["workspaces"]["3d"]
-        self.assertEqual(spatial["shape"], [24, 32, 32])
+        self.assertEqual(spatial["shape"], [48, 48, 48])
         self.assertEqual(spatial["generation"], 0)
         self.assertEqual(spatial["rule"], "bays_5766")
 
@@ -193,6 +193,24 @@ class SessionStorageTests(unittest.TestCase):
         document = self.valid_session("Invalid 3D")
         document["workspaces"]["3d"]["cells"][0][0][0] = 2
 
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "workspaces.3d.cells",
+        ):
+            session_storage.validate_session_document(document)
+
+    def test_generations_session_accepts_refractory_states_and_rejects_overflow(self) -> None:
+        document = self.valid_session("Generations 3D")
+        spatial = document["workspaces"]["3d"]
+        spatial["mode"] = "generations"
+        spatial["rule"] = "generations_445"
+        spatial["state_count"] = 5
+        spatial["cells"][0][0][0] = 4
+
+        normalized = session_storage.validate_session_document(document)
+
+        self.assertEqual(normalized["workspaces"]["3d"]["cells"][0][0][0], 4)
+        spatial["cells"][0][0][0] = 5
         with self.assertRaisesRegex(
             session_storage.DocumentValidationError,
             "workspaces.3d.cells",

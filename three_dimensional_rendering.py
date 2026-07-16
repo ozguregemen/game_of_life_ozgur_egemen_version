@@ -395,6 +395,7 @@ def pick_voxel(
 
 
 def _cube_vertex_data() -> NDArray[np.float32]:
+    voxel_half_size = 0.40
     faces = (
         ((0.0, 0.0, 1.0), ((-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1))),
         ((0.0, 0.0, -1.0), ((1, -1, -1), (-1, -1, -1), (-1, 1, -1), (1, 1, -1))),
@@ -406,7 +407,7 @@ def _cube_vertex_data() -> NDArray[np.float32]:
     rows: list[tuple[float, ...]] = []
     for normal, corners in faces:
         for index in (0, 1, 2, 0, 2, 3):
-            position = tuple(float(value) * 0.44 for value in corners[index])
+            position = tuple(float(value) * voxel_half_size for value in corners[index])
             rows.append((*position, *normal))
     return np.asarray(rows, dtype=np.float32)
 
@@ -497,6 +498,8 @@ class ModernGLVoxelRenderer:
             fragment_shader="""
                 #version 330
                 uniform vec3 alive_color;
+                uniform vec3 decay_color;
+                uniform int state_count;
                 uniform vec3 selected_world;
                 uniform int selection_enabled;
                 uniform int filter_mode;
@@ -518,6 +521,14 @@ class ModernGLVoxelRenderer:
                     vec3 light_direction = normalize(vec3(0.55, 0.85, 0.35));
                     float diffuse = max(dot(normalize(v_normal), light_direction), 0.0);
                     vec3 base = alive_color;
+                    if (v_state > 1.5 && state_count > 2) {
+                        float decay = clamp(
+                            (v_state - 1.0) / float(state_count - 2),
+                            0.0,
+                            1.0
+                        );
+                        base = mix(alive_color, decay_color, decay);
+                    }
                     if (selection_enabled == 1 && distance(v_offset, selected_world) < 0.1) {
                         base = vec3(1.0, 0.78, 0.18);
                     }
@@ -630,6 +641,8 @@ class ModernGLVoxelRenderer:
         matrix = camera.view_projection(width / height)
         self.program["mvp"].write(matrix_bytes(matrix))
         self.program["alive_color"].value = tuple(channel / 255.0 for channel in alive_color)
+        self.program["decay_color"].value = (1.0, 0.16, 0.04)
+        self.program["state_count"].value = volume.state_count
         axis_index = FILTER_AXES.index(settings.axis)
         axis_length = (volume.shape[2], volume.shape[1], volume.shape[0])[axis_index]
         layer = max(0, min(axis_length - 1, settings.layer))
