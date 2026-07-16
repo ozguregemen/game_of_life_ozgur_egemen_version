@@ -137,6 +137,10 @@ from themes import (
 )
 from timeline_history import TimelineBinding, TimelineStatus
 from timeline_ui import TimelinePanel, TimelinePanelServices
+from three_dimensional_display import (
+    HybridDisplayBackend,
+    ThreeDimensionalDisplayError,
+)
 from ui_preferences import UIPreferences
 from visuals import CellTransition, get_enhanced_age_color
 from wireworld import (
@@ -198,8 +202,12 @@ PATTERN_ROW_HEIGHT = 30
 BLACK = (0, 0, 0)
 
 pygame.init()
-pygame.display.set_caption("Özgür Egemen's Cellular Automata Lab")
-screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
+APPLICATION_CAPTION = "Özgür Egemen's Cellular Automata Lab"
+display_backend = HybridDisplayBackend(
+    (WINDOW_WIDTH, WINDOW_HEIGHT),
+    APPLICATION_CAPTION,
+)
+screen = display_backend.surface
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("Arial", 22, bold=True)
 small_font = pygame.font.SysFont("Arial", 16)
@@ -1063,6 +1071,23 @@ def cycle_rule() -> None:
     _sync_2d_history()
 
 
+def _switch_display_backend(dimension: str) -> bool:
+    """Select the software or OpenGL display without changing workspace state."""
+    global screen
+    try:
+        if dimension == "3d":
+            screen = display_backend.activate_3d((WINDOW_WIDTH, WINDOW_HEIGHT))
+        else:
+            screen = display_backend.activate_software((WINDOW_WIDTH, WINDOW_HEIGHT))
+    except ThreeDimensionalDisplayError as exc:
+        screen = display_backend.surface
+        set_status(f"3D renderer unavailable: {exc}", 6.0)
+        return False
+    if "rendered_grid_cache" in globals():
+        rendered_grid_cache.clear()
+    return True
+
+
 def set_active_dimension(dimension: str) -> bool:
     """Switch workspaces while keeping every dimension's simulation state."""
     global active_dimension, simulation_active, single_step_requested
@@ -1072,6 +1097,10 @@ def set_active_dimension(dimension: str) -> bool:
     if not definition.available:
         dimension_menu_active = False
         set_status(f"{definition.name}: {definition.status_hint}", 4.0)
+        return False
+
+    if not _switch_display_backend(dimension):
+        dimension_menu_active = False
         return False
 
     if "timeline_panel" in globals():
@@ -1150,6 +1179,8 @@ def set_simulation_mode(mode: str) -> None:
     global single_step_requested, dimension_menu_active
     global selected_pattern, pattern_menu_active, mode_menu_active, drawing
     definition = get_mode_definition(mode)
+    if not _switch_display_backend("2d"):
+        return
     if "timeline_panel" in globals():
         timeline_panel.stop()
     if "workspace_registry" in globals():
@@ -1387,7 +1418,7 @@ def get_text_input(prompt_text: str) -> str | None:
 
         text_surface = font.render(text, True, (255, 255, 255))
         screen.blit(text_surface, (input_box.x + 8, input_box.y + 8))
-        pygame.display.flip()
+        display_backend.present()
         clock.tick(60)
 
     return None
@@ -1500,6 +1531,10 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
         )
 
     application = normalized["application"]
+    if not _switch_display_backend(application["dimension"]):
+        raise DocumentValidationError(
+            "The saved 3D workspace requires an OpenGL 3.3 renderer."
+        )
     active_workspace().controller.deactivate()
     workspace_registry.get("1d").controller.restore(normalized["workspaces"]["1d"])
     workspace_registry.get("2d").controller.restore(normalized["workspaces"]["2d"])
@@ -3706,8 +3741,7 @@ def active_tool_label() -> str:
     if active_dimension == "1d":
         return f"Cell state {elementary_controller.state.brush_state}"
     if active_dimension == "3d":
-        state = three_dimensional_controller.state
-        return f"Live voxel · {state.slice_axis.upper()} slice {state.slice_index + 1}"
+        return "Orbit camera · Add voxel"
     if selected_pattern is not None:
         return f"Pattern: {selected_pattern['name']}"
     if simulation_mode == "immigration":
@@ -3811,13 +3845,14 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
         )
     if active_dimension == "3d":
         return (
-            ("Left / Right click", "Draw or erase a voxel on the visible slice"),
-            ("Middle drag", "Pan the current slice"),
-            ("Q", "Cycle through Z, Y, and X slice axes"),
-            (", / .", "Move to the previous or next slice"),
+            ("Left drag", "Orbit the perspective camera around the volume"),
+            ("Mouse wheel", "Zoom the 3D camera"),
+            ("Middle drag", "Pan the camera target"),
+            ("Left click", "Add a voxel beside the highlighted voxel"),
+            ("Right click", "Erase the highlighted voxel"),
             ("B", "Cycle fixed, wrapped, and reflected boundaries"),
             ("K", "Switch between 26-neighbor and six-face rule families"),
-            ("Ctrl+0", "Fit the complete current slice into the viewport"),
+            ("Ctrl+0 / C", "Fit or reset the complete volume view"),
             ("Timeline arrows", "Step backward or forward through 3D generations"),
         )
     entries = [
@@ -3925,9 +3960,14 @@ def draw_active_grid() -> None:
 
 
 def draw_scene() -> None:
-    screen.fill(THEMES[current_theme]["background"])
-    draw_active_grid()
     renderer = active_workspace().renderer
+    if active_dimension == "3d" and display_backend.is_opengl:
+        display_backend.begin_3d_frame(THEMES[current_theme]["background"])
+        renderer.draw_base()
+        renderer.draw_dynamic()
+    else:
+        screen.fill(THEMES[current_theme]["background"])
+        draw_active_grid()
     renderer.draw_bars()
     draw_workspace_status_controls()
     timeline_panel.draw()
@@ -4156,7 +4196,14 @@ def update_window_size(new_width: int, new_height: int) -> None:
     global WINDOW_WIDTH, WINDOW_HEIGHT, screen
     WINDOW_WIDTH = max(760, new_width)
     WINDOW_HEIGHT = max(560, new_height)
-    screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
+    try:
+        screen = display_backend.resize(
+            (WINDOW_WIDTH, WINDOW_HEIGHT),
+            active_dimension == "3d",
+        )
+    except ThreeDimensionalDisplayError as exc:
+        screen = display_backend.surface
+        set_status(f"Could not resize the 3D renderer: {exc}", 6.0)
 
     menu_x = WINDOW_WIDTH - MENU_WIDTH
     main_menu.rect.x = menu_x
@@ -4595,6 +4642,18 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
     grid_top_margin=GRID_TOP_MARGIN,
     record_analysis=analysis_registry.observe,
     reset_analysis=analysis_registry.reset,
+    hardware_3d=lambda: display_backend.is_opengl,
+    render_volume=lambda volume, camera, viewport, revision, selected: (
+        display_backend.render_volume(
+            volume,
+            camera,
+            viewport,
+            revision=revision,
+            alive_color=THEMES[current_theme]["cell"],
+            accent_color=DIMENSION_BY_KEY["3d"].accent,
+            selected=selected,
+        )
+    ),
 )
 three_dimensional_controller = ThreeDimensionalWorkspaceController(
     three_dimensional_services,
@@ -4748,6 +4807,8 @@ export_manager = ExportMenu(
 )
 
 main_menu = setup_menu()
+if active_dimension == "3d" and not _switch_display_backend("3d"):
+    active_dimension = "2d"
 rebuild_context_menu()
 center_view()
 set_status(
@@ -4805,7 +4866,7 @@ def run() -> None:
                 single_step_requested = False
 
             draw_scene()
-            pygame.display.flip()
+            display_backend.present()
             if smoke_test:
                 running = False
 
@@ -4813,6 +4874,7 @@ def run() -> None:
         pattern_scan_executor.shutdown(wait=True, cancel_futures=True)
         comparison_runner.shutdown()
         export_runner.shutdown()
+        display_backend.close()
         pygame.quit()
 
 

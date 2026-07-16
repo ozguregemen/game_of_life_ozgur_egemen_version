@@ -199,6 +199,31 @@ class SessionStorageTests(unittest.TestCase):
         ):
             session_storage.validate_session_document(document)
 
+    def test_legacy_3d_slice_camera_is_upgraded_to_orbit_camera(self) -> None:
+        document = self.valid_session("Legacy 3D Camera")
+        document["workspaces"]["3d"]["camera"] = {
+            "cell_size": 12,
+            "offset": [15, -8],
+        }
+
+        normalized = session_storage.validate_session_document(document)
+        camera = normalized["workspaces"]["3d"]["camera"]
+
+        self.assertEqual(camera["target"], [0.0, 0.0, 0.0])
+        self.assertGreater(camera["distance"], 8.0)
+        self.assertIn("yaw", camera)
+        self.assertIn("pitch", camera)
+
+    def test_invalid_3d_orbit_camera_is_rejected(self) -> None:
+        document = self.valid_session("Invalid 3D Camera")
+        document["workspaces"]["3d"]["camera"]["pitch"] = 10.0
+
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "pitch",
+        ):
+            session_storage.validate_session_document(document)
+
 
 if __name__ == "__main__":
     unittest.main()

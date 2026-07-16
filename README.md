@@ -15,13 +15,17 @@ python life.py
 Python 3.14 kullanıyorsanız proje `pygame-ce` ile çalışır. Kod içindeki import
 satırı yine `import pygame` olarak kalır.
 
+Gerçek 3D görünüm, `requirements.txt` ile kurulan ModernGL üzerinden OpenGL 3.3
+core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve 2D
+çalışmaya devam eder; 3D seçimi ise anlaşılır bir hata mesajıyla engellenir.
+
 ## Ana özellikler
 
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
 - Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
   kurallar için genelleştirilmiş 1D çalışma alanı
-- B6/S567 ve B5/S45 spatial Life kurallarıyla çalışan, X/Y/Z dilimleri düzenlenebilen
-  oynanabilir 3D volume çalışma alanı
+- B6/S567 ve B5/S45 spatial Life kurallarıyla çalışan, depth test ve ışıklandırmalı
+  voxel görünümü, orbit kamera ve doğrudan voxel düzenleme sunan 3D çalışma alanı
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
@@ -63,7 +67,7 @@ satırı yine `import pygame` olarak kalır.
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
-| Ctrl + 0 | Sonlu 2D tahtayı veya güncel 3D dilimi pencereye sığdır |
+| Ctrl + 0 | Sonlu 2D tahtayı veya tam 3D volume'u pencereye sığdır |
 | D | 1D / 2D / 3D boyut seçme panelini aç / kapat |
 | M | 2D çalışma alanında açıklamalı mod seçme panelini aç / kapat |
 | E | 1D çalışma alanında 0–255 rule kataloğunu aç / kapat |
@@ -85,8 +89,10 @@ satırı yine `import pygame` olarak kalır.
 | 1–9 | Pattern menüsünde görünen kategori veya patterni seç; gridde ilk hazır patternlerden birini seç |
 | Backspace / Sol ok | Pattern alt menüsünden kategori listesine dön |
 | `[` / `]` | Zoom out / zoom in |
-| Q | 3D çalışma alanında Z / Y / X dilim eksenini değiştir |
-| `,` / `.` | 3D çalışma alanında önceki / sonraki dilime git |
+| 3D'de sol sürükle | Orbit kamerayı volume çevresinde döndür |
+| 3D'de orta sürükle | Kamera hedefini düzlem üzerinde taşı |
+| 3D'de sol tık | İşaretlenen voxel'in yanına yeni voxel ekle |
+| 3D'de sağ tık | İşaretlenen voxel'i sil |
 | B | 3D çalışma alanında fixed / wrap / reflect sınırını değiştir |
 | K | 3D çalışma alanında 26 komşulu Moore / 6 komşulu face ailesini değiştir |
 
@@ -113,12 +119,14 @@ satırı yine `import pygame` olarak kalır.
 - `workspaces/base.py`: Ortak workspace controller/renderer sözleşmesi ve registry
 - `workspaces/elementary_1d.py`: 1D state, history, input, sidebar ve renderer
 - `workspaces/two_dimensional.py`: Altı mevcut 2D modu ortak workspace akışına bağlayan adaptör
-- `workspaces/three_dimensional.py`: 3D volume state, slice input, timeline, sidebar ve renderer
+- `workspaces/three_dimensional.py`: 3D volume state, dünya-uzayı input, timeline, sidebar ve renderer
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
 - `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
 - `three_dimensional_ca.py`: Sınırlı uint8 volume, 3D komşuluk ve slice çekirdeği
 - `three_dimensional_rules.py`: Binary 3D Life-like kural tanımları ve toplu geçiş motoru
+- `three_dimensional_rendering.py`: Orbit kamera, ray/voxel seçimi ve instanced cube renderer
+- `three_dimensional_display.py`: Pygame yazılım ekranı ile ModernGL 3D ekranı arasında geçiş ve UI compositing
 - `surface_rasterizer.py`: NumPy/surfarray tabanlı ortak 2D state-plane çizicisi
 - `immigration.py`: İki tür ve çoğunluk kalıtımı kullanan Immigration Game çekirdeği
 - `brians_brain.py`: Üç durumlu Brian's Brain kural çekirdeği
@@ -155,7 +163,7 @@ viewport cache anahtarı, temel çizim, dinamik katmanlar, bilgi/istatistik barl
 modal çizimini üstlenir. Ana event loop seçili boyutun ayrıntılarını bilmeden bu
 ortak arayüzü çağırır.
 
-Genelleştirilmiş 1D ve slice tabanlı 3D CA kendi state/controller/renderer modüllerinde
+Genelleştirilmiş 1D ve donanım hızlandırmalı 3D CA kendi state/controller/renderer modüllerinde
 yaşar. Mevcut 2D modlar davranışları değiştirilmeden bir workspace adaptörüyle aynı
 akışa bağlanmıştır. Ana event loop üç boyutta da aynı workspace sözleşmesini kullanır.
 
@@ -184,9 +192,20 @@ doğrudan ortak `StateGridRasterizer` ile çizilebilir.
 Ana uygulamadaki 3D kartı bu çekirdeği kullanan ayrı bir controller/renderer açar.
 Varsayılan 24×32×32 binary volume, Carter Bays'in 26-komşulu B6/S567 kuralıyla başlar;
 B5/S45 alternatifi ve altı yüz komşulu deneysel B3/S23 seçeneği sidebar'dan
-değiştirilebilir. Kullanıcı X/Y/Z düzlemleri arasında gezebilir, görünür dilimde voxel
-çizip silebilir, fixed/wrap/reflect sınırlarını seçebilir, simülasyonu çalıştırabilir ve
-ortak timeline üzerinden geri/ileri gidebilir. Varsayılan iki Bays kuralının kaynağı:
+değiştirilebilir. Canlı hücreler ModernGL ile tek tek draw call yerine instanced cube
+olarak, perspektif projection, depth test ve yönlü ışıkla çizilir. Sol sürükleme orbit,
+orta sürükleme pan, tekerlek zoom yapar. İmlecin ışını 3D DDA ile volume içinde gezerek
+ilk canlı voxel'i bulur; sol tık önündeki boş komşuya ekler, sağ tık seçili voxel'i
+siler. Kamera hedefi, açıları, uzaklığı ve görüş alanı tam oturum JSON'unda saklanır.
+
+Pygame sidebar, timeline, analiz ve modal bileşenleri yeniden yazılmamıştır: şeffaf
+bir Pygame surface'e çizilip her frame OpenGL sahnesinin üstüne tek texture olarak
+bindirilir. 1D/2D'ye dönüldüğünde OpenGL kaynakları bırakılır ve mevcut resizable
+yazılım surface'i geri kurulur. SDL dummy sürücüsü gerçek GL context sunmadığı için
+otomatik testlerde X/Y/Z slice rasterizer yalnız teknik smoke-test fallback'i olarak
+kalır; normal kullanıcı görünümü değildir. Kullanıcı fixed/wrap/reflect sınırlarını
+seçebilir, simülasyonu çalıştırabilir ve ortak timeline üzerinden geri/ileri gidebilir.
+Varsayılan iki Bays kuralının kaynağı:
 [Carter Bays, “A Note About the Discovery of Many New Rules for the Game of
 Three-Dimensional Life”](https://doi.org/10.25088/complexsystems.16.4.381).
 
@@ -277,8 +296,10 @@ bağlamsal menü davranışını; workspace registry/controller/renderer sözle�
 checkpoint/delta round-trip, timeline dallanması, ileri/geri gezinme ve sürükleme davranışını;
 bilimsel metrikleri, periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
 PNG/GIF/MP4 raster kodlamayı, CSV/JSON güvenliğini ve export menü entegrasyonunu;
-oturum/profile güvenliğini ve tam-state round-trip davranışını; 3D volume/rule/slice
-çekirdeğini ve üç workspace'in SDL dummy video driver ile başlangıcını kapsar.
+oturum/profile güvenliğini ve tam-state round-trip davranışını; 3D volume/rule,
+orbit kamera, ray seçimi ve voxel geometri çekirdeğini; üç workspace'in SDL dummy
+video driver ile başlangıcını kapsar. Ayrıca gerçek OpenGL smoke testi instanced
+renderer'ın bir volume frame'i üretebildiğini doğrulamak için elle çalıştırılabilir.
 
 ## Tam oturum kaydetme ve yükleme
 
@@ -291,7 +312,7 @@ Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünü
 seçenekleri, 1D/2D/3D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
 generation değerleri, Life rule'u, moda özel fırçalar, 1D alanının rule family/spec,
 boundary, seed, tam diyagram, second-order hafıza ve karşılaştırma durumu ile 3D
-volume'un hücreleri, kuralı, sınırı ve seçili dilimini içerir. Yükleme simülasyonu
+volume'un hücreleri, kuralı, sınırı, inceleme dilimi ve orbit kamerasını içerir. Yükleme simülasyonu
 güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
 başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
@@ -323,8 +344,9 @@ yüzeye aktarılır. Ölçeklenmiş scratch yüzeyleri yeniden kullanıldığı 
 başına `pygame.draw.rect` çağrısı ve frame başına gereksiz yüzey tahsisi yapılmaz.
 Toplu yol 4.096 veya daha fazla görünür hücrede otomatik seçilir; küçük veya
 yarım-hücre hizalı özel diyagramlarda eski çizim yolu güvenli fallback olarak
-korunur. Aynı raster katmanı 3D workspace'in X/Y/Z slice görünümlerini de hücre başına
-surface oluşturmadan toplu çizer.
+korunur. 3D çalışma alanı ise yalnız canlı voxel'ler için kompakt bir instance
+buffer günceller ve bütün küpleri tek instanced draw call ile çizer. X/Y/Z slice
+rasterizer yalnız OpenGL'siz SDL dummy smoke test yolunda kullanılır.
 
 Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonra sonuçları
 [`benchmarks/README.md`](benchmarks/README.md) dosyasındadır.

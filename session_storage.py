@@ -677,7 +677,56 @@ def _default_3d_workspace() -> dict[str, Any]:
         "boundary": "fixed",
         "generation": 0,
         "slice": {"axis": "z", "index": depth // 2},
-        "camera": {"cell_size": 12, "offset": [0, 0]},
+        "camera": _default_3d_orbit_camera((depth, rows, columns)),
+    }
+
+
+def _default_3d_orbit_camera(shape: Sequence[int]) -> dict[str, Any]:
+    """Return the centered isometric camera used for new and legacy sessions."""
+    diagonal = math.sqrt(sum(float(length) ** 2 for length in shape))
+    return {
+        "target": [0.0, 0.0, 0.0],
+        "yaw": math.radians(45.0),
+        "pitch": math.radians(28.0),
+        "distance": max(8.0, diagonal * 1.35),
+        "fov_y": 45.0,
+    }
+
+
+def _validate_3d_orbit_camera(
+    value: Any,
+    label: str,
+    shape: Sequence[int],
+) -> dict[str, Any]:
+    """Validate the perspective camera and upgrade the old slice camera."""
+    camera = _mapping(value, label)
+    if "target" not in camera:
+        _validate_camera(camera, label, minimum_size=2, maximum_size=24)
+        return _default_3d_orbit_camera(shape)
+
+    target_source = _sequence(camera.get("target"), f"{label}.target")
+    if len(target_source) != 3:
+        raise DocumentValidationError(f"{label}.target must contain three values.")
+    target = [
+        _number(item, f"{label}.target[{index}]")
+        for index, item in enumerate(target_source)
+    ]
+    yaw = _number(camera.get("yaw"), f"{label}.yaw")
+    pitch = _number(camera.get("pitch"), f"{label}.pitch")
+    distance = _number(camera.get("distance"), f"{label}.distance", minimum=2.0)
+    fov_y = _number(camera.get("fov_y", 45.0), f"{label}.fov_y", minimum=1.0)
+    if not math.radians(-85.0) <= pitch <= math.radians(85.0):
+        raise DocumentValidationError(f"{label}.pitch is outside the orbit limit.")
+    if distance > 10_000.0:
+        raise DocumentValidationError(f"{label}.distance is too large.")
+    if fov_y >= 179.0:
+        raise DocumentValidationError(f"{label}.fov_y must be below 179 degrees.")
+    return {
+        "target": target,
+        "yaw": yaw,
+        "pitch": pitch,
+        "distance": distance,
+        "fov_y": fov_y,
     }
 
 
@@ -770,11 +819,10 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
                 maximum=axis_length - 1,
             ),
         },
-        "camera": _validate_camera(
+        "camera": _validate_3d_orbit_camera(
             workspace.get("camera"),
             "workspaces.3d.camera",
-            minimum_size=2,
-            maximum_size=24,
+            shape,
         ),
     }
 

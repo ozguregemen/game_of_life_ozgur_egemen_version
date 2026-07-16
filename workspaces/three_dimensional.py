@@ -1,4 +1,4 @@
-"""Playable slice-based workspace for binary three-dimensional automata."""
+"""Playable hardware-rendered workspace for binary 3D cellular automata."""
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from three_dimensional_rules import (
     RULES_3D,
     step_life_like_3d,
 )
+from three_dimensional_rendering import OrbitCamera3D, pick_voxel
 from timeline_history import TimelineBinding, TimelineStatus
 from workspaces.base import WorkspaceController, WorkspaceRenderer
 
@@ -47,9 +48,15 @@ def _new_default_volume() -> Volume3D:
     )
 
 
+def _new_default_camera() -> OrbitCamera3D:
+    camera = OrbitCamera3D()
+    camera.reset_for_shape(DEFAULT_VOLUME_SHAPE)
+    return camera
+
+
 @dataclass
 class ThreeDimensionalWorkspaceState:
-    """Persistent and interactive state for the 3D slice workspace."""
+    """Persistent simulation, orbit-camera, and interaction state."""
 
     volume: Volume3D = field(default_factory=_new_default_volume)
     rule_key: str = DEFAULT_RULE_3D.key
@@ -59,6 +66,11 @@ class ThreeDimensionalWorkspaceState:
     cell_size: int = 12
     view_offset_x: int = 0
     view_offset_y: int = 0
+    camera: OrbitCamera3D = field(default_factory=_new_default_camera)
+    selected_voxel: tuple[int, int, int] | None = None
+    pointer_button: int = 0
+    pointer_origin: tuple[int, int] | None = None
+    pointer_dragged: bool = False
     brush_state: int = 1
     drawing: bool = False
     drawing_value: int = 1
@@ -98,10 +110,15 @@ class ThreeDimensionalWorkspaceServices:
     grid_top_margin: int
     record_analysis: Callable[[StateObservation], None]
     reset_analysis: Callable[[StateObservation], None]
+    hardware_3d: Callable[[], bool] = lambda: False
+    render_volume: Callable[
+        [Volume3D, OrbitCamera3D, pygame.Rect, int, tuple[int, int, int] | None],
+        bool,
+    ] = lambda _volume, _camera, _viewport, _revision, _selected: False
 
 
 class ThreeDimensionalWorkspaceController(WorkspaceController):
-    """Own 3D simulation state, slice navigation, history, and editing."""
+    """Own 3D simulation state, orbit navigation, history, and editing."""
 
     key = "3d"
 
@@ -136,11 +153,17 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def activate(self) -> None:
         self.services.set_running(False)
-        self.center_view()
+        if self.services.hardware_3d():
+            self.state.selected_voxel = None
+        else:
+            self.center_view()
 
     def deactivate(self) -> None:
         self.state.drawing = False
         self.state.stroke_history_pending = False
+        self.state.pointer_button = 0
+        self.state.pointer_origin = None
+        self.state.pointer_dragged = False
 
     def slice_count(self, axis: str | None = None) -> int:
         selected = self.state.slice_axis if axis is None else axis
@@ -169,6 +192,10 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         )
 
     def center_view(self) -> None:
+        if self.services.hardware_3d():
+            self.state.camera.reset_for_shape(self.state.volume.shape)
+            self.state.selected_voxel = None
+            return
         viewport = self.services.viewport()
         rows, columns = self.state.volume.slice_shape(self.state.slice_axis)
         width = columns * self.state.cell_size
@@ -180,7 +207,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self._invalidate()
 
     def fit_view(self) -> None:
-        """Fit the whole current slice into the viewport."""
+        """Fit the full volume, or the fallback slice, into the viewport."""
+        if self.services.hardware_3d():
+            self.center_view()
+            self._status("3D camera fitted to the complete volume.")
+            return
         viewport = self.services.viewport()
         rows, columns = self.state.volume.slice_shape(self.state.slice_axis)
         available_height = max(1, viewport.height - self.services.grid_top_margin)
@@ -193,6 +224,9 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self._status(f"3D slice fitted at {self.state.cell_size}px per cell.")
 
     def zoom(self, factor: float) -> None:
+        if self.services.hardware_3d():
+            self.state.camera.zoom(factor)
+            return
         new_size = int(round(self.state.cell_size * factor))
         new_size = max(
             THREE_D_MIN_CELL_SIZE,
@@ -411,11 +445,12 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.state.slice_index = min(self.state.slice_index, self.slice_count() - 1)
         self.state.drawing = False
         self.state.stroke_history_pending = False
+        self.state.selected_voxel = None
         self._invalidate()
         self.services.rebuild_sidebar()
 
     def snapshot(self) -> dict[str, Any]:
-        """Return JSON-compatible simulation, slice, and camera state."""
+        """Return JSON-compatible simulation, inspection, and orbit-camera state."""
         return {
             "shape": list(self.state.volume.shape),
             "cells": self.state.volume.cells.tolist(),
@@ -426,10 +461,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 "axis": self.state.slice_axis,
                 "index": self.state.slice_index,
             },
-            "camera": {
-                "cell_size": self.state.cell_size,
-                "offset": [self.state.view_offset_x, self.state.view_offset_y],
-            },
+            "camera": self.state.camera.as_dict(),
         }
 
     def restore(self, snapshot: Mapping[str, Any]) -> None:
@@ -454,14 +486,25 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.state.generation = int(snapshot["generation"])
         self.state.slice_axis = axis
         self.state.slice_index = index
-        self.state.cell_size = max(
-            THREE_D_MIN_CELL_SIZE,
-            min(THREE_D_MAX_CELL_SIZE, int(camera["cell_size"])),
-        )
-        self.state.view_offset_x = int(camera["offset"][0])
-        self.state.view_offset_y = int(camera["offset"][1])
+        if "target" in camera:
+            self.state.camera = OrbitCamera3D.from_mapping(camera)
+        else:
+            # Direct callers can still restore pre-OpenGL snapshots. The
+            # session validator upgrades these to an orbit camera beforehand.
+            self.state.camera = _new_default_camera()
+            self.state.camera.reset_for_shape(volume.shape)
+            self.state.cell_size = max(
+                THREE_D_MIN_CELL_SIZE,
+                min(THREE_D_MAX_CELL_SIZE, int(camera["cell_size"])),
+            )
+            self.state.view_offset_x = int(camera["offset"][0])
+            self.state.view_offset_y = int(camera["offset"][1])
         self.state.drawing = False
         self.state.stroke_history_pending = False
+        self.state.selected_voxel = None
+        self.state.pointer_button = 0
+        self.state.pointer_origin = None
+        self.state.pointer_dragged = False
         self._invalidate()
         self.reset_history()
         self.services.rebuild_sidebar()
@@ -515,6 +558,81 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         return True
 
     def handle_pointer_event(self, event: pygame.event.Event) -> bool:
+        if self.services.hardware_3d():
+            return self._handle_voxel_pointer_event(event)
+        return self._handle_slice_pointer_event(event)
+
+    def _pick_at(self, position: tuple[int, int]):
+        viewport = self.services.viewport()
+        if not viewport.collidepoint(position):
+            return None
+        origin, direction = self.state.camera.screen_ray(
+            position,
+            (viewport.x, viewport.y, viewport.width, viewport.height),
+        )
+        return pick_voxel(self.state.volume, origin, direction)
+
+    def _handle_voxel_pointer_event(self, event: pygame.event.Event) -> bool:
+        viewport = self.services.viewport()
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button not in (1, 2, 3) or not viewport.collidepoint(event.pos):
+                return True
+            self.state.pointer_button = event.button
+            self.state.pointer_origin = event.pos
+            self.state.pointer_dragged = False
+            if event.button == 3:
+                result = self._pick_at(event.pos)
+                if result is not None:
+                    self.state.stroke_history_pending = False
+                    changed = self.draw_cell(result.hit, 0)
+                    if changed:
+                        self.sync_history()
+                    self.state.stroke_history_pending = False
+                    self.state.selected_voxel = None
+            return True
+
+        if event.type == pygame.MOUSEMOTION:
+            if self.state.pointer_button == 1 and event.buttons[0]:
+                if self.state.pointer_origin is not None:
+                    dx = event.pos[0] - self.state.pointer_origin[0]
+                    dy = event.pos[1] - self.state.pointer_origin[1]
+                    if abs(dx) + abs(dy) >= 4:
+                        self.state.pointer_dragged = True
+                if self.state.pointer_dragged:
+                    self.state.camera.orbit(*event.rel)
+                    self.state.selected_voxel = None
+            elif self.state.pointer_button == 2 and event.buttons[1]:
+                self.state.pointer_dragged = True
+                self.state.camera.pan(event.rel[0], event.rel[1], viewport.height)
+                self.state.selected_voxel = None
+            elif not any(event.buttons):
+                result = self._pick_at(event.pos)
+                self.state.selected_voxel = None if result is None else result.hit
+            return True
+
+        if event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1 and not self.state.pointer_dragged:
+                result = self._pick_at(event.pos)
+                if result is None:
+                    self._status(
+                        "No voxel was hit; use Centered Seed or Randomize to start a structure."
+                    )
+                elif result.adjacent is None:
+                    self._status("That voxel is on the camera-facing volume boundary.")
+                else:
+                    self.state.stroke_history_pending = False
+                    changed = self.draw_cell(result.adjacent, 1)
+                    if changed:
+                        self.sync_history()
+                    self.state.stroke_history_pending = False
+                    self.state.selected_voxel = result.adjacent
+            self.state.pointer_button = 0
+            self.state.pointer_origin = None
+            self.state.pointer_dragged = False
+            return True
+        return False
+
+    def _handle_slice_pointer_event(self, event: pygame.event.Event) -> bool:
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button in (1, 3):
                 position = self.mouse_to_position(event.pos)
@@ -603,38 +721,46 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         menu.add_button("Clear Volume", self.clear)
 
         menu.begin_section(
-            "3d_slice",
-            "Slice & View",
-            tooltip="Inspect and edit one axis-aligned plane at a time.",
+            "3d_camera",
+            "Camera & View",
+            tooltip="Orbit, pan, zoom, and reset the perspective voxel view.",
         )
-        menu.add_button(
-            f"Axis: {self.state.slice_axis.upper()} (Q)",
-            self.cycle_axis,
-            accent=accent,
-        )
-        menu.add_button(
-            f"Previous Slice ({self.state.slice_index + 1}/{self.slice_count()})",
-            lambda: self.move_slice(-1),
-        )
-        menu.add_button(
-            f"Next Slice ({self.state.slice_index + 1}/{self.slice_count()})",
-            lambda: self.move_slice(1),
-        )
-        menu.add_button("Fit Slice (Ctrl+0)", self.fit_view)
-        menu.add_button(
-            f"Grid Lines: {'On' if self.services.show_grid() else 'Off'}",
-            self.services.toggle_grid,
-            active=self.services.show_grid(),
-        )
+        menu.add_button("Fit Full Volume (Ctrl+0)", self.fit_view, accent=accent)
+        menu.add_button("Reset Camera (C)", self.center_view)
         menu.add_button(
             f"Theme: {self.services.theme_name().title()}",
             self.services.cycle_theme,
         )
-        menu.add_button("Center View (C)", self.center_view)
+
+        if not self.services.hardware_3d():
+            menu.begin_section(
+                "3d_slice",
+                "Slice Fallback",
+                expanded=False,
+                tooltip="Plane controls used by the headless software fallback.",
+            )
+            menu.add_button(
+                f"Axis: {self.state.slice_axis.upper()} (Q)",
+                self.cycle_axis,
+                accent=accent,
+            )
+            menu.add_button(
+                f"Previous Slice ({self.state.slice_index + 1}/{self.slice_count()})",
+                lambda: self.move_slice(-1),
+            )
+            menu.add_button(
+                f"Next Slice ({self.state.slice_index + 1}/{self.slice_count()})",
+                lambda: self.move_slice(1),
+            )
+            menu.add_button(
+                f"Grid Lines: {'On' if self.services.show_grid() else 'Off'}",
+                self.services.toggle_grid,
+                active=self.services.show_grid(),
+            )
 
 
 class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
-    """Render the active 3D volume as an editable axis-aligned slice."""
+    """Render the volume as voxels, with a slice fallback for dummy SDL."""
 
     render_key = THREE_D_RENDER_KEY
 
@@ -667,6 +793,10 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             state.cell_size,
             state.view_offset_x,
             state.view_offset_y,
+            tuple(float(value) for value in state.camera.target),
+            state.camera.yaw,
+            state.camera.pitch,
+            state.camera.distance,
             self.services.theme_name(),
             self.services.show_grid(),
         )
@@ -675,6 +805,15 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
         screen = self.services.screen()
         viewport = self.services.viewport()
         theme = THEMES[self.services.theme_name()]
+        if self.services.hardware_3d():
+            self.services.render_volume(
+                self.controller.state.volume,
+                self.controller.state.camera,
+                viewport,
+                self.services.render_revision(THREE_D_RENDER_KEY),
+                self.controller.state.selected_voxel,
+            )
+            return
         old_clip = screen.get_clip()
         screen.set_clip(viewport)
         pygame.draw.rect(screen, theme["background"], viewport)
@@ -745,16 +884,28 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
         stats = self.services.cached_stats(THREE_D_RENDER_KEY, self._stats)
         history = self.controller.history_status()
         shape = state.volume.shape
-        first_line = (
-            f"Live voxels: {stats['alive']}/{state.volume.cell_count}   "
-            f"Density: {stats['density']:.2f}%   Slice live: {stats['slice_alive']}   "
-            f"Volume: {shape[2]}×{shape[1]}×{shape[0]}   "
-            f"Timeline: {history.cursor + 1}/{history.frame_count}"
-        )
-        second_line = (
-            f"{state.slice_axis.upper()} slice {state.slice_index + 1}/{self.controller.slice_count()}   ·   "
-            f"{rule.name} {rule.notation}   ·   left draw · right erase · middle drag · Q axis · ,/. slice"
-        )
+        if self.services.hardware_3d():
+            first_line = (
+                f"Live voxels: {stats['alive']}/{state.volume.cell_count}   "
+                f"Density: {stats['density']:.2f}%   "
+                f"Volume: {shape[2]}×{shape[1]}×{shape[0]}   "
+                f"Timeline: {history.cursor + 1}/{history.frame_count}"
+            )
+            second_line = (
+                f"{rule.name} {rule.notation}   ·   left drag: orbit   ·   "
+                "wheel: zoom   ·   middle drag: pan   ·   left click: add   ·   right click: erase"
+            )
+        else:
+            first_line = (
+                f"Live voxels: {stats['alive']}/{state.volume.cell_count}   "
+                f"Density: {stats['density']:.2f}%   Slice live: {stats['slice_alive']}   "
+                f"Volume: {shape[2]}×{shape[1]}×{shape[0]}   "
+                f"Timeline: {history.cursor + 1}/{history.frame_count}"
+            )
+            second_line = (
+                f"{state.slice_axis.upper()} slice {state.slice_index + 1}/{self.controller.slice_count()}   ·   "
+                f"{rule.name} {rule.notation}   ·   dummy-video slice fallback"
+            )
         screen.blit(
             info_font.render(
                 self._fit_text(info_font, first_line, content_width - 20),

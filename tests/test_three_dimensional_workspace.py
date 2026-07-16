@@ -1,5 +1,6 @@
 import os
 import unittest
+from dataclasses import replace
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -139,6 +140,60 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertIn("Session Save / Load (P)", labels)
         self.assertTrue(any(label.startswith("Rule: B") for label in labels))
         self.assertTrue(any(label.startswith("Axis:") for label in labels))
+
+    def test_hardware_renderer_and_orbit_voxel_controls_use_world_space(self) -> None:
+        rendered: list[tuple[object, object]] = []
+        services = replace(
+            self.controller.services,
+            hardware_3d=lambda: True,
+            render_volume=lambda volume, _camera, _viewport, _revision, selected: (
+                rendered.append((volume, selected)) or True
+            ),
+        )
+        controller = ThreeDimensionalWorkspaceController(
+            services,
+            ThreeDimensionalWorkspaceState(),
+        )
+        renderer = ThreeDimensionalWorkspaceRenderer(controller, services)
+        controller.seed_cluster()
+        renderer.draw_base()
+        self.assertEqual(len(rendered), 1)
+        menu = Menu(700, 42, 200, 608, "classic")
+        controller.build_sidebar(menu)
+        labels = [entry["button"].text for entry in menu.buttons]
+        self.assertIn("Fit Full Volume (Ctrl+0)", labels)
+        self.assertFalse(any(label.startswith("Axis:") for label in labels))
+
+        center = self.viewport.center
+        initial_yaw = controller.state.camera.yaw
+        controller.handle_pointer_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=center)
+        )
+        controller.handle_pointer_event(
+            pygame.event.Event(
+                pygame.MOUSEMOTION,
+                pos=(center[0] + 20, center[1] + 4),
+                rel=(20, 4),
+                buttons=(1, 0, 0),
+            )
+        )
+        controller.handle_pointer_event(
+            pygame.event.Event(
+                pygame.MOUSEBUTTONUP,
+                button=1,
+                pos=(center[0] + 20, center[1] + 4),
+            )
+        )
+        self.assertNotEqual(controller.state.camera.yaw, initial_yaw)
+
+        controller.center_view()
+        hit = controller._pick_at(center)
+        self.assertIsNotNone(hit)
+        before = int((controller.state.volume.cells != 0).sum())
+        controller.handle_pointer_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=center)
+        )
+        self.assertEqual(int((controller.state.volume.cells != 0).sum()), before - 1)
 
 
 if __name__ == "__main__":
