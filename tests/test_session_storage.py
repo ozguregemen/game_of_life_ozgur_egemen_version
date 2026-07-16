@@ -250,7 +250,16 @@ class SessionStorageTests(unittest.TestCase):
 
         self.assertEqual(
             normalized["workspaces"]["3d"]["view"],
-            {"mode": "all", "keep_lower": True, "opacity": 1.0},
+            {
+                "mode": "all",
+                "keep_lower": True,
+                "opacity": 1.0,
+                "color_scheme": "state",
+                "lighting": "studio",
+                "outline": 0.055,
+                "voxel_scale": 0.80,
+                "occlusion": 0.65,
+            },
         )
 
     def test_invalid_3d_view_opacity_is_rejected(self) -> None:

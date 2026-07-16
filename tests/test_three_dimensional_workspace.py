@@ -169,6 +169,9 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertIn("Fit Full Volume (Ctrl+0)", labels)
         self.assertFalse(any(label.startswith("Axis:") for label in labels))
         self.assertTrue(any(label.startswith("Display:") for label in labels))
+        self.assertTrue(any(label.startswith("Coloring:") for label in labels))
+        self.assertTrue(any(label.startswith("Lighting:") for label in labels))
+        self.assertTrue(any(label.startswith("Outline:") for label in labels))
 
         center = self.viewport.center
         initial_yaw = controller.state.camera.yaw
@@ -220,6 +223,11 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         controller.move_slice(2)
         controller.toggle_clip_side()
         controller.cycle_opacity()
+        controller.cycle_color_scheme()
+        controller.cycle_lighting()
+        controller.cycle_outline()
+        controller.cycle_voxel_scale()
+        controller.cycle_occlusion()
         snapshot = controller.snapshot()
 
         restored = ThreeDimensionalWorkspaceController(
@@ -230,6 +238,11 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertEqual(restored.snapshot(), snapshot)
         self.assertEqual(restored.render_settings().mode, "clip")
         self.assertEqual(restored.render_settings().opacity, 0.65)
+        self.assertEqual(restored.render_settings().color_scheme, "xyz")
+        self.assertEqual(restored.render_settings().lighting, "soft")
+        self.assertEqual(restored.render_settings().outline, 0.10)
+        self.assertEqual(restored.render_settings().voxel_scale, 0.92)
+        self.assertEqual(restored.render_settings().occlusion, 0.0)
 
     def test_generations_is_a_distinct_playable_mode_with_multistate_history(self) -> None:
         self.controller.set_mode(MODE_GENERATIONS)

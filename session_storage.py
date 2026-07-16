@@ -37,6 +37,7 @@ from three_dimensional_modes import (
     rule_state_count,
 )
 from three_dimensional_rules import DEFAULT_RULE_3D
+from three_dimensional_rendering import COLOR_SCHEMES, LIGHTING_MODES
 
 SESSION_SCHEMA = "cellular-automata-lab/session"
 PROFILE_SCHEMA = "cellular-automata-lab/elementary-profile"
@@ -689,7 +690,16 @@ def _default_3d_workspace() -> dict[str, Any]:
         "generation": 0,
         "slice": {"axis": "z", "index": depth // 2},
         "camera": _default_3d_orbit_camera((depth, rows, columns)),
-        "view": {"mode": "all", "keep_lower": True, "opacity": 1.0},
+        "view": {
+            "mode": "all",
+            "keep_lower": True,
+            "opacity": 1.0,
+            "color_scheme": "state",
+            "lighting": "studio",
+            "outline": 0.055,
+            "voxel_scale": 0.80,
+            "occlusion": 0.65,
+        },
     }
 
 
@@ -847,6 +857,33 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
         raise DocumentValidationError(
             "workspaces.3d.view.opacity must be at most 1.0."
         )
+    outline = _number(
+        view_state.get("outline", 0.055),
+        "workspaces.3d.view.outline",
+        minimum=0.0,
+    )
+    if outline > 0.20:
+        raise DocumentValidationError(
+            "workspaces.3d.view.outline must be at most 0.20."
+        )
+    voxel_scale = _number(
+        view_state.get("voxel_scale", 0.80),
+        "workspaces.3d.view.voxel_scale",
+        minimum=0.50,
+    )
+    if voxel_scale > 0.98:
+        raise DocumentValidationError(
+            "workspaces.3d.view.voxel_scale must be at most 0.98."
+        )
+    occlusion = _number(
+        view_state.get("occlusion", 0.65),
+        "workspaces.3d.view.occlusion",
+        minimum=0.0,
+    )
+    if occlusion > 1.0:
+        raise DocumentValidationError(
+            "workspaces.3d.view.occlusion must be at most 1.0."
+        )
     return {
         "shape": shape,
         "cells": cells,
@@ -888,6 +925,19 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
                 "workspaces.3d.view.keep_lower",
             ),
             "opacity": opacity,
+            "color_scheme": _choice(
+                view_state.get("color_scheme", "state"),
+                "workspaces.3d.view.color_scheme",
+                COLOR_SCHEMES,
+            ),
+            "lighting": _choice(
+                view_state.get("lighting", "studio"),
+                "workspaces.3d.view.lighting",
+                LIGHTING_MODES,
+            ),
+            "outline": outline,
+            "voxel_scale": voxel_scale,
+            "occlusion": occlusion,
         },
     }
 

@@ -13,6 +13,7 @@ from three_dimensional_rendering import (
     voxel_is_visible,
     volume_position_to_world,
     voxel_instance_data,
+    voxel_render_instance_data,
 )
 
 
@@ -70,10 +71,22 @@ class VoxelGeometryTests(unittest.TestCase):
             opacity=0.65,
         )
         self.assertEqual(settings.axis, "y")
+        self.assertEqual(settings.color_scheme, "state")
+        self.assertEqual(settings.lighting, "studio")
         with self.assertRaises(ValueError):
             VoxelRenderSettings(mode="unknown")
         with self.assertRaises(ValueError):
             VoxelRenderSettings(opacity=0.0)
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(color_scheme="unknown")
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(lighting="unknown")
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(outline=0.5)
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(voxel_scale=0.1)
+        with self.assertRaises(ValueError):
+            VoxelRenderSettings(occlusion=1.5)
 
     def test_instance_data_centers_volume_and_keeps_states(self) -> None:
         volume = Volume3D.empty((3, 5, 7), state_count=3)
@@ -89,6 +102,16 @@ class VoxelGeometryTests(unittest.TestCase):
             volume_position_to_world((1, 2, 3), volume.shape),
             (0.0, 0.0, 0.0),
         )
+
+    def test_render_instance_data_includes_local_occupancy(self) -> None:
+        volume = Volume3D.empty((3, 3, 3), state_count=3)
+        volume.set_cell((1, 1, 1), 1)
+        volume.set_cell((1, 1, 2), 2)
+
+        data = voxel_render_instance_data(volume)
+
+        self.assertEqual(data.shape, (2, 5))
+        np.testing.assert_allclose(data[:, 4], (2 / 27, 2 / 27))
 
     def test_dda_picking_returns_hit_and_adjacent_empty_voxel(self) -> None:
         volume = Volume3D.empty((3, 3, 3))

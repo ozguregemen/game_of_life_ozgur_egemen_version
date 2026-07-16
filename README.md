@@ -229,6 +229,22 @@ göre arkadan öne sıralanır, alpha blending sırasında depth yazımı kapat�
 iç yapılar yaklaşık olarak görülebilir. Clipping ve katman filtresi ray seçimine de
 uygulanır; görünmeyen voxel'ler fareyle yanlışlıkla düzenlenmez.
 
+`Voxel Appearance` bölümü Softology'nin 3D CA görselleştirme yaklaşımından esinlenen
+yedi gerçek zamanlı renk şeması sunar: state shading (aktif hücrelerde sarıdan
+refractory kırmızıya), XYZ koordinat rengi, Z-layer paleti, merkez uzaklığına göre
+radial palet, yerel komşuluk yoğunluğu, aktif tema rengi ve studio white. `U` bu
+şemaları hızlıca değiştirir. Anti-aliased voxel outline bitişik küpleri ayırır; yerel
+yoğunluk verisi, içte kalan voxel'leri karartarak yaklaşık ambient occlusion sağlar.
+Studio aydınlatma sıcak ana ışık, soğuk dolgu ışığı ve hafif specular vurgu kullanır;
+Soft ve Flat seçenekleri de vardır. Airy/Balanced/Solid spacing ayarı yalnız küp
+geometrisini değiştirir, CA lattice veya komşuluk hesabını etkilemez. Bu gerçek
+zamanlı yaklaşım, Softology videosunda kullanılan çevrimdışı Mitsuba kalitesini
+birebir kopyalamaz fakat yapıların okunabilirliğini benzer görsel ilkelerle artırır.
+Görsel tasarım referansları:
+[Softology 3D CA renklendirme notları](https://softologyblog.wordpress.com/2019/12/28/3d-cellular-automata-3/),
+[Visions of Chaos](https://softology.pro/voc.htm) ve MIT lisanslı
+[William Yang 3D Cellular Automata](https://github.com/williamyang98/3D-Cellular-Automata).
+
 `Bays 5766 Glider` düğmesi yayımlanmış 10 koordinatlı ortak 3D glider'ı yükler,
 `B6/S567` kuralını ve sürekli dolaşım için `wrap` sınırını seçer. Desen dört nesilde
 aynı biçime dönerek bir hücre çapraz ötelenir. Başlangıç koordinatları:

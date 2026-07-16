@@ -3847,6 +3847,7 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
         return (
             ("M", "Switch Spatial Life / 3D Generations mode"),
             ("V", "Cycle 32³, 48³, and 64³ experiment volumes"),
+            ("U", "Cycle Softology-inspired voxel color schemes"),
             ("Left drag", "Orbit the perspective camera around the volume"),
             ("Mouse wheel", "Zoom the 3D camera"),
             ("Middle drag", "Pan the camera target"),

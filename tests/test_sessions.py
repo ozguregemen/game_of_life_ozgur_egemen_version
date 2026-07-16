@@ -102,6 +102,11 @@ class ApplicationSessionTests(unittest.TestCase):
         spatial.cell_size = 11
         spatial.view_offset_x = -23
         spatial.view_offset_y = 17
+        spatial.color_scheme = "radial"
+        spatial.lighting_mode = "soft"
+        spatial.outline_thickness = 0.10
+        spatial.voxel_scale = 0.92
+        spatial.occlusion_strength = 0.35
 
     def test_full_session_round_trip_restores_all_workspaces_and_ui(self) -> None:
         self.configure_distinct_state()
@@ -179,6 +184,11 @@ class ApplicationSessionTests(unittest.TestCase):
         self.assertEqual(spatial.generation, 24)
         self.assertEqual((spatial.slice_axis, spatial.slice_index), ("y", 4))
         self.assertEqual((spatial.view_offset_x, spatial.view_offset_y), (-23, 17))
+        self.assertEqual(spatial.color_scheme, "radial")
+        self.assertEqual(spatial.lighting_mode, "soft")
+        self.assertEqual(spatial.outline_thickness, 0.10)
+        self.assertEqual(spatial.voxel_scale, 0.92)
+        self.assertEqual(spatial.occlusion_strength, 0.35)
         self.assertEqual(
             life.analysis_registry.get("3d:life_like").summary.sample_count,
             1,

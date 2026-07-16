@@ -43,7 +43,9 @@ from three_dimensional_rules import (
     step_life_like_3d,
 )
 from three_dimensional_rendering import (
+    COLOR_SCHEMES,
     FILTER_MODES,
+    LIGHTING_MODES,
     OrbitCamera3D,
     VoxelRenderSettings,
     pick_voxel,
@@ -68,10 +70,37 @@ THREE_D_MIN_CELL_SIZE = 2
 THREE_D_MAX_CELL_SIZE = 24
 THREE_D_TIMELINE_FRAMES = 300
 THREE_D_OPACITIES = (1.0, 0.65, 0.35)
+THREE_D_OUTLINES = (0.0, 0.055, 0.10)
+THREE_D_VOXEL_SCALES = (0.68, 0.80, 0.92)
+THREE_D_OCCLUSION_LEVELS = (0.0, 0.35, 0.65)
 THREE_D_VIEW_LABELS = {
     "all": "Full Volume",
     "clip": "Clipping Plane",
     "layer": "Single Layer",
+}
+THREE_D_COLOR_LABELS = {
+    "state": "State Shading",
+    "xyz": "RGB Coordinates",
+    "layer": "Layer Palette",
+    "radial": "Radial Palette",
+    "density": "Neighbor Density",
+    "theme": "Theme Solid",
+    "white": "Studio White",
+}
+THREE_D_LIGHTING_LABELS = {
+    "studio": "Studio",
+    "soft": "Soft",
+    "flat": "Flat",
+}
+THREE_D_OUTLINE_LABELS = {
+    0.0: "Off",
+    0.055: "Subtle",
+    0.10: "Bold",
+}
+THREE_D_VOXEL_SCALE_LABELS = {
+    0.68: "Airy",
+    0.80: "Balanced",
+    0.92: "Solid",
 }
 
 
@@ -109,6 +138,11 @@ class ThreeDimensionalWorkspaceState:
     view_mode: str = "all"
     clip_keep_lower: bool = True
     voxel_opacity: float = 1.0
+    color_scheme: str = "state"
+    lighting_mode: str = "studio"
+    outline_thickness: float = 0.055
+    voxel_scale: float = 0.80
+    occlusion_strength: float = 0.65
     brush_state: int = 1
     drawing: bool = False
     drawing_value: int = 1
@@ -685,6 +719,52 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.services.rebuild_sidebar()
         self._status(f"Voxel opacity: {self.state.voxel_opacity:.0%}.")
 
+    def cycle_color_scheme(self) -> None:
+        index = COLOR_SCHEMES.index(self.state.color_scheme)
+        self.state.color_scheme = COLOR_SCHEMES[(index + 1) % len(COLOR_SCHEMES)]
+        self.services.rebuild_sidebar()
+        self._status(
+            f"3D coloring: {THREE_D_COLOR_LABELS[self.state.color_scheme]}."
+        )
+
+    def cycle_lighting(self) -> None:
+        index = LIGHTING_MODES.index(self.state.lighting_mode)
+        self.state.lighting_mode = LIGHTING_MODES[
+            (index + 1) % len(LIGHTING_MODES)
+        ]
+        self.services.rebuild_sidebar()
+        self._status(
+            f"3D lighting: {THREE_D_LIGHTING_LABELS[self.state.lighting_mode]}."
+        )
+
+    def cycle_outline(self) -> None:
+        index = THREE_D_OUTLINES.index(self.state.outline_thickness)
+        self.state.outline_thickness = THREE_D_OUTLINES[
+            (index + 1) % len(THREE_D_OUTLINES)
+        ]
+        self.services.rebuild_sidebar()
+        self._status(
+            f"Voxel outline: {THREE_D_OUTLINE_LABELS[self.state.outline_thickness]}."
+        )
+
+    def cycle_voxel_scale(self) -> None:
+        index = THREE_D_VOXEL_SCALES.index(self.state.voxel_scale)
+        self.state.voxel_scale = THREE_D_VOXEL_SCALES[
+            (index + 1) % len(THREE_D_VOXEL_SCALES)
+        ]
+        self.services.rebuild_sidebar()
+        self._status(
+            f"Voxel spacing: {THREE_D_VOXEL_SCALE_LABELS[self.state.voxel_scale]}."
+        )
+
+    def cycle_occlusion(self) -> None:
+        index = THREE_D_OCCLUSION_LEVELS.index(self.state.occlusion_strength)
+        self.state.occlusion_strength = THREE_D_OCCLUSION_LEVELS[
+            (index + 1) % len(THREE_D_OCCLUSION_LEVELS)
+        ]
+        self.services.rebuild_sidebar()
+        self._status(f"Local occlusion: {self.state.occlusion_strength:.0%}.")
+
     def render_settings(self) -> VoxelRenderSettings:
         return VoxelRenderSettings(
             mode=self.state.view_mode,
@@ -692,6 +772,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             layer=self.state.slice_index,
             keep_lower=self.state.clip_keep_lower,
             opacity=self.state.voxel_opacity,
+            color_scheme=self.state.color_scheme,
+            lighting=self.state.lighting_mode,
+            outline=self.state.outline_thickness,
+            voxel_scale=self.state.voxel_scale,
+            occlusion=self.state.occlusion_strength,
         )
 
     def toggle_running(self) -> None:
@@ -770,6 +855,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 "mode": self.state.view_mode,
                 "keep_lower": self.state.clip_keep_lower,
                 "opacity": self.state.voxel_opacity,
+                "color_scheme": self.state.color_scheme,
+                "lighting": self.state.lighting_mode,
+                "outline": self.state.outline_thickness,
+                "voxel_scale": self.state.voxel_scale,
+                "occlusion": self.state.occlusion_strength,
             },
         }
 
@@ -799,14 +889,19 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         camera = snapshot["camera"]
         view_state = snapshot.get(
             "view",
-            {"mode": "all", "keep_lower": True, "opacity": 1.0},
+            {},
         )
         render_settings = VoxelRenderSettings(
-            mode=str(view_state["mode"]),
+            mode=str(view_state.get("mode", "all")),
             axis=axis,
             layer=index,
-            keep_lower=view_state["keep_lower"],
-            opacity=float(view_state["opacity"]),
+            keep_lower=view_state.get("keep_lower", True),
+            opacity=float(view_state.get("opacity", 1.0)),
+            color_scheme=str(view_state.get("color_scheme", "state")),
+            lighting=str(view_state.get("lighting", "studio")),
+            outline=float(view_state.get("outline", 0.055)),
+            voxel_scale=float(view_state.get("voxel_scale", 0.80)),
+            occlusion=float(view_state.get("occlusion", 0.65)),
         )
 
         self.state.volume = volume
@@ -818,6 +913,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.state.view_mode = render_settings.mode
         self.state.clip_keep_lower = render_settings.keep_lower
         self.state.voxel_opacity = render_settings.opacity
+        self.state.color_scheme = render_settings.color_scheme
+        self.state.lighting_mode = render_settings.lighting
+        self.state.outline_thickness = render_settings.outline
+        self.state.voxel_scale = render_settings.voxel_scale
+        self.state.occlusion_strength = render_settings.occlusion
         if "target" in camera:
             self.state.camera = OrbitCamera3D.from_mapping(camera)
         else:
@@ -887,6 +987,8 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.cycle_view_mode()
         elif event.key == pygame.K_o:
             self.cycle_opacity()
+        elif event.key == pygame.K_u:
+            self.cycle_color_scheme()
         elif event.key == pygame.K_SLASH:
             self.toggle_clip_side()
         elif event.key == pygame.K_t:
@@ -1139,6 +1241,45 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
         if self.services.hardware_3d():
             menu.begin_section(
+                "3d_appearance",
+                "Voxel Appearance",
+                expanded=False,
+                tooltip=(
+                    "Softology-inspired coloring, local occlusion, outlines, "
+                    "lighting, and voxel spacing."
+                ),
+            )
+            menu.add_button(
+                f"Coloring: {THREE_D_COLOR_LABELS[self.state.color_scheme]} (U)",
+                self.cycle_color_scheme,
+                accent=accent,
+                tooltip=(
+                    "Cycle state shading, XYZ, layer, radial, density, theme, "
+                    "and studio-white color schemes."
+                ),
+            )
+            menu.add_button(
+                f"Lighting: {THREE_D_LIGHTING_LABELS[self.state.lighting_mode]}",
+                self.cycle_lighting,
+                tooltip="Cycle studio, soft, and unlit flat shading.",
+            )
+            menu.add_button(
+                f"Outline: {THREE_D_OUTLINE_LABELS[self.state.outline_thickness]}",
+                self.cycle_outline,
+                tooltip="Separate adjacent cubes with anti-aliased dark face borders.",
+            )
+            menu.add_button(
+                f"Spacing: {THREE_D_VOXEL_SCALE_LABELS[self.state.voxel_scale]}",
+                self.cycle_voxel_scale,
+                tooltip="Change cube fill size without changing the CA lattice.",
+            )
+            menu.add_button(
+                f"Local Occlusion: {self.state.occlusion_strength:.0%}",
+                self.cycle_occlusion,
+                tooltip="Darken voxels inside locally dense structures.",
+            )
+
+            menu.begin_section(
                 "3d_inspection",
                 "Volume Inspection",
                 tooltip="Clip the volume, isolate one layer, or reveal interior voxels.",
@@ -1244,6 +1385,11 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             state.view_mode,
             state.clip_keep_lower,
             state.voxel_opacity,
+            state.color_scheme,
+            state.lighting_mode,
+            state.outline_thickness,
+            state.voxel_scale,
+            state.occlusion_strength,
             self.services.theme_name(),
             self.services.show_grid(),
         )
@@ -1377,6 +1523,8 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             )
             second_line = (
                 f"{rule.name} {rule.notation}   ·   refractory: {stats['refractory']}   ·   "
+                f"{THREE_D_COLOR_LABELS[state.color_scheme]} / "
+                f"{THREE_D_LIGHTING_LABELS[state.lighting_mode]}   ·   "
                 "left drag: orbit   ·   "
                 "wheel: zoom   ·   middle drag: pan   ·   left click: add   ·   right click: erase"
             )

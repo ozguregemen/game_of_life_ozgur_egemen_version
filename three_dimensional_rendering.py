@@ -24,17 +24,32 @@ Viewport: TypeAlias = tuple[int, int, int, int]
 RGBColor: TypeAlias = tuple[int, int, int]
 FILTER_MODES = ("all", "clip", "layer")
 FILTER_AXES = ("x", "y", "z")
+COLOR_SCHEMES = (
+    "state",
+    "xyz",
+    "layer",
+    "radial",
+    "density",
+    "theme",
+    "white",
+)
+LIGHTING_MODES = ("studio", "soft", "flat")
 
 
 @dataclass(frozen=True)
 class VoxelRenderSettings:
-    """GPU view filters applied without mutating the simulated volume."""
+    """GPU appearance and view filters that do not mutate the simulation."""
 
     mode: str = "all"
     axis: str = "z"
     layer: int = 0
     keep_lower: bool = True
     opacity: float = 1.0
+    color_scheme: str = "state"
+    lighting: str = "studio"
+    outline: float = 0.055
+    voxel_scale: float = 0.80
+    occlusion: float = 0.65
 
     def __post_init__(self) -> None:
         if self.mode not in FILTER_MODES:
@@ -49,6 +64,21 @@ class VoxelRenderSettings:
             raise TypeError("Voxel opacity must be a number.")
         if not 0.05 <= self.opacity <= 1.0:
             raise ValueError("Voxel opacity must be between 0.05 and 1.0.")
+        if self.color_scheme not in COLOR_SCHEMES:
+            raise ValueError(f"Unknown 3D color scheme: {self.color_scheme!r}.")
+        if self.lighting not in LIGHTING_MODES:
+            raise ValueError(f"Unknown 3D lighting mode: {self.lighting!r}.")
+        for name, value, minimum, maximum in (
+            ("outline", self.outline, 0.0, 0.20),
+            ("voxel_scale", self.voxel_scale, 0.50, 0.98),
+            ("occlusion", self.occlusion, 0.0, 1.0),
+        ):
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError(f"Voxel {name} must be a number.")
+            if not minimum <= value <= maximum:
+                raise ValueError(
+                    f"Voxel {name} must be between {minimum} and {maximum}."
+                )
 
 
 def _vector3(value: Any, label: str) -> FloatVector:
@@ -295,6 +325,22 @@ def voxel_instance_data(volume: Volume3D) -> NDArray[np.float32]:
     return data
 
 
+def voxel_render_instance_data(volume: Volume3D) -> NDArray[np.float32]:
+    """Return position/state rows plus normalized local occupancy for shading."""
+    base = voxel_instance_data(volume)
+    if not len(base):
+        return np.empty((0, 5), dtype=np.float32)
+    occupied = np.argwhere(volume.cells != 0)
+    occupied_states = tuple(range(1, volume.state_count))
+    counts = volume.neighbor_counts(active_states=occupied_states)
+    data = np.empty((len(base), 5), dtype=np.float32)
+    data[:, :4] = base
+    data[:, 4] = (
+        counts[tuple(occupied.T)].astype(np.float32) + 1.0
+    ) / float(volume.neighborhood.size + 1)
+    return data
+
+
 @dataclass(frozen=True)
 class VoxelPick:
     """First occupied voxel hit by a ray and its preceding empty neighbor."""
@@ -395,7 +441,6 @@ def pick_voxel(
 
 
 def _cube_vertex_data() -> NDArray[np.float32]:
-    voxel_half_size = 0.40
     faces = (
         ((0.0, 0.0, 1.0), ((-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1))),
         ((0.0, 0.0, -1.0), ((1, -1, -1), (-1, -1, -1), (-1, 1, -1), (1, 1, -1))),
@@ -405,10 +450,11 @@ def _cube_vertex_data() -> NDArray[np.float32]:
         ((0.0, -1.0, 0.0), ((-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1))),
     )
     rows: list[tuple[float, ...]] = []
+    face_uv = ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
     for normal, corners in faces:
         for index in (0, 1, 2, 0, 2, 3):
-            position = tuple(float(value) * voxel_half_size for value in corners[index])
-            rows.append((*position, *normal))
+            position = tuple(float(value) * 0.5 for value in corners[index])
+            rows.append((*position, *normal, *face_uv[index]))
     return np.asarray(rows, dtype=np.float32)
 
 
@@ -473,18 +519,26 @@ class ModernGLVoxelRenderer:
                 uniform mat4 mvp;
                 uniform vec3 volume_shape;
                 uniform int filter_axis;
+                uniform float voxel_scale;
                 in vec3 in_position;
                 in vec3 in_normal;
+                in vec2 in_face_uv;
                 in vec3 in_offset;
                 in float in_state;
+                in float in_density;
                 out vec3 v_normal;
+                out vec2 v_face_uv;
+                out vec3 v_world_position;
                 flat out vec3 v_offset;
                 flat out float v_state;
+                flat out float v_density;
                 flat out float v_layer;
                 void main() {
                     v_normal = in_normal;
+                    v_face_uv = in_face_uv;
                     v_offset = in_offset;
                     v_state = in_state;
+                    v_density = in_density;
                     if (filter_axis == 0) {
                         v_layer = in_offset.x + (volume_shape.x - 1.0) * 0.5;
                     } else if (filter_axis == 1) {
@@ -492,25 +546,77 @@ class ModernGLVoxelRenderer:
                     } else {
                         v_layer = in_offset.z + (volume_shape.z - 1.0) * 0.5;
                     }
-                    gl_Position = mvp * vec4(in_position + in_offset, 1.0);
+                    v_world_position = in_position * voxel_scale + in_offset;
+                    gl_Position = mvp * vec4(v_world_position, 1.0);
                 }
             """,
             fragment_shader="""
                 #version 330
                 uniform vec3 alive_color;
                 uniform vec3 decay_color;
+                uniform vec3 border_color;
+                uniform vec3 camera_position;
+                uniform vec3 volume_shape;
                 uniform int state_count;
+                uniform int color_scheme;
+                uniform int lighting_mode;
                 uniform vec3 selected_world;
                 uniform int selection_enabled;
                 uniform int filter_mode;
                 uniform int filter_layer;
                 uniform int keep_lower;
                 uniform float voxel_opacity;
+                uniform float outline_thickness;
+                uniform float occlusion_strength;
                 in vec3 v_normal;
+                in vec2 v_face_uv;
+                in vec3 v_world_position;
                 flat in vec3 v_offset;
                 flat in float v_state;
+                flat in float v_density;
                 flat in float v_layer;
                 out vec4 frag_color;
+
+                vec3 spectrum(float amount) {
+                    float t = clamp(amount, 0.0, 1.0);
+                    vec3 blue = vec3(0.08, 0.36, 1.0);
+                    vec3 cyan = vec3(0.08, 0.95, 0.82);
+                    vec3 yellow = vec3(1.0, 0.86, 0.10);
+                    vec3 magenta = vec3(1.0, 0.08, 0.42);
+                    if (t < 0.33) return mix(blue, cyan, t / 0.33);
+                    if (t < 0.66) return mix(cyan, yellow, (t - 0.33) / 0.33);
+                    return mix(yellow, magenta, (t - 0.66) / 0.34);
+                }
+
+                vec3 voxel_color() {
+                    vec3 normalized_position = clamp(
+                        (v_offset + (volume_shape - vec3(1.0)) * 0.5) /
+                        max(volume_shape - vec3(1.0), vec3(1.0)),
+                        vec3(0.0),
+                        vec3(1.0)
+                    );
+                    if (color_scheme == 1) return normalized_position;
+                    if (color_scheme == 2) return spectrum(normalized_position.z);
+                    if (color_scheme == 3) {
+                        vec3 centered = v_offset / max(volume_shape * 0.5, vec3(1.0));
+                        return spectrum(length(centered) / 1.7320508);
+                    }
+                    if (color_scheme == 4) return spectrum(v_density);
+                    if (color_scheme == 5) return alive_color;
+                    if (color_scheme == 6) return vec3(0.96);
+
+                    vec3 base = vec3(1.0, 0.88, 0.08);
+                    if (v_state > 1.5 && state_count > 2) {
+                        float decay = clamp(
+                            (v_state - 1.0) / float(state_count - 2),
+                            0.0,
+                            1.0
+                        );
+                        base = mix(base, decay_color, decay);
+                    }
+                    return base;
+                }
+
                 void main() {
                     if (filter_mode == 1) {
                         if (keep_lower == 1 && v_layer > float(filter_layer) + 0.1) discard;
@@ -518,32 +624,68 @@ class ModernGLVoxelRenderer:
                     } else if (filter_mode == 2 && abs(v_layer - float(filter_layer)) > 0.1) {
                         discard;
                     }
-                    vec3 light_direction = normalize(vec3(0.55, 0.85, 0.35));
-                    float diffuse = max(dot(normalize(v_normal), light_direction), 0.0);
-                    vec3 base = alive_color;
-                    if (v_state > 1.5 && state_count > 2) {
-                        float decay = clamp(
-                            (v_state - 1.0) / float(state_count - 2),
-                            0.0,
-                            1.0
-                        );
-                        base = mix(alive_color, decay_color, decay);
-                    }
+                    vec3 base = voxel_color();
                     if (selection_enabled == 1 && distance(v_offset, selected_world) < 0.1) {
                         base = vec3(1.0, 0.78, 0.18);
                     }
-                    frag_color = vec4(base * (0.34 + 0.66 * diffuse), voxel_opacity);
+
+                    float edge_distance = min(
+                        min(v_face_uv.x, 1.0 - v_face_uv.x),
+                        min(v_face_uv.y, 1.0 - v_face_uv.y)
+                    );
+                    if (outline_thickness > 0.0) {
+                        float feather = max(fwidth(edge_distance) * 1.5, 0.001);
+                        float edge = 1.0 - smoothstep(
+                            outline_thickness,
+                            outline_thickness + feather,
+                            edge_distance
+                        );
+                        base = mix(base, border_color, edge);
+                    }
+
+                    vec3 normal = normalize(v_normal);
+                    vec3 key_direction = normalize(vec3(0.48, 0.82, 0.32));
+                    vec3 fill_direction = normalize(vec3(-0.62, 0.28, -0.72));
+                    float key = max(dot(normal, key_direction), 0.0);
+                    float fill = max(dot(normal, fill_direction), 0.0);
+                    vec3 lit = base;
+                    if (lighting_mode == 0) {
+                        vec3 view_direction = normalize(camera_position - v_world_position);
+                        vec3 half_direction = normalize(key_direction + view_direction);
+                        float specular = pow(max(dot(normal, half_direction), 0.0), 32.0);
+                        vec3 light = vec3(0.20)
+                            + key * vec3(0.72, 0.66, 0.54)
+                            + fill * vec3(0.16, 0.22, 0.34);
+                        lit = base * light + specular * vec3(0.22, 0.20, 0.16);
+                    } else if (lighting_mode == 1) {
+                        lit = base * (0.48 + 0.42 * key + 0.10 * fill);
+                    }
+                    float occlusion = 1.0
+                        - occlusion_strength * clamp(v_density, 0.0, 1.0) * 0.68;
+                    frag_color = vec4(clamp(lit * occlusion, 0.0, 1.0), voxel_opacity);
                 }
             """,
         )
         cube = _cube_vertex_data()
         self.cube_buffer = self.ctx.buffer(cube.tobytes())
-        self.instance_buffer = self.ctx.buffer(reserve=16, dynamic=True)
+        self.instance_buffer = self.ctx.buffer(reserve=20, dynamic=True)
         self.vao = self.ctx.vertex_array(
             self.program,
             (
-                (self.cube_buffer, "3f 3f", "in_position", "in_normal"),
-                (self.instance_buffer, "3f 1f /i", "in_offset", "in_state"),
+                (
+                    self.cube_buffer,
+                    "3f 3f 2f",
+                    "in_position",
+                    "in_normal",
+                    "in_face_uv",
+                ),
+                (
+                    self.instance_buffer,
+                    "3f 1f 1f /i",
+                    "in_offset",
+                    "in_state",
+                    "in_density",
+                ),
             ),
         )
         self.line_program = self.ctx.program(
@@ -571,7 +713,7 @@ class ModernGLVoxelRenderer:
             ((self.filter_buffer, "3f", "in_position"),),
         )
         self.instance_count = 0
-        self._instance_data = np.empty((0, 4), dtype=np.float32)
+        self._instance_data = np.empty((0, 5), dtype=np.float32)
         self._buffer_order_key: tuple[Any, ...] | None = None
         self._revision: int | None = None
         self._shape: VolumeShape | None = None
@@ -579,8 +721,8 @@ class ModernGLVoxelRenderer:
     def update_volume(self, volume: Volume3D, revision: int) -> None:
         if self._revision == revision and self._shape == volume.shape:
             return
-        data = voxel_instance_data(volume)
-        byte_count = max(16, data.nbytes)
+        data = voxel_render_instance_data(volume)
+        byte_count = max(20, data.nbytes)
         if self.instance_buffer.size < byte_count:
             self.instance_buffer.orphan(byte_count)
         if data.nbytes:
@@ -642,7 +784,20 @@ class ModernGLVoxelRenderer:
         self.program["mvp"].write(matrix_bytes(matrix))
         self.program["alive_color"].value = tuple(channel / 255.0 for channel in alive_color)
         self.program["decay_color"].value = (1.0, 0.16, 0.04)
+        self.program["border_color"].value = (0.012, 0.016, 0.022)
+        self.program["camera_position"].value = tuple(
+            float(value) for value in camera.eye
+        )
         self.program["state_count"].value = volume.state_count
+        self.program["color_scheme"].value = COLOR_SCHEMES.index(
+            settings.color_scheme
+        )
+        self.program["lighting_mode"].value = LIGHTING_MODES.index(
+            settings.lighting
+        )
+        self.program["voxel_scale"].value = settings.voxel_scale
+        self.program["outline_thickness"].value = settings.outline
+        self.program["occlusion_strength"].value = settings.occlusion
         axis_index = FILTER_AXES.index(settings.axis)
         axis_length = (volume.shape[2], volume.shape[1], volume.shape[0])[axis_index]
         layer = max(0, min(axis_length - 1, settings.layer))
