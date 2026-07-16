@@ -102,7 +102,7 @@ class ExportMenu:
             {
                 "key": "csv",
                 "name": "Generation Metrics CSV",
-                "detail": "Population, density, entropy and change rate",
+                "detail": "Population, state/block entropy, Hamming and spatial metrics",
                 "callback": self.services.export_csv,
             },
             {

@@ -397,6 +397,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             active_states=tuple(range(1, self.state.states)),
             population_label="Active cells",
             alignment="center",
+            lattice_shape=(len(self.state.rows[-1]),),
             experiment_context=(
                 tuple(spec.as_dict().items()),
                 self.state.boundary,

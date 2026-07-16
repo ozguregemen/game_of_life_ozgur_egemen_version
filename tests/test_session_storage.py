@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -241,6 +242,17 @@ class SessionStorageTests(unittest.TestCase):
             "pitch",
         ):
             session_storage.validate_session_document(document)
+
+    def test_top_down_3d_camera_pitch_is_session_valid(self) -> None:
+        document = self.valid_session("Top 3D Camera")
+        document["workspaces"]["3d"]["camera"]["pitch"] = math.pi / 2
+
+        normalized = session_storage.validate_session_document(document)
+
+        self.assertEqual(
+            normalized["workspaces"]["3d"]["camera"]["pitch"],
+            math.pi / 2,
+        )
 
     def test_legacy_3d_session_gets_default_volume_view(self) -> None:
         document = self.valid_session("Legacy 3D View")

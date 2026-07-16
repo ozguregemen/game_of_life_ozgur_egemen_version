@@ -105,10 +105,14 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         life.handle_keydown(
             life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_i)
         )
-        modal, live_tab, comparison_tab, close_button = life.analysis_panel.geometry()
+        modal, live_tab, summary_tab, methods_tab, comparison_tab, close_button = (
+            life.analysis_panel.geometry()
+        )
 
         self.assertTrue(life.analysis_panel.active)
         self.assertTrue(modal.contains(live_tab))
+        self.assertTrue(modal.contains(summary_tab))
+        self.assertTrue(modal.contains(methods_tab))
         self.assertTrue(modal.contains(comparison_tab))
         self.assertTrue(modal.contains(close_button))
         life.draw_scene()
@@ -116,7 +120,7 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
     def test_comparison_tab_requests_background_rule_experiment(self) -> None:
         self.configure_life_blinker()
         life.analysis_panel.active = True
-        _, _, comparison_tab, _ = life.analysis_panel.geometry()
+        _, _, _, _, comparison_tab, _ = life.analysis_panel.geometry()
 
         with patch.object(life.analysis_panel, "request_comparison") as request:
             consumed = life.analysis_panel.handle_event(
@@ -130,6 +134,26 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         self.assertTrue(consumed)
         self.assertEqual(life.analysis_panel.tab, "comparison")
         request.assert_called_once_with()
+
+    def test_summary_tab_draws_for_all_three_dimensions(self) -> None:
+        life.analysis_panel.active = True
+        life.analysis_panel.tab = "summary"
+        for dimension in ("1d", "2d", "3d"):
+            life.set_active_dimension(dimension)
+            life.draw_scene()
+
+            series = life.active_analysis_series()
+            self.assertEqual(len(series.lattice_shape), int(dimension[0]))
+            self.assertIsNotNone(series.latest)
+
+    def test_methods_tab_draws_dimension_specific_protocol(self) -> None:
+        life.set_active_dimension("3d")
+        life.analysis_panel.active = True
+        life.analysis_panel.tab = "methods"
+
+        life.draw_scene()
+
+        self.assertEqual(len(life.active_analysis_series().lattice_shape), 3)
 
 
 if __name__ == "__main__":

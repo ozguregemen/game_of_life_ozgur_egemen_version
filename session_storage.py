@@ -737,7 +737,7 @@ def _validate_3d_orbit_camera(
     pitch = _number(camera.get("pitch"), f"{label}.pitch")
     distance = _number(camera.get("distance"), f"{label}.distance", minimum=2.0)
     fov_y = _number(camera.get("fov_y", 45.0), f"{label}.fov_y", minimum=1.0)
-    if not math.radians(-85.0) <= pitch <= math.radians(85.0):
+    if not math.radians(-90.0) <= pitch <= math.radians(90.0):
         raise DocumentValidationError(f"{label}.pitch is outside the orbit limit.")
     if distance > 10_000.0:
         raise DocumentValidationError(f"{label}.distance is too large.")

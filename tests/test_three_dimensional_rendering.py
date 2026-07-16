@@ -5,11 +5,14 @@ import numpy as np
 
 from three_dimensional_ca import Volume3D
 from three_dimensional_rendering import (
+    CAMERA_FACE_DIRECTIONS,
     OrbitCamera3D,
     VoxelRenderSettings,
     look_at_matrix,
     perspective_matrix,
     pick_voxel,
+    orientation_cube_face_at,
+    orientation_cube_faces,
     transparent_order_key,
     voxel_is_visible,
     volume_position_to_world,
@@ -74,6 +77,30 @@ class Camera3DTests(unittest.TestCase):
         camera.orbit(30.0, 0.0)
         self.assertNotEqual(transparent_order_key(camera, 12), original)
         self.assertNotEqual(transparent_order_key(camera, 13), original)
+
+    def test_camera_snaps_each_volume_face_toward_the_viewer(self) -> None:
+        camera = OrbitCamera3D()
+        for face, expected in CAMERA_FACE_DIRECTIONS.items():
+            with self.subTest(face=face):
+                camera.snap_to_face(face)
+                eye_direction = camera.eye - camera.target
+                eye_direction /= np.linalg.norm(eye_direction)
+                np.testing.assert_allclose(eye_direction, expected, atol=1e-6)
+                self.assertTrue(np.all(np.isfinite(camera.right)))
+                self.assertTrue(np.all(np.isfinite(camera.up)))
+
+    def test_orientation_cube_hit_testing_selects_front_face(self) -> None:
+        camera = OrbitCamera3D()
+        camera.snap_to_face("front")
+        rect = (20, 30, 96, 96)
+        faces = orientation_cube_faces(camera, rect)
+
+        self.assertEqual([face.key for face in faces], ["front"])
+        self.assertEqual(
+            orientation_cube_face_at(camera, rect, (68, 78)),
+            "front",
+        )
+        self.assertIsNone(orientation_cube_face_at(camera, rect, (20, 30)))
 
 
 class VoxelGeometryTests(unittest.TestCase):

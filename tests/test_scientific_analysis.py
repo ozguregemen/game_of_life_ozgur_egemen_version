@@ -9,6 +9,8 @@ from scientific_analysis import (
     ScientificAnalysisRegistry,
     StateObservation,
     compare_elementary_rules,
+    neighbor_agreement_rate,
+    normalized_block_entropy,
     normalized_entropy,
     state_change_rate,
 )
@@ -39,6 +41,33 @@ class ScientificMetricTests(unittest.TestCase):
             0.0,
         )
 
+    def test_block_entropy_reaches_one_for_all_binary_length_three_blocks(self) -> None:
+        values = tuple(
+            bit
+            for code in range(8)
+            for bit in ((code >> 2) & 1, (code >> 1) & 1, code & 1)
+        )
+
+        self.assertAlmostEqual(normalized_block_entropy(values, 2, (24,)), 1.0)
+        self.assertEqual(normalized_block_entropy((0,) * 24, 2, (24,)), 0.0)
+
+    def test_neighbor_agreement_uses_orthogonal_pairs_in_two_dimensions(self) -> None:
+        values = (0, 0, 1, 1)
+
+        self.assertEqual(neighbor_agreement_rate(values, (2, 2)), 50.0)
+
+    def test_observation_rejects_shape_that_does_not_match_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "shape"):
+            StateObservation(
+                key="shape",
+                title="Shape",
+                generation=0,
+                values=(0, 1, 0),
+                state_count=2,
+                active_states=(1,),
+                lattice_shape=(2, 2),
+            )
+
     def test_population_density_and_change_are_recorded(self) -> None:
         series = AnalysisSeries("test")
         series.reset(observation(0, (0, 1, 0, 1)))
@@ -48,6 +77,33 @@ class ScientificMetricTests(unittest.TestCase):
         self.assertEqual(sample.density, 50.0)
         self.assertEqual(sample.change_rate, 50.0)
         self.assertAlmostEqual(sample.entropy, 1.0)
+        self.assertGreaterEqual(sample.block_entropy, 0.0)
+        self.assertAlmostEqual(sample.neighbor_agreement, 2 / 3 * 100)
+        self.assertEqual(sample.growth_rate, 0.0)
+        self.assertEqual(sample.state_utilization, 100.0)
+
+    def test_window_summary_reports_descriptive_statistics_and_slope(self) -> None:
+        series = AnalysisSeries("summary")
+        series.reset(observation(0, (0, 0, 0, 0)))
+        series.observe(observation(1, (1, 0, 0, 0)))
+        series.observe(observation(2, (1, 1, 0, 0)))
+        series.observe(observation(3, (1, 1, 1, 0)))
+
+        summary = series.window_summary(window=3)
+
+        density = summary.metrics["density"]
+        self.assertEqual(summary.sample_count, 3)
+        self.assertAlmostEqual(density.current, 75.0)
+        self.assertAlmostEqual(density.mean, 50.0)
+        self.assertAlmostEqual(density.slope_per_generation, 25.0)
+        self.assertIn("candidate", summary.heuristic_regime.lower())
+
+    def test_series_metadata_tracks_an_expanding_1d_lattice(self) -> None:
+        series = AnalysisSeries("expanding")
+        series.reset(observation(0, (1,)))
+        series.observe(observation(1, (0, 1, 0)))
+
+        self.assertEqual(series.lattice_shape, (3,))
 
 
 class ScientificDetectionTests(unittest.TestCase):
@@ -137,6 +193,12 @@ class ElementaryComparisonTests(unittest.TestCase):
         self.assertEqual([result.rule for result in results], [30, 90])
         self.assertTrue(all(result.generations == 12 for result in results))
         self.assertTrue(all(0.0 <= result.mean_entropy <= 1.0 for result in results))
+        self.assertTrue(
+            all(0.0 <= result.mean_block_entropy <= 1.0 for result in results)
+        )
+        self.assertTrue(
+            all(0.0 <= result.mean_neighbor_agreement <= 100.0 for result in results)
+        )
         self.assertTrue(all(0.0 <= result.mean_change_rate <= 100.0 for result in results))
 
     def test_rule_zero_reaches_a_detected_cycle(self) -> None:

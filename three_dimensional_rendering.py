@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from math import cos, radians, sin, tan
 from numbers import Real
-from typing import Any, TypeAlias
+from typing import Any, Sequence, TypeAlias
 
 import numpy as np
 from numpy.typing import NDArray
@@ -35,6 +35,30 @@ COLOR_SCHEMES = (
 )
 LIGHTING_MODES = ("studio", "soft", "flat")
 TRANSPARENT_SORT_DIRECTION_STEPS = 50.0
+CAMERA_FACE_DIRECTIONS = {
+    "front": (0.0, 0.0, 1.0),
+    "back": (0.0, 0.0, -1.0),
+    "right": (1.0, 0.0, 0.0),
+    "left": (-1.0, 0.0, 0.0),
+    "top": (0.0, 1.0, 0.0),
+    "bottom": (0.0, -1.0, 0.0),
+}
+CAMERA_FACE_LABELS = {
+    "front": "FRONT",
+    "back": "BACK",
+    "right": "RIGHT",
+    "left": "LEFT",
+    "top": "TOP",
+    "bottom": "BOTTOM",
+}
+_ORIENTATION_FACE_VERTICES = {
+    "front": ((-1, -1, 1), (1, -1, 1), (1, 1, 1), (-1, 1, 1)),
+    "back": ((1, -1, -1), (-1, -1, -1), (-1, 1, -1), (1, 1, -1)),
+    "right": ((1, -1, 1), (1, -1, -1), (1, 1, -1), (1, 1, 1)),
+    "left": ((-1, -1, -1), (-1, -1, 1), (-1, 1, 1), (-1, 1, -1)),
+    "top": ((-1, 1, 1), (1, 1, 1), (1, 1, -1), (-1, 1, -1)),
+    "bottom": ((-1, -1, -1), (1, -1, -1), (1, -1, 1), (-1, -1, 1)),
+}
 
 
 @dataclass(frozen=True)
@@ -196,7 +220,7 @@ class OrbitCamera3D:
             if isinstance(value, bool) or not isinstance(value, Real):
                 raise TypeError(f"Camera {label} must be a number.")
             setattr(self, label, float(value))
-        self.pitch = max(radians(-85.0), min(radians(85.0), self.pitch))
+        self.pitch = max(radians(-90.0), min(radians(90.0), self.pitch))
         self.distance = max(1.0, self.distance)
         if not 1.0 <= self.fov_y < 179.0:
             raise ValueError("Camera field of view must be between 1 and 179 degrees.")
@@ -221,10 +245,16 @@ class OrbitCamera3D:
 
     @property
     def right(self) -> FloatVector:
-        return _normalized(
-            np.cross(self.forward, np.asarray((0.0, 1.0, 0.0), dtype=np.float32)),
-            "camera right",
+        right = np.cross(
+            self.forward,
+            np.asarray((0.0, 1.0, 0.0), dtype=np.float32),
         )
+        if float(np.linalg.norm(right)) <= 1e-6:
+            right = np.cross(
+                self.forward,
+                np.asarray((0.0, 0.0, 1.0), dtype=np.float32),
+            )
+        return _normalized(right, "camera right")
 
     @property
     def up(self) -> FloatVector:
@@ -242,7 +272,25 @@ class OrbitCamera3D:
     def orbit(self, delta_x: float, delta_y: float) -> None:
         self.yaw -= float(delta_x) * 0.008
         self.pitch -= float(delta_y) * 0.008
-        self.pitch = max(radians(-85.0), min(radians(85.0), self.pitch))
+        self.pitch = max(radians(-90.0), min(radians(90.0), self.pitch))
+
+    def snap_to_face(self, face: str) -> None:
+        """Align the selected world-space volume face toward the viewer."""
+
+        if face not in CAMERA_FACE_DIRECTIONS:
+            raise ValueError(f"Unknown camera face: {face!r}.")
+        if face == "front":
+            self.yaw, self.pitch = radians(90.0), 0.0
+        elif face == "back":
+            self.yaw, self.pitch = radians(-90.0), 0.0
+        elif face == "right":
+            self.yaw, self.pitch = 0.0, 0.0
+        elif face == "left":
+            self.yaw, self.pitch = radians(180.0), 0.0
+        elif face == "top":
+            self.yaw, self.pitch = 0.0, radians(90.0)
+        else:
+            self.yaw, self.pitch = 0.0, radians(-90.0)
 
     def pan(self, delta_x: float, delta_y: float, viewport_height: int) -> None:
         scale = (
@@ -313,6 +361,81 @@ class OrbitCamera3D:
             distance=value["distance"],
             fov_y=value.get("fov_y", 45.0),
         )
+
+
+@dataclass(frozen=True)
+class OrientationCubeFace:
+    """One visible clickable face in the viewport orientation cube."""
+
+    key: str
+    label: str
+    polygon: tuple[tuple[int, int], ...]
+    depth: float
+
+
+def orientation_cube_faces(
+    camera: OrbitCamera3D,
+    rect: tuple[int, int, int, int],
+) -> tuple[OrientationCubeFace, ...]:
+    """Project visible orientation-cube faces from farthest to nearest."""
+
+    x, y, width, height = rect
+    if width < 8 or height < 8:
+        return ()
+    center = np.asarray((x + width / 2.0, y + height / 2.0))
+    scale = min(width, height) * 0.27
+    view_rotation = camera.view_matrix()[:3, :3]
+    eye_direction = _normalized(camera.eye - camera.target, "camera eye direction")
+    faces: list[OrientationCubeFace] = []
+    for key, vertices in _ORIENTATION_FACE_VERTICES.items():
+        normal = np.asarray(CAMERA_FACE_DIRECTIONS[key], dtype=np.float32)
+        if float(np.dot(normal, eye_direction)) <= 1e-5:
+            continue
+        transformed = (view_rotation @ np.asarray(vertices, dtype=np.float32).T).T
+        polygon = tuple(
+            (
+                round(center[0] + vertex[0] * scale),
+                round(center[1] - vertex[1] * scale),
+            )
+            for vertex in transformed
+        )
+        faces.append(
+            OrientationCubeFace(
+                key=key,
+                label=CAMERA_FACE_LABELS[key],
+                polygon=polygon,
+                depth=float(np.mean(transformed[:, 2])),
+            )
+        )
+    return tuple(sorted(faces, key=lambda face: face.depth))
+
+
+def _point_in_convex_polygon(
+    point: tuple[int, int],
+    polygon: Sequence[tuple[int, int]],
+) -> bool:
+    signs: list[bool] = []
+    for index, start in enumerate(polygon):
+        end = polygon[(index + 1) % len(polygon)]
+        cross = (end[0] - start[0]) * (point[1] - start[1]) - (
+            end[1] - start[1]
+        ) * (point[0] - start[0])
+        if cross:
+            signs.append(cross > 0)
+    return not signs or all(sign == signs[0] for sign in signs)
+
+
+def orientation_cube_face_at(
+    camera: OrbitCamera3D,
+    rect: tuple[int, int, int, int],
+    point: tuple[int, int],
+) -> str | None:
+    """Return the nearest visible orientation face under a screen point."""
+
+    for face in reversed(orientation_cube_faces(camera, rect)):
+        if _point_in_convex_polygon(point, face.polygon):
+            return face.key
+    return None
 
 
 def volume_position_to_world(

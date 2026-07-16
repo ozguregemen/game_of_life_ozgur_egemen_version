@@ -7,8 +7,10 @@ import math
 from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
-from statistics import fmean
+from statistics import fmean, pstdev
 from typing import Hashable, Iterable, Literal, Sequence
+
+import numpy as np
 
 from elementary_ca import (
     BOUNDARY_INFINITE,
@@ -35,6 +37,7 @@ class StateObservation:
     alignment: Alignment = "left"
     experiment_context: Hashable = ()
     signature_context: Hashable = ()
+    lattice_shape: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -47,6 +50,14 @@ class StateObservation:
             raise ValueError("Observation values must fit inside state_count.")
         if any(not 0 <= value < self.state_count for value in self.active_states):
             raise ValueError("Active states must fit inside state_count.")
+        shape = self.lattice_shape or (len(self.values),)
+        if not 1 <= len(shape) <= 3:
+            raise ValueError("Lattice shape must describe one, two, or three dimensions.")
+        if any(length < 0 for length in shape):
+            raise ValueError("Lattice axes cannot be negative.")
+        if math.prod(shape) != len(self.values):
+            raise ValueError("Lattice shape must contain every observation value.")
+        object.__setattr__(self, "lattice_shape", tuple(int(value) for value in shape))
 
 
 @dataclass(frozen=True)
@@ -59,6 +70,10 @@ class AnalysisSample:
     entropy: float
     change_rate: float
     signature: bytes = field(repr=False)
+    block_entropy: float = 0.0
+    neighbor_agreement: float = 0.0
+    growth_rate: float = 0.0
+    state_utilization: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -69,6 +84,30 @@ class AnalysisSummary:
     period: int | None
     stabilization_generation: int | None
     stable: bool
+    heuristic_regime: str
+
+
+@dataclass(frozen=True)
+class DescriptiveStatistics:
+    """Descriptive values for one metric over a bounded recent window."""
+
+    current: float
+    mean: float
+    standard_deviation: float
+    minimum: float
+    maximum: float
+    slope_per_generation: float
+
+
+@dataclass(frozen=True)
+class AnalysisWindowSummary:
+    """Reproducible descriptive summary for the latest analysis window."""
+
+    sample_count: int
+    start_generation: int
+    end_generation: int
+    metrics: dict[str, DescriptiveStatistics]
+    heuristic_regime: str
 
 
 def normalized_entropy(values: Sequence[int], state_count: int) -> float:
@@ -86,6 +125,125 @@ def normalized_entropy(values: Sequence[int], state_count: int) -> float:
         if count
     )
     return entropy / math.log2(state_count) if entropy else 0.0
+
+
+def normalized_block_entropy(
+    values: Sequence[int],
+    state_count: int,
+    lattice_shape: Sequence[int],
+) -> float:
+    """Return normalized Shannon entropy of non-overlapping local blocks.
+
+    One-dimensional lattices use length-three blocks; 2D and 3D lattices use
+    2x2 and 2x2x2 blocks. Incomplete edge blocks are excluded so the statistic
+    is independent of padding conventions.
+    """
+
+    if state_count < 2:
+        raise ValueError("state_count must be at least two")
+    shape = tuple(int(length) for length in lattice_shape)
+    if not 1 <= len(shape) <= 3 or math.prod(shape) != len(values):
+        raise ValueError("lattice_shape must match one to three dimensions")
+    if not values:
+        return 0.0
+    block_shape = (3,) if len(shape) == 1 else (2,) * len(shape)
+    trimmed_shape = tuple(
+        length - length % block
+        for length, block in zip(shape, block_shape, strict=True)
+    )
+    if any(length == 0 for length in trimmed_shape):
+        return normalized_entropy(values, state_count)
+
+    lattice = np.asarray(values, dtype=np.uint16).reshape(shape)
+    trimmed = lattice[
+        tuple(slice(0, length) for length in trimmed_shape)
+    ]
+    interleaved_shape: list[int] = []
+    for length, block in zip(trimmed_shape, block_shape, strict=True):
+        interleaved_shape.extend((length // block, block))
+    grouped_axes = tuple(range(0, len(interleaved_shape), 2)) + tuple(
+        range(1, len(interleaved_shape), 2)
+    )
+    block_cell_count = math.prod(block_shape)
+    blocks = (
+        trimmed.reshape(interleaved_shape)
+        .transpose(grouped_axes)
+        .reshape(-1, block_cell_count)
+    )
+
+    code_capacity = state_count**block_cell_count
+    if code_capacity <= np.iinfo(np.uint64).max:
+        powers = np.power(
+            np.uint64(state_count),
+            np.arange(block_cell_count, dtype=np.uint64),
+            dtype=np.uint64,
+        )
+        codes = blocks.astype(np.uint64, copy=False) @ powers
+        _, counts = np.unique(codes, return_counts=True)
+    else:
+        _, counts = np.unique(blocks, axis=0, return_counts=True)
+    probabilities = counts.astype(np.float64) / counts.sum()
+    entropy = -float(np.sum(probabilities * np.log2(probabilities)))
+    maximum = block_cell_count * math.log2(state_count)
+    return entropy / maximum if entropy and maximum else 0.0
+
+
+def neighbor_agreement_rate(
+    values: Sequence[int],
+    lattice_shape: Sequence[int],
+) -> float:
+    """Return equal-state agreement across interior orthogonal neighbor pairs."""
+
+    shape = tuple(int(length) for length in lattice_shape)
+    if not 1 <= len(shape) <= 3 or math.prod(shape) != len(values):
+        raise ValueError("lattice_shape must match one to three dimensions")
+    if not values:
+        return 0.0
+    lattice = np.asarray(values, dtype=np.uint16).reshape(shape)
+    agreeing = 0
+    pair_count = 0
+    for axis, length in enumerate(shape):
+        if length < 2:
+            continue
+        left = [slice(None)] * len(shape)
+        right = [slice(None)] * len(shape)
+        left[axis] = slice(0, -1)
+        right[axis] = slice(1, None)
+        first = lattice[tuple(left)]
+        second = lattice[tuple(right)]
+        agreeing += int(np.count_nonzero(first == second))
+        pair_count += first.size
+    return 100.0 * agreeing / pair_count if pair_count else 0.0
+
+
+def _descriptive_statistics(
+    samples: Sequence[AnalysisSample],
+    attribute: str,
+) -> DescriptiveStatistics:
+    values = [float(getattr(sample, attribute)) for sample in samples]
+    generations = [float(sample.generation) for sample in samples]
+    mean_value = fmean(values)
+    mean_generation = fmean(generations)
+    denominator = sum(
+        (generation - mean_generation) ** 2 for generation in generations
+    )
+    slope = (
+        sum(
+            (generation - mean_generation) * (value - mean_value)
+            for generation, value in zip(generations, values, strict=True)
+        )
+        / denominator
+        if denominator
+        else 0.0
+    )
+    return DescriptiveStatistics(
+        current=values[-1],
+        mean=mean_value,
+        standard_deviation=pstdev(values),
+        minimum=min(values),
+        maximum=max(values),
+        slope_per_generation=slope,
+    )
 
 
 def state_change_rate(
@@ -130,6 +288,7 @@ def _state_signature(observation: StateObservation) -> bytes:
     digest.update(bytes(observation.values))
     digest.update(repr(observation.experiment_context).encode("utf-8"))
     digest.update(repr(observation.signature_context).encode("utf-8"))
+    digest.update(repr(observation.lattice_shape).encode("utf-8"))
     digest.update(len(observation.values).to_bytes(8, "big"))
     return digest.digest()
 
@@ -144,6 +303,8 @@ class AnalysisSeries:
         self.max_samples = max_samples
         self.title = key
         self.population_label = "Population"
+        self.lattice_shape: tuple[int, ...] = ()
+        self.state_count = 2
         self.samples: list[AnalysisSample] = []
         self.period: int | None = None
         self.stabilization_generation: int | None = None
@@ -162,6 +323,56 @@ class AnalysisSeries:
             period=self.period,
             stabilization_generation=self.stabilization_generation,
             stable=self.period == 1,
+            heuristic_regime=self.heuristic_regime(),
+        )
+
+    def heuristic_regime(self, *, window: int = 32) -> str:
+        """Return an explicitly heuristic label for the recent trajectory."""
+
+        if self.period == 1:
+            return "Fixed point"
+        if self.period is not None:
+            return f"Periodic orbit (p={self.period})"
+        if len(self.samples) < 4:
+            return "Insufficient samples"
+        recent = self.samples[-max(2, min(window, len(self.samples))) :]
+        mean_change = fmean(sample.change_rate for sample in recent[1:])
+        mean_block = fmean(sample.block_entropy for sample in recent)
+        if mean_change < 0.05:
+            return "Quiescent candidate"
+        if mean_change >= 20.0 and mean_block >= 0.55:
+            return "Highly active candidate"
+        if mean_change >= 1.0 and mean_block >= 0.15:
+            return "Complex / transient candidate"
+        return "Ordered / transient candidate"
+
+    def window_summary(self, *, window: int = 100) -> AnalysisWindowSummary:
+        """Return descriptive statistics for the most recent samples."""
+
+        if window < 2:
+            raise ValueError("Analysis window must contain at least two samples")
+        if not self.samples:
+            raise ValueError("No analysis samples are available")
+        selected = self.samples[-min(window, len(self.samples)) :]
+        attributes = (
+            "population",
+            "density",
+            "entropy",
+            "block_entropy",
+            "change_rate",
+            "neighbor_agreement",
+            "growth_rate",
+            "state_utilization",
+        )
+        return AnalysisWindowSummary(
+            sample_count=len(selected),
+            start_generation=selected[0].generation,
+            end_generation=selected[-1].generation,
+            metrics={
+                attribute: _descriptive_statistics(selected, attribute)
+                for attribute in attributes
+            },
+            heuristic_regime=self.heuristic_regime(window=min(window, 32)),
         )
 
     def reset(self, observation: StateObservation) -> AnalysisSample:
@@ -169,6 +380,8 @@ class AnalysisSeries:
 
         self.title = observation.title
         self.population_label = observation.population_label
+        self.lattice_shape = observation.lattice_shape
+        self.state_count = observation.state_count
         self.samples.clear()
         self.period = None
         self.stabilization_generation = None
@@ -209,11 +422,19 @@ class AnalysisSeries:
         change_rate: float,
     ) -> AnalysisSample:
         signature = _state_signature(observation)
+        self.lattice_shape = observation.lattice_shape
+        self.state_count = observation.state_count
         population = sum(
             value in observation.active_states for value in observation.values
         )
         density = (
             100.0 * population / len(observation.values)
+            if observation.values
+            else 0.0
+        )
+        previous_population = self.samples[-1].population if self.samples else population
+        growth_rate = (
+            100.0 * (population - previous_population) / len(observation.values)
             if observation.values
             else 0.0
         )
@@ -224,6 +445,21 @@ class AnalysisSeries:
             entropy=normalized_entropy(observation.values, observation.state_count),
             change_rate=change_rate,
             signature=signature,
+            block_entropy=normalized_block_entropy(
+                observation.values,
+                observation.state_count,
+                observation.lattice_shape,
+            ),
+            neighbor_agreement=neighbor_agreement_rate(
+                observation.values,
+                observation.lattice_shape,
+            ),
+            growth_rate=growth_rate,
+            state_utilization=(
+                100.0 * len(set(observation.values)) / observation.state_count
+                if observation.values
+                else 0.0
+            ),
         )
 
         previous_generation = self._seen.get(signature)
@@ -292,6 +528,8 @@ class ElementaryRuleComparison:
     mean_density: float
     final_density: float
     mean_entropy: float
+    mean_block_entropy: float
+    mean_neighbor_agreement: float
     mean_change_rate: float
     period: int | None
     stabilization_generation: int | None
@@ -342,6 +580,12 @@ def compare_elementary_rules(
                 mean_density=fmean(sample.density for sample in samples),
                 final_density=final.density,
                 mean_entropy=fmean(sample.entropy for sample in samples),
+                mean_block_entropy=fmean(
+                    sample.block_entropy for sample in samples
+                ),
+                mean_neighbor_agreement=fmean(
+                    sample.neighbor_agreement for sample in samples
+                ),
                 mean_change_rate=fmean(sample.change_rate for sample in samples[1:]),
                 period=series.period,
                 stabilization_generation=series.stabilization_generation,
@@ -365,6 +609,7 @@ def _elementary_observation(
         active_states=(1,),
         population_label="Active cells",
         alignment="center",
+        lattice_shape=(len(row),),
         experiment_context=(rule, BOUNDARY_INFINITE),
         signature_context=background,
     )

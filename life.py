@@ -1900,6 +1900,7 @@ def _analysis_observation_2d(mode: str) -> StateObservation:
             state_count=2,
             active_states=(1,),
             population_label="Live cells",
+            lattice_shape=(len(grid), len(grid[0])),
             experiment_context=current_rule,
         )
     if mode == "immigration":
@@ -1916,6 +1917,7 @@ def _analysis_observation_2d(mode: str) -> StateObservation:
             state_count=3,
             active_states=(1, 2),
             population_label="Population",
+            lattice_shape=(len(immigration_grid), len(immigration_grid[0])),
             experiment_context="B3/S23",
         )
     if mode == "brians_brain":
@@ -1927,6 +1929,7 @@ def _analysis_observation_2d(mode: str) -> StateObservation:
             state_count=3,
             active_states=(FIRING, DYING),
             population_label="Active cells",
+            lattice_shape=(len(brain_grid), len(brain_grid[0])),
             experiment_context="Brian's Brain",
         )
     if mode == "langtons_ant":
@@ -1938,6 +1941,7 @@ def _analysis_observation_2d(mode: str) -> StateObservation:
             state_count=2,
             active_states=(ANT_BLACK,),
             population_label="Black cells",
+            lattice_shape=(len(ant_grid), len(ant_grid[0])),
             experiment_context="RL finite",
             signature_context=(
                 ant_state.row,
@@ -1955,6 +1959,7 @@ def _analysis_observation_2d(mode: str) -> StateObservation:
             state_count=4,
             active_states=(ELECTRON_HEAD, ELECTRON_TAIL, CONDUCTOR),
             population_label="Occupied cells",
+            lattice_shape=(len(wireworld_grid), len(wireworld_grid[0])),
             experiment_context="Wireworld",
         )
     if mode == "cyclic_automaton":
@@ -1966,6 +1971,7 @@ def _analysis_observation_2d(mode: str) -> StateObservation:
             state_count=CYCLIC_STATE_COUNT,
             active_states=tuple(range(1, CYCLIC_STATE_COUNT)),
             population_label="Non-zero phase",
+            lattice_shape=(len(cyclic_grid), len(cyclic_grid[0])),
             experiment_context=(CYCLIC_STATE_COUNT, cyclic_threshold),
         )
     raise ValueError(f"Unknown 2D analysis mode: {mode}")
@@ -3840,6 +3846,7 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
             ("Left drag", "Orbit the perspective camera around the volume"),
             ("Mouse wheel", "Zoom the 3D camera"),
             ("Middle drag", "Pan the camera target"),
+            ("View cube face", "Snap that volume face directly toward the viewer"),
             ("Left click", "Add a voxel beside the highlighted voxel"),
             ("Right click", "Erase the highlighted voxel"),
             ("L", "Cycle full volume, clipping plane, and single-layer views"),

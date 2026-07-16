@@ -228,9 +228,14 @@ class ExportIntegrationTests(unittest.TestCase):
 
         self.assertEqual(normalized["application"]["dimension"], "2d")
         self.assertEqual(metadata["mode"], "life")
+        self.assertEqual(metadata["version"], 2)
         self.assertEqual(metadata["generation"], 1)
         self.assertEqual(metadata["timeline"]["frame_count"], 2)
         self.assertEqual(len(metadata["analysis"]["samples"]), 2)
+        self.assertIn("normalized_block_entropy", metadata["analysis"]["samples"][-1])
+        self.assertIn("neighbor_agreement_percent", metadata["analysis"]["samples"][-1])
+        self.assertIn("window_summary", metadata["analysis"])
+        self.assertIn("methodology", metadata["analysis"])
 
     def test_3d_shareable_json_contains_complete_reloadable_volume(self) -> None:
         life.set_active_dimension("3d")

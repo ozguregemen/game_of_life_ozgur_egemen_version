@@ -11,6 +11,7 @@ import pygame
 
 from themes import Menu
 from three_dimensional_patterns import BAYS_5766_GLIDER
+from three_dimensional_rendering import orientation_cube_faces
 from three_dimensional_modes import MODE_GENERATIONS, MODE_SPATIAL_LIFE
 from workspaces.three_dimensional import (
     DEFAULT_VOLUME_SHAPE,
@@ -162,6 +163,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         renderer = ThreeDimensionalWorkspaceRenderer(controller, services)
         controller.seed_cluster()
         renderer.draw_base()
+        renderer.draw_decorations()
         self.assertEqual(len(rendered), 1)
         menu = Menu(700, 42, 200, 608, "classic")
         controller.build_sidebar(menu)
@@ -203,6 +205,41 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
             pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=3, pos=center)
         )
         self.assertEqual(int((controller.state.volume.cells != 0).sum()), before - 1)
+
+        controller.seed_cluster()
+        cells_before = controller.state.volume.cells.copy()
+        cube_rect = controller.orientation_cube_face_rect()
+        faces = orientation_cube_faces(
+            controller.state.camera,
+            (cube_rect.x, cube_rect.y, cube_rect.width, cube_rect.height),
+        )
+        face = faces[-1]
+        face_center = (
+            round(sum(point[0] for point in face.polygon) / 4),
+            round(sum(point[1] for point in face.polygon) / 4),
+        )
+        controller.handle_pointer_event(
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=face_center)
+        )
+        controller.handle_pointer_event(
+            pygame.event.Event(pygame.MOUSEBUTTONUP, button=1, pos=face_center)
+        )
+        expected = np.asarray(
+            {
+                "front": (0, 0, 1),
+                "back": (0, 0, -1),
+                "right": (1, 0, 0),
+                "left": (-1, 0, 0),
+                "top": (0, 1, 0),
+                "bottom": (0, -1, 0),
+            }[face.key],
+            dtype=np.float32,
+        )
+        eye_direction = controller.state.camera.eye - controller.state.camera.target
+        eye_direction /= np.linalg.norm(eye_direction)
+        np.testing.assert_allclose(eye_direction, expected, atol=1e-6)
+        np.testing.assert_array_equal(controller.state.volume.cells, cells_before)
+        self.assertIn("Camera aligned", self.messages[-1])
 
     def test_view_filters_and_documented_glider_are_session_persistent(self) -> None:
         hardware_services = replace(

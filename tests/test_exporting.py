@@ -137,6 +137,8 @@ class DataExportTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             self.assertEqual(rows[1]["generation"], "1")
             self.assertEqual(rows[1]["density_percent"], "50.00000000")
+            self.assertEqual(rows[1]["normalized_block_entropy"], "0.00000000")
+            self.assertEqual(rows[1]["neighbor_agreement_percent"], "0.00000000")
             self.assertEqual(rows[1]["detected_period"], "2")
             self.assertEqual(rows[1]["stabilization_generation"], "0")
 

@@ -511,9 +511,10 @@ class ExperimentExportCoordinator:
         document = self.services.session_document(name)
         series = self.services.analysis_series()
         history = self.services.history_status()
+        window = series.window_summary(window=100)
         document["experiment_export"] = {
             "schema": "cellular-automata-lab/experiment-export",
-            "version": 1,
+            "version": 2,
             "dimension": dimension,
             "mode": export_mode,
             "generation": generation,
@@ -525,15 +526,51 @@ class ExperimentExportCoordinator:
             "analysis": {
                 "title": series.title,
                 "population_label": series.population_label,
+                "lattice_shape": list(series.lattice_shape),
+                "lattice_dimension": len(series.lattice_shape),
+                "state_count": series.state_count,
                 "period": series.period,
                 "stabilization_generation": series.stabilization_generation,
+                "heuristic_regime": series.heuristic_regime(),
+                "window_summary": {
+                    "sample_count": window.sample_count,
+                    "start_generation": window.start_generation,
+                    "end_generation": window.end_generation,
+                    "metrics": {
+                        key: {
+                            "current": value.current,
+                            "mean": value.mean,
+                            "standard_deviation": value.standard_deviation,
+                            "minimum": value.minimum,
+                            "maximum": value.maximum,
+                            "slope_per_generation": value.slope_per_generation,
+                        }
+                        for key, value in window.metrics.items()
+                    },
+                },
+                "methodology": {
+                    "state_entropy": "Shannon entropy normalized by log2(state_count)",
+                    "block_entropy": (
+                        "Non-overlapping length-3 (1D), 2x2 (2D), or 2x2x2 (3D) "
+                        "Shannon block entropy normalized by block capacity"
+                    ),
+                    "change_rate": "Hamming distance from the preceding generation",
+                    "neighbor_agreement": (
+                        "Equal-state share of interior orthogonal adjacent pairs"
+                    ),
+                    "regime": "Heuristic descriptor; not a formal dynamical proof",
+                },
                 "samples": [
                     {
                         "generation": sample.generation,
                         "population": sample.population,
                         "density_percent": sample.density,
                         "normalized_entropy": sample.entropy,
+                        "normalized_block_entropy": sample.block_entropy,
                         "change_rate_percent": sample.change_rate,
+                        "neighbor_agreement_percent": sample.neighbor_agreement,
+                        "population_growth_percent_of_lattice": sample.growth_rate,
+                        "state_utilization_percent": sample.state_utilization,
                     }
                     for sample in series.samples
                 ],

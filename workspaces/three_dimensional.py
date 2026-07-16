@@ -48,6 +48,8 @@ from three_dimensional_rendering import (
     LIGHTING_MODES,
     OrbitCamera3D,
     VoxelRenderSettings,
+    orientation_cube_face_at,
+    orientation_cube_faces,
     pick_voxel,
     voxel_is_visible,
 )
@@ -73,6 +75,8 @@ THREE_D_OPACITIES = (1.0, 0.65, 0.35)
 THREE_D_OUTLINES = (0.0, 0.055, 0.10)
 THREE_D_VOXEL_SCALES = (0.68, 0.80, 0.92)
 THREE_D_OCCLUSION_LEVELS = (0.0, 0.35, 0.65)
+THREE_D_ORIENTATION_CUBE_SIZE = 116
+THREE_D_ORIENTATION_HINT_HEIGHT = 18
 THREE_D_VIEW_LABELS = {
     "all": "Full Volume",
     "clip": "Clipping Plane",
@@ -385,6 +389,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 else "Live voxels"
             ),
             alignment="center",
+            lattice_shape=self.state.volume.shape,
             experiment_context=(
                 self.state.mode_key,
                 self.state.rule_key,
@@ -1029,11 +1034,62 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.render_settings(),
         )
 
+    def orientation_cube_rect(self) -> pygame.Rect:
+        """Return the viewport navigation-cube rectangle."""
+
+        viewport = self.services.viewport()
+        size = min(
+            THREE_D_ORIENTATION_CUBE_SIZE,
+            max(64, min(viewport.width, viewport.height) // 5),
+        )
+        return pygame.Rect(
+            viewport.right - size - 14,
+            viewport.top + 14,
+            size,
+            size + THREE_D_ORIENTATION_HINT_HEIGHT,
+        )
+
+    def orientation_cube_face_rect(self) -> pygame.Rect:
+        """Return the projected face area inside the navigation-cube panel."""
+
+        rect = self.orientation_cube_rect()
+        return pygame.Rect(rect.x, rect.y, rect.width, rect.width)
+
+    def snap_camera_to_face(self, face: str) -> None:
+        """Move one canonical volume face directly toward the viewer."""
+
+        self.state.camera.snap_to_face(face)
+        self.state.selected_voxel = None
+        self._status(
+            f"Camera aligned to {face} face. Drag to resume free orbit.",
+            3.0,
+        )
+
     def _handle_voxel_pointer_event(self, event: pygame.event.Event) -> bool:
         viewport = self.services.viewport()
         if event.type == pygame.MOUSEBUTTONDOWN:
             if event.button not in (1, 2, 3) or not viewport.collidepoint(event.pos):
                 return True
+            if event.button == 1:
+                cube_rect = self.orientation_cube_rect()
+                if cube_rect.collidepoint(event.pos):
+                    face_rect = self.orientation_cube_face_rect()
+                    face = orientation_cube_face_at(
+                        self.state.camera,
+                        (
+                            face_rect.x,
+                            face_rect.y,
+                            face_rect.width,
+                            face_rect.height,
+                        ),
+                        event.pos,
+                    )
+                    if face is not None:
+                        self.snap_camera_to_face(face)
+                    self.state.pointer_button = -1
+                    self.state.pointer_origin = None
+                    self.state.pointer_dragged = False
+                    return True
             self.state.pointer_button = event.button
             self.state.pointer_origin = event.pos
             self.state.pointer_dragged = False
@@ -1068,6 +1124,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             return True
 
         if event.type == pygame.MOUSEBUTTONUP:
+            if self.state.pointer_button == -1:
+                self.state.pointer_button = 0
+                self.state.pointer_origin = None
+                self.state.pointer_dragged = False
+                return True
             if event.button == 1 and not self.state.pointer_dragged:
                 result = self._pick_at(event.pos)
                 if result is None:
@@ -1462,6 +1523,68 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
                 pygame.draw.line(screen, theme["grid"], (rect.left, y), (rect.right, y))
         pygame.draw.rect(screen, DIMENSION_BY_KEY["3d"].accent, rect, 2)
         screen.set_clip(old_clip)
+
+    def draw_decorations(self) -> None:
+        """Draw the clickable orientation cube above the hardware viewport."""
+
+        if not self.services.hardware_3d():
+            return
+        screen = self.services.screen()
+        theme = THEMES[self.services.theme_name()]
+        rect = self.controller.orientation_cube_rect()
+        face_rect = self.controller.orientation_cube_face_rect()
+        pygame.draw.rect(screen, theme["info_bar"], rect, border_radius=8)
+        pygame.draw.rect(screen, theme["grid"], rect, 1, border_radius=8)
+        projected = orientation_cube_faces(
+            self.controller.state.camera,
+            (face_rect.x, face_rect.y, face_rect.width, face_rect.height),
+        )
+        hovered = orientation_cube_face_at(
+            self.controller.state.camera,
+            (face_rect.x, face_rect.y, face_rect.width, face_rect.height),
+            pygame.mouse.get_pos(),
+        )
+        colorblind = self.services.theme_name() == "colorblind"
+        axis_colors = {
+            "x": (204, 121, 167) if colorblind else (215, 95, 80),
+            "y": (240, 228, 66) if colorblind else (85, 175, 105),
+            "z": (86, 180, 233) if colorblind else (75, 135, 225),
+        }
+        face_axes = {
+            "right": "x",
+            "left": "x",
+            "top": "y",
+            "bottom": "y",
+            "front": "z",
+            "back": "z",
+        }
+        tiny = self.services.tiny_font()
+        for face in projected:
+            base = axis_colors[face_axes[face.key]]
+            if face.key in ("back", "left", "bottom"):
+                base = tuple(max(25, round(channel * 0.72)) for channel in base)
+            if face.key == hovered:
+                base = tuple(min(255, channel + 45) for channel in base)
+            pygame.draw.polygon(screen, base, face.polygon)
+            pygame.draw.polygon(screen, theme["text"], face.polygon, 1)
+            center = (
+                round(sum(point[0] for point in face.polygon) / 4),
+                round(sum(point[1] for point in face.polygon) / 4),
+            )
+            available = max(
+                12,
+                max(point[0] for point in face.polygon)
+                - min(point[0] for point in face.polygon)
+                - 4,
+            )
+            label = self._fit_text(tiny, face.label, available)
+            text = tiny.render(label, True, (12, 18, 24))
+            screen.blit(text, text.get_rect(center=center))
+        hint = tiny.render("click face", True, theme["text"])
+        screen.blit(
+            hint,
+            (rect.centerx - hint.get_width() // 2, rect.bottom - hint.get_height() - 3),
+        )
 
     def _stats(self) -> dict[str, Any]:
         volume = self.controller.state.volume

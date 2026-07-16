@@ -343,7 +343,11 @@ def save_analysis_csv(
                     "population",
                     "density_percent",
                     "normalized_entropy",
+                    "normalized_block_entropy",
                     "change_rate_percent",
+                    "neighbor_agreement_percent",
+                    "population_growth_percent_of_lattice",
+                    "state_utilization_percent",
                     "detected_period",
                     "stabilization_generation",
                 )
@@ -355,7 +359,11 @@ def save_analysis_csv(
                         sample.population,
                         f"{sample.density:.8f}",
                         f"{sample.entropy:.8f}",
+                        f"{sample.block_entropy:.8f}",
                         f"{sample.change_rate:.8f}",
+                        f"{sample.neighbor_agreement:.8f}",
+                        f"{sample.growth_rate:.8f}",
+                        f"{sample.state_utilization:.8f}",
                         "" if period is None else period,
                         (
                             ""

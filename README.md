@@ -233,6 +233,11 @@ GPU buffer upload yapılmasını engeller; zoom ve pan gereksiz sıralama başla
 Clipping ve katman filtresi ray seçimine de uygulanır; görünmeyen voxel'ler fareyle
 yanlışlıkla düzenlenmez.
 
+Viewport'un sağ üstündeki tıklanabilir yön küpü, standart 3D slicer gezinmesine benzer
+şekilde görünür `FRONT`, `BACK`, `LEFT`, `RIGHT`, `TOP` veya `BOTTOM` yüzünü kameraya
+tam karşıdan hizalar. Yön küpündeki boş alan da voxel düzenlemesine geçirilmez; yüz
+seçiminden sonra normal sol sürükleme serbest orbit kontrolüne devam eder.
+
 `Voxel Appearance` bölümü Softology'nin 3D CA görselleştirme yaklaşımından esinlenen
 yedi gerçek zamanlı renk şeması sunar: state shading (aktif hücrelerde sarıdan
 refractory kırmızıya), XYZ koordinat rengi, Z-layer paleti, merkez uzaklığına göre
@@ -292,9 +297,9 @@ workspace'in ileri dalı atılır; diğer boyut ve 2D mod timeline'ları korunur
 ## Bilimsel analiz paneli
 
 Sağ menüdeki `Scientific Analysis` düğmesi veya `I`, simülasyonu durdurmadan çalışan
-iki sekmeli analiz panelini açar. `Live Metrics`; population, density, normalize
-Shannon entropy ve bir önceki nesle göre değişen hücre yüzdesini dört zaman serisi
-olarak gösterir. Aynı tam durum tekrar görüldüğünde periyot ve döngünün başladığı
+dört sekmeli analiz panelini açar. `Live Metrics`; population, density, normalize
+Shannon entropy, blok entropisi, komşu uyumu ve bir önceki nesle göre Hamming değişimini
+altı zaman serisi olarak gösterir. Aynı tam durum tekrar görüldüğünde periyot ve döngünün başladığı
 stabilizasyon generation'ı raporlanır; periyot `1` sabit noktayı ifade eder.
 
 Ölçümler modların gerçek durum uzayına göre normalize edilir. Life hücre yaşları
@@ -307,12 +312,36 @@ workspace başına bağımsız tutulur ve en fazla 2000 örnek saklar. 3D çalı
 population ve density bütün volume, değişim/periyot imzası da tüm voxel dizisi üzerinden
 hesaplanır.
 
+`Live Metrics` sekmesi ham population yanında boyutlar arasında karşılaştırılabilir altı
+zaman serisi gösterir: density, tek-hücre normalize Shannon entropisi, boyuta uygun
+normalize blok entropisi, ardışık generation'lar arasındaki Hamming değişim oranı ve
+iç ortogonal komşu çiftlerinin eş-durum oranı. Bloklar 1D'de uzunluk 3, 2D'de 2×2,
+3D'de 2×2×2 seçilir; eksik kenar blokları padding yerine dışarıda bırakılır.
+
+`Statistical Summary` sekmesi son en fazla 100 örnek için current/mean/standart sapma,
+minimum, maximum ve generation başına doğrusal eğim verir. Population growth tüm lattice
+hücre sayısına normalize edilir; state utilization gözlenen durum sayısını kuralın durum
+kapasitesine oranlar. Fixed point ve doğrulanmış periyotlar kesin imza tekrarından gelir;
+diğer rejim adları arayüzde özellikle *heuristic candidate* olarak belirtilir ve formal
+dinamik kanıt sayılmaz. CSV ve paylaşılabilir experiment JSON aynı metrikleri, pencere
+özetini, lattice şeklini ve yöntem açıklamalarını taşır.
+
+`Methods` sekmesi formülleri, aktif dimension'ın blok boyutunu, 1D merkez hizalamasını,
+komşu çiftlerinde sınırların neden dışarıda bırakıldığını ve kesin periyot ile sezgisel
+rejim etiketi arasındaki farkı uygulama içinde açıklar.
+
+Metrik seçiminin akademik dayanakları: Shannon blok entropisinin CA karmaşıklık
+incelemelerinde kullanımı için [Zenil (2013)](https://arxiv.org/abs/1304.2816), hücre
+geçiş/input entropileri için
+[Helvik, Lindgren ve Nordahl (2006)](https://doi.org/10.1016/j.parco.2005.07.003),
+Hamming uzaklığıyla dinamik sınıflandırma için
+[Alfaro ve Sanjuán (2024)](https://doi.org/10.1063/5.0227349).
+
 `1D Rule Comparison` sekmesi, seçili Elementary rule ile 30, 54, 90, 110 ve 184
 referans kurallarını arayüzü dondurmayan bir arka plan işinde karşılaştırır. Her rule
 aynı merkezî tek-hücre seed'i, 160 generation ve kenara ulaşılmayan eşit 321 hücrelik
-sonsuz-arka-plan penceresini kullanır. Tablo ortalama/final population, ortalama
-density, entropy, değişim oranı, periyot ve stabilizasyon generation'ını birlikte
-gösterir.
+sonsuz-arka-plan penceresini kullanır. Tablo ortalama density, state ve block entropy,
+Hamming değişimi, komşu uyumu, periyot ve stabilizasyon generation'ını birlikte gösterir.
 
 ## Dışa aktarma
 
@@ -326,8 +355,9 @@ duraklatıp güncel düzenlemeyi timeline'a işler ve beş bağlamsal çıktı s
   frame'ini döngüsel animasyon olarak üretir. 3D frame'ler ortogonal kesit atlaslarıdır.
 - `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar; 3D'de atlas
   düzeni frame'ler arasında sabit kalır.
-- `Generation Metrics CSV`: Population, density, normalize entropy, değişim oranı,
-  algılanan periyot ve stabilizasyon generation'ını UTF-8 CSV olarak verir.
+- `Generation Metrics CSV`: Population, density, state/block entropy, Hamming değişimi,
+  komşu uyumu, normalize büyüme, durum kullanımı, algılanan periyot ve stabilizasyon
+  generation'ını UTF-8 CSV olarak verir.
 - `Shareable Experiment JSON`: Bütün 1D/2D/3D durumlarını taşıyan yüklenebilir session
   belgesine aktif timeline ve bilimsel ölçüm metadatasını ekler.
 
@@ -355,10 +385,11 @@ depolamayı; Immigration, Brian's Brain, Langton's Ant, Wireworld ve Cyclic Auto
 kurallarını; 256 elementary CA kuralının kodlama mantığını; boyut/mod registry ve
 bağlamsal menü davranışını; workspace registry/controller/renderer sözleşmesini;
 checkpoint/delta round-trip, timeline dallanması, ileri/geri gezinme ve sürükleme davranışını;
-bilimsel metrikleri, periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
+bilimsel state/block entropy, Hamming, komşu uyumu, pencere istatistiklerini,
+periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
 PNG/GIF/MP4 raster kodlamayı, CSV/JSON güvenliğini ve export menü entegrasyonunu;
 oturum/profile güvenliğini ve tam-state round-trip davranışını; 3D volume/rule,
-orbit kamera, ray seçimi ve voxel geometri çekirdeğini; üç workspace'in SDL dummy
+orbit kamera, yön küpü yüz hizalaması, ray seçimi ve voxel geometri çekirdeğini; üç workspace'in SDL dummy
 video driver ile başlangıcını kapsar. Ayrıca gerçek OpenGL smoke testi instanced
 renderer'ın bir volume frame'i üretebildiğini doğrulamak için elle çalıştırılabilir.
 
