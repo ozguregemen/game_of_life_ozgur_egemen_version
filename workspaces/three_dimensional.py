@@ -799,6 +799,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             "slice_index": self.state.slice_index,
         }
 
+    def export_snapshot(self) -> dict[str, Any]:
+        """Return a compact immutable volume snapshot for raster exports."""
+
+        return self._timeline_snapshot()
+
     def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
         previous_shape = self.state.volume.shape
         shape = tuple(int(value) for value in snapshot["shape"])

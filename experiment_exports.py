@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
+
 from exporting import (
     ExportError,
     ExportRunner,
@@ -20,6 +22,7 @@ from exporting import (
 from mode_registry import MODE_BY_KEY
 from one_dimensional_ca import FAMILY_ELEMENTARY, RULE_FAMILY_BY_KEY, RuleSpec
 from scientific_analysis import AnalysisSeries
+from three_dimensional_modes import ALL_RULES_3D, MODE_LABELS_3D
 from themes import (
     COLORBLIND_CYCLIC_PALETTE,
     COLORBLIND_BLUE,
@@ -38,6 +41,9 @@ from timeline_history import TimelineStatus
 from wireworld import CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL, EMPTY as WIRE_EMPTY
 
 
+THREE_D_ATLAS_SEPARATOR = 255
+
+
 @dataclass(frozen=True)
 class ExperimentExportServices:
     """State capture and application callbacks required by the coordinator."""
@@ -50,6 +56,8 @@ class ExperimentExportServices:
     elementary_boundary: Callable[[], str]
     elementary_snapshot: Callable[[], Mapping[str, Any]]
     two_d_snapshot: Callable[[str], Mapping[str, Any]]
+    three_d_snapshot: Callable[[], Mapping[str, Any]]
+    three_d_context: Callable[[], Mapping[str, Any]]
     timeline_snapshots: Callable[[], Sequence[Mapping[str, Any]]]
     analysis_series: Callable[[], AnalysisSeries]
     history_status: Callable[[], TimelineStatus]
@@ -91,6 +99,17 @@ class ExperimentExportCoordinator:
                 f"Generation {generation} | "
                 f"Boundary: {self.services.elementary_boundary()}"
             )
+        if dimension == "3d":
+            context = self.services.three_d_context()
+            mode_key = str(context["mode"])
+            rule_key = str(context["rule"])
+            shape = tuple(int(value) for value in context["shape"])
+            rule = ALL_RULES_3D[rule_key]
+            return (
+                f"3D {MODE_LABELS_3D[mode_key]} | {rule.name} {rule.notation} | "
+                f"Volume {shape[2]}x{shape[1]}x{shape[0]} | "
+                f"Generation {generation}"
+            )
         mode = self.services.active_mode()
         return f"2D {MODE_BY_KEY[mode].name} | Generation {generation}"
 
@@ -99,6 +118,12 @@ class ExperimentExportCoordinator:
         if self.services.active_dimension() == "1d":
             rule = self.services.elementary_rule()
             return f"1d-rule-{rule}-generation-{generation}-{category}"
+        if self.services.active_dimension() == "3d":
+            context = self.services.three_d_context()
+            return (
+                f"3d-{context['mode']}-{context['rule']}-"
+                f"generation-{generation}-{category}"
+            )
         return (
             f"2d-{self.services.active_mode()}-generation-{generation}-{category}"
         )
@@ -217,6 +242,61 @@ class ExperimentExportCoordinator:
             rows=cls._normalized_2d_rows(mode, snapshot),
         )
 
+    @staticmethod
+    def _from_3d_snapshot(snapshot: Mapping[str, Any]) -> RasterFrame:
+        """Create a deterministic XY/XZ/YZ atlas from one 3D volume snapshot."""
+
+        shape = tuple(int(value) for value in snapshot["shape"])
+        if len(shape) != 3 or any(length < 1 for length in shape):
+            raise ValueError("3D export shape must contain three positive axes")
+        raw_cells = snapshot["cells"]
+        if isinstance(raw_cells, (bytes, bytearray, memoryview)):
+            cells = np.frombuffer(raw_cells, dtype=np.uint8)
+            if cells.size != int(np.prod(shape)):
+                raise ValueError("3D export cell bytes do not match the volume shape")
+            cells = cells.reshape(shape)
+        else:
+            cells = np.asarray(raw_cells, dtype=np.uint8)
+            if cells.shape != shape:
+                raise ValueError("3D export cells do not match the volume shape")
+
+        state_count = int(snapshot["state_count"])
+        if state_count < 2 or np.any(cells >= state_count):
+            raise ValueError("3D export contains a state outside its rule range")
+
+        slice_state = snapshot.get("slice", {})
+        axis = str(snapshot.get("slice_axis", slice_state.get("axis", "z")))
+        selected_index = int(
+            snapshot.get("slice_index", slice_state.get("index", shape[0] // 2))
+        )
+        if axis not in ("z", "y", "x"):
+            raise ValueError("3D export slice axis must be x, y, or z")
+        axis_lengths = {"z": shape[0], "y": shape[1], "x": shape[2]}
+        if not 0 <= selected_index < axis_lengths[axis]:
+            raise ValueError("3D export slice index is outside the volume")
+
+        z_index = selected_index if axis == "z" else shape[0] // 2
+        y_index = selected_index if axis == "y" else shape[1] // 2
+        x_index = selected_index if axis == "x" else shape[2] // 2
+        xy = cells[z_index, :, :]
+        xz = cells[:, y_index, :]
+        yz = cells[:, :, x_index].T
+
+        depth, rows, columns = shape
+        atlas = np.full(
+            (rows + 1 + depth, columns + 1 + depth),
+            THREE_D_ATLAS_SEPARATOR,
+            dtype=np.uint8,
+        )
+        atlas[:rows, :columns] = xy
+        atlas[:rows, columns + 1 :] = yz
+        atlas[rows + 1 :, :columns] = xz
+        atlas[rows + 1 :, columns + 1 :] = 0
+        return RasterFrame(
+            generation=int(snapshot["generation"]),
+            rows=tuple(tuple(int(cell) for cell in row) for row in atlas),
+        )
+
     def palette(self) -> dict[int, tuple[int, int, int]]:
         theme_name = self.services.theme_name()
         theme = THEMES[theme_name]
@@ -236,6 +316,31 @@ class ExperimentExportCoordinator:
                     spec.states,
                     theme_name,
                     secondary=True,
+                )
+            return palette
+        if self.services.active_dimension() == "3d":
+            context = self.services.three_d_context()
+            state_count = int(context["state_count"])
+            active = (
+                COLORBLIND_YELLOW
+                if theme_name == "colorblind"
+                else theme["cell"]
+            )
+            decay = (
+                COLORBLIND_MAGENTA
+                if theme_name == "colorblind"
+                else (255, 42, 10)
+            )
+            palette = {
+                0: background,
+                1: active,
+                THREE_D_ATLAS_SEPARATOR: theme["grid"],
+            }
+            for state in range(2, state_count):
+                amount = (state - 1) / max(1, state_count - 2)
+                palette[state] = tuple(
+                    round(source + (target - source) * amount)
+                    for source, target in zip(active, decay, strict=True)
                 )
             return palette
         mode = self.services.active_mode()
@@ -302,6 +407,8 @@ class ExperimentExportCoordinator:
     def capture_current_raster(self) -> RasterFrame:
         if self.services.active_dimension() == "1d":
             return self._from_1d_snapshot(self.services.elementary_snapshot())
+        if self.services.active_dimension() == "3d":
+            return self._from_3d_snapshot(self.services.three_d_snapshot())
         mode = self.services.active_mode()
         return self._from_2d_snapshot(mode, self.services.two_d_snapshot(mode))
 
@@ -309,6 +416,8 @@ class ExperimentExportCoordinator:
         snapshots = self.services.timeline_snapshots()
         if self.services.active_dimension() == "1d":
             return tuple(self._from_1d_snapshot(snapshot) for snapshot in snapshots)
+        if self.services.active_dimension() == "3d":
+            return tuple(self._from_3d_snapshot(snapshot) for snapshot in snapshots)
         mode = self.services.active_mode()
         return tuple(self._from_2d_snapshot(mode, snapshot) for snapshot in snapshots)
 
@@ -387,8 +496,18 @@ class ExperimentExportCoordinator:
                 f"{RULE_FAMILY_BY_KEY[spec.family].name} Code {spec.code} "
                 f"generation {generation}"
             )
+            export_mode = "one_dimensional_ca"
+        elif dimension == "3d":
+            context = self.services.three_d_context()
+            rule = ALL_RULES_3D[str(context["rule"])]
+            export_mode = str(context["mode"])
+            name = (
+                f"{MODE_LABELS_3D[export_mode]} {rule.name} "
+                f"generation {generation}"
+            )
         else:
             name = f"{MODE_BY_KEY[mode].name} generation {generation}"
+            export_mode = mode
         document = self.services.session_document(name)
         series = self.services.analysis_series()
         history = self.services.history_status()
@@ -396,7 +515,7 @@ class ExperimentExportCoordinator:
             "schema": "cellular-automata-lab/experiment-export",
             "version": 1,
             "dimension": dimension,
-            "mode": "one_dimensional_ca" if dimension == "1d" else mode,
+            "mode": export_mode,
             "generation": generation,
             "timeline": {
                 "frame_count": history.frame_count,

@@ -65,10 +65,16 @@ class ExportMenu:
         return (
             {
                 "key": "png",
-                "name": "PNG Diagram",
+                "name": (
+                    "PNG Slice Atlas"
+                    if context.startswith("3D")
+                    else "PNG Diagram"
+                ),
                 "detail": (
                     "Full 1D space-time diagram"
                     if context.startswith("1D")
+                    else "Current orthogonal XY / XZ / YZ slices"
+                    if context.startswith("3D")
                     else "Current 2D state grid"
                 ),
                 "callback": self.services.export_png,
@@ -76,13 +82,21 @@ class ExportMenu:
             {
                 "key": "gif",
                 "name": "Animated GIF",
-                "detail": "Up to 120 evenly sampled timeline frames",
+                "detail": (
+                    "Up to 120 sampled 3D slice-atlas frames"
+                    if context.startswith("3D")
+                    else "Up to 120 evenly sampled timeline frames"
+                ),
                 "callback": self.services.export_gif,
             },
             {
                 "key": "mp4",
                 "name": "MP4 Video",
-                "detail": "H.264 timeline video at 20 frames per second",
+                "detail": (
+                    "H.264 3D slice-atlas timeline at 20 frames per second"
+                    if context.startswith("3D")
+                    else "H.264 timeline video at 20 frames per second"
+                ),
                 "callback": self.services.export_mp4,
             },
             {

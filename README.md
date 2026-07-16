@@ -43,7 +43,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - Tam grid kopyaları yerine periyodik checkpoint + hücre/satır deltaları kullanan geçmiş
 - Population, density, entropy ve değişim oranı zaman serilerini gösteren bilimsel panel
 - Periyot/stabilizasyon algılama ve ortak koşullarda 1D Wolfram rule karşılaştırması
-- 1D space-time PNG, 2D grid PNG, timeline GIF/MP4, ölçüm CSV ve deney JSON dışa aktarma
+- 1D space-time, 2D grid ve 3D ortogonal kesit atlası PNG; timeline GIF/MP4,
+  ölçüm CSV ve deney JSON dışa aktarma
 - Katlanabilir sidebar, tooltip, bağlamsal F1 yardımı ve belirgin run/pause/araç rozetleri
 - Aranabilir/favorilenebilir Elementary rule kataloğu ve son kullanılan deneyler
 - Durumları yalnız renkle anlatmayan, renk körlüğüne uygun yüksek kontrastlı tema
@@ -224,10 +225,13 @@ Three-Dimensional Life”](https://doi.org/10.25088/complexsystems.16.4.381).
 `Volume Inspection` bölümü simülasyon state'ini değiştirmeden üç görünüm sağlar.
 `Full Volume` bütün canlı hücreleri; `Clipping Plane`, seçilen X/Y/Z indeksinin bir
 tarafını; `Single Layer` yalnız o indeksteki hücreleri gösterir. Kesim düzlemi hacim
-içinde ayrı bir çerçeveyle işaretlenir. Saydam modda instance'lar kamera uzaklığına
+içinde ayrı bir çerçeveyle işaretlenir. Saydam modda instance'lar görünüm derinliğine
 göre arkadan öne sıralanır, alpha blending sırasında depth yazımı kapatılır ve böylece
-iç yapılar yaklaşık olarak görülebilir. Clipping ve katman filtresi ray seçimine de
-uygulanır; görünmeyen voxel'ler fareyle yanlışlıkla düzenlenmez.
+iç yapılar yaklaşık olarak görülebilir. Sıralama, görünüm yönündeki küçük değişimleri
+açısal aralıklarda gruplayarak yoğun volume'larda her fare pikselinde yeniden sort ve
+GPU buffer upload yapılmasını engeller; zoom ve pan gereksiz sıralama başlatmaz.
+Clipping ve katman filtresi ray seçimine de uygulanır; görünmeyen voxel'ler fareyle
+yanlışlıkla düzenlenmez.
 
 `Voxel Appearance` bölümü Softology'nin 3D CA görselleştirme yaklaşımından esinlenen
 yedi gerçek zamanlı renk şeması sunar: state shading (aktif hücrelerde sarıdan
@@ -312,15 +316,16 @@ gösterir.
 
 ## Dışa aktarma
 
-1D ve 2D sağ menülerindeki `Export Results` düğmesi veya `X`, aktif workspace'i
-duraklatıp güncel düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar. 3D volume
-export henüz etkin değildir; tam volume oturum JSON'u içinde güvenle saklanır.
+Sağ menüdeki `Export Results` düğmesi veya `X`, aktif 1D/2D/3D workspace'i
+duraklatıp güncel düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar.
 
-- `PNG Diagram`: 1D'de tüm space-time diyagramını, 2D'de güncel durum grid'ini
-  kayıpsız ve nearest-neighbor ölçeklemeyle yazar.
+- `PNG Diagram / Slice Atlas`: 1D'de tüm space-time diyagramını, 2D'de güncel durum
+  grid'ini; 3D'de seçili kesim düzlemiyle kesişen XY, XZ ve YZ görünümlerini tek
+  kayıpsız atlas içinde nearest-neighbor ölçeklemeyle yazar.
 - `Animated GIF`: Timeline'ın ilk ve son frame'i dahil en fazla 120 eşit aralıklı
-  frame'ini döngüsel animasyon olarak üretir.
-- `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar.
+  frame'ini döngüsel animasyon olarak üretir. 3D frame'ler ortogonal kesit atlaslarıdır.
+- `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar; 3D'de atlas
+  düzeni frame'ler arasında sabit kalır.
 - `Generation Metrics CSV`: Population, density, normalize entropy, değişim oranı,
   algılanan periyot ve stabilizasyon generation'ını UTF-8 CSV olarak verir.
 - `Shareable Experiment JSON`: Bütün 1D/2D/3D durumlarını taşıyan yüklenebilir session
@@ -330,7 +335,9 @@ Kodlama işlemleri Pygame event thread'i dışında sırayla çalışır; tamaml
 durumu alt barda gösterilir. Uzun timeline'larda kontrollü dosya boyutu için animasyon
 örneklenir, fakat ilk ve son kayıt daima korunur. 1D satırları genişlik değiştiğinde
 merkez hizalıdır; Life ve Immigration yaş sayaçları gerçek hücre durumlarına normalize
-edilir ve Langton karıncası frame üzerinde ayrıca işaretlenir.
+edilir ve Langton karıncası frame üzerinde ayrıca işaretlenir. 3D raster çıktıları
+OpenGL framebuffer'ından ekran görüntüsü almak yerine volume snapshot'larından üretilir;
+bu nedenle ekran kartından, kamera açısından ve headless test ortamından bağımsızdır.
 
 Dosyalar otomatik, güvenli ve zaman damgalı adlarla `exports/` klasörüne atomik olarak
 yazılır. Bu klasör Git tarafından izlenmez. Paylaşılabilir JSON, `sessions/` klasörüne

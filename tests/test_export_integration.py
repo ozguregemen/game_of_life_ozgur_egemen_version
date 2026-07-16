@@ -5,10 +5,13 @@ from __future__ import annotations
 import os
 import unittest
 
+import numpy as np
+
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
+from experiment_exports import THREE_D_ATLAS_SEPARATOR, ExperimentExportCoordinator
 from exporting import render_frame_array
 from session_storage import validate_session_document
 
@@ -96,6 +99,50 @@ class ExportIntegrationTests(unittest.TestCase):
         self.assertEqual(frame.rows[8][7:10], (1, 1, 1))
         self.assertEqual(set(cell for row in frame.rows for cell in row), {0, 1})
 
+    def test_3d_export_builds_three_orthogonal_slice_views(self) -> None:
+        cells = np.zeros((3, 4, 5), dtype=np.uint8)
+        cells[1, 0, 0] = 1
+        cells[0, 2, 0] = 2
+        cells[0, 0, 1] = 1
+
+        frame = ExperimentExportCoordinator._from_3d_snapshot(
+            {
+                "shape": cells.shape,
+                "cells": cells.tobytes(order="C"),
+                "state_count": 3,
+                "generation": 7,
+                "slice_axis": "x",
+                "slice_index": 1,
+            }
+        )
+
+        self.assertEqual(frame.generation, 7)
+        self.assertEqual((len(frame.rows), len(frame.rows[0])), (8, 9))
+        self.assertEqual(frame.rows[0][0], 1)  # XY, center Z plane
+        self.assertEqual(frame.rows[5][0], 2)  # XZ, center Y plane
+        self.assertEqual(frame.rows[0][6], 1)  # YZ, selected X plane
+        self.assertEqual(frame.rows[0][5], THREE_D_ATLAS_SEPARATOR)
+        self.assertEqual(frame.rows[5][6], 0)
+
+    def test_3d_timeline_export_preserves_cursor(self) -> None:
+        life.set_active_dimension("3d")
+        controller = life.three_dimensional_controller
+        controller.seed_cluster()
+        controller.reset_history()
+        controller.advance()
+        controller.sync_history()
+        controller.advance()
+        controller.sync_history()
+        self.assertTrue(controller.seek_history(0))
+        cursor_before = controller.timeline.timeline.cursor
+
+        frames = life.capture_timeline_rasters()
+
+        self.assertEqual(controller.timeline.timeline.cursor, cursor_before)
+        self.assertEqual(len(frames), 3)
+        self.assertEqual(frames[0].generation, 0)
+        self.assertEqual(frames[-1].generation, 2)
+
     def test_langton_ant_is_visible_as_an_overlay_state(self) -> None:
         life.set_active_dimension("2d")
         life.set_simulation_mode("langtons_ant")
@@ -159,6 +206,18 @@ class ExportIntegrationTests(unittest.TestCase):
         self.assertTrue(all(modal.contains(card) for _, card in cards))
         life.draw_scene()
 
+    def test_x_opens_3d_export_menu_with_slice_atlas_options(self) -> None:
+        life.set_active_dimension("3d")
+
+        life.handle_keydown(
+            life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_x)
+        )
+
+        self.assertTrue(life.export_manager.active)
+        entries = life.export_manager.entries()
+        self.assertEqual(entries[0]["name"], "PNG Slice Atlas")
+        self.assertIn("3D slice-atlas", str(entries[1]["detail"]))
+
     def test_shareable_json_remains_a_valid_reloadable_session(self) -> None:
         self.configure_life_blinker()
         life.apply_generation()
@@ -172,6 +231,24 @@ class ExportIntegrationTests(unittest.TestCase):
         self.assertEqual(metadata["generation"], 1)
         self.assertEqual(metadata["timeline"]["frame_count"], 2)
         self.assertEqual(len(metadata["analysis"]["samples"]), 2)
+
+    def test_3d_shareable_json_contains_complete_reloadable_volume(self) -> None:
+        life.set_active_dimension("3d")
+        controller = life.three_dimensional_controller
+        controller.seed_cluster()
+        controller.reset_history()
+
+        document = life.capture_shareable_experiment_document()
+        normalized = validate_session_document(document)
+        metadata = document["experiment_export"]
+
+        self.assertEqual(normalized["application"]["dimension"], "3d")
+        self.assertEqual(metadata["dimension"], "3d")
+        self.assertEqual(metadata["mode"], controller.state.mode_key)
+        self.assertEqual(
+            normalized["workspaces"]["3d"]["cells"],
+            controller.state.volume.cells.tolist(),
+        )
 
 
 if __name__ == "__main__":

@@ -1996,11 +1996,12 @@ def toggle_analysis_panel() -> None:
 
 def _active_export_timeline_snapshots() -> tuple[Mapping[str, Any], ...]:
     """Reconstruct sampled frames without moving the visible timeline cursor."""
-    binding = (
-        elementary_controller.timeline
-        if active_dimension == "1d"
-        else two_d_timelines[simulation_mode]
-    )
+    if active_dimension == "1d":
+        binding = elementary_controller.timeline
+    elif active_dimension == "3d":
+        binding = three_dimensional_controller.timeline
+    else:
+        binding = two_d_timelines[simulation_mode]
     timeline = binding.timeline
     return tuple(
         timeline.reconstruct(index)
@@ -2045,23 +2046,11 @@ def _prepare_export_menu() -> None:
 
 def activate_export_menu() -> None:
     """Open the contextual result export menu."""
-    if active_dimension == "3d":
-        set_status(
-            "3D volume export is not enabled yet; session save/load already preserves the full volume.",
-            4.0,
-        )
-        return
     export_manager.open()
 
 
 def toggle_export_menu() -> None:
     """Open or close result exports with the global X shortcut."""
-    if active_dimension == "3d":
-        set_status(
-            "3D volume export is not enabled yet; use P to save the complete session.",
-            4.0,
-        )
-        return
     export_manager.toggle()
 
 
@@ -4786,6 +4775,13 @@ export_coordinator = ExperimentExportCoordinator(
         elementary_boundary=lambda: elementary_controller.state.boundary,
         elementary_snapshot=elementary_controller.snapshot,
         two_d_snapshot=_snapshot_2d_mode,
+        three_d_snapshot=three_dimensional_controller.export_snapshot,
+        three_d_context=lambda: {
+            "mode": three_dimensional_controller.state.mode_key,
+            "rule": three_dimensional_controller.state.rule_key,
+            "state_count": three_dimensional_controller.state.volume.state_count,
+            "shape": three_dimensional_controller.state.volume.shape,
+        },
         timeline_snapshots=_active_export_timeline_snapshots,
         analysis_series=active_analysis_series,
         history_status=active_history_status,
