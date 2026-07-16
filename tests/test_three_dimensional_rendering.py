@@ -10,6 +10,7 @@ from three_dimensional_rendering import (
     look_at_matrix,
     perspective_matrix,
     pick_voxel,
+    transparent_order_key,
     voxel_is_visible,
     volume_position_to_world,
     voxel_instance_data,
@@ -59,6 +60,20 @@ class Camera3DTests(unittest.TestCase):
             perspective_matrix(45, 0, 0.1, 100)
         with self.assertRaisesRegex(ValueError, "field of view"):
             OrbitCamera3D(fov_y=180)
+
+    def test_transparent_sort_bucket_ignores_zoom_pan_and_tiny_orbits(self) -> None:
+        camera = OrbitCamera3D()
+        original = transparent_order_key(camera, 12)
+
+        camera.zoom(1.2)
+        camera.pan(20, 10, 600)
+        self.assertEqual(transparent_order_key(camera, 12), original)
+
+        camera.orbit(0.1, 0.0)
+        self.assertEqual(transparent_order_key(camera, 12), original)
+        camera.orbit(30.0, 0.0)
+        self.assertNotEqual(transparent_order_key(camera, 12), original)
+        self.assertNotEqual(transparent_order_key(camera, 13), original)
 
 
 class VoxelGeometryTests(unittest.TestCase):

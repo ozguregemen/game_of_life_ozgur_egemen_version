@@ -34,6 +34,7 @@ COLOR_SCHEMES = (
     "white",
 )
 LIGHTING_MODES = ("studio", "soft", "flat")
+TRANSPARENT_SORT_DIRECTION_STEPS = 50.0
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,26 @@ def matrix_bytes(matrix: FloatMatrix) -> bytes:
     if value.shape != (4, 4):
         raise ValueError("OpenGL matrix must be 4x4.")
     return value.T.copy(order="C").tobytes()
+
+
+def transparent_order_key(
+    camera: "OrbitCamera3D",
+    revision: int,
+) -> tuple[Any, ...]:
+    """Return a stable view bucket for approximate transparent voxel sorting.
+
+    Back-to-front order depends on view direction, not zoom distance or camera
+    panning. Quantizing that direction avoids sorting and re-uploading a dense
+    instance buffer for every single mouse-motion event.
+    """
+
+    direction = camera.forward
+    bucket = tuple(
+        round(float(value) * TRANSPARENT_SORT_DIRECTION_STEPS)
+        / TRANSPARENT_SORT_DIRECTION_STEPS
+        for value in direction
+    )
+    return "transparent", int(revision), bucket
 
 
 @dataclass
@@ -743,12 +764,11 @@ class ModernGLVoxelRenderer:
     ) -> None:
         if not len(self._instance_data):
             return
-        eye_key = tuple(round(float(value), 4) for value in camera.eye)
-        order_key = ("transparent", revision, eye_key)
+        order_key = transparent_order_key(camera, revision)
         if self._buffer_order_key == order_key:
             return
-        distances = np.sum((self._instance_data[:, :3] - camera.eye) ** 2, axis=1)
-        ordered = self._instance_data[np.argsort(distances)[::-1]]
+        depths = self._instance_data[:, :3] @ camera.forward
+        ordered = self._instance_data[np.argsort(depths)[::-1]]
         self.instance_buffer.write(ordered.tobytes())
         self._buffer_order_key = order_key
 
