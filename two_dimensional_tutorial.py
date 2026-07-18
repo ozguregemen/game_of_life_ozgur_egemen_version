@@ -445,7 +445,7 @@ class TwoDimensionalTutorial:
     def _draw_neighborhood_map(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
         theme = self.services.theme()
         self._panel(surface, rect, border=self.accent)
-        cell = max(18, min(42, (min(rect.width, rect.height) - 92) // 9))
+        cell = max(18, min(36, (min(rect.width, rect.height) - 112) // 9))
         origin_x = rect.centerx - cell * 9 // 2
         origin_y = rect.centery - cell * 9 // 2 + 12
         center = (4, 4)
@@ -467,37 +467,70 @@ class TwoDimensionalTutorial:
                 pygame.draw.rect(surface, theme["grid"], box, 1, border_radius=3)
         _, heading_size, _, label_size = self._font_sizes()
         title = self._font(heading_size, bold=True).render(
-            "ONE CELL + EIGHT LOCAL NEIGHBORS", True, theme["text"]
+            "ONE FOCUS CELL READS EIGHT NEIGHBORS", True, theme["text"]
         )
         surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 18)))
-        label = self._font(label_size, bold=True).render(
-            "The rest of the board is not consulted directly", True, theme["menu_text"]
+        focus_label = self._font(label_size, bold=True).render(
+            "GOLD = focus cell whose next state is being decided", True, self.GOLD
         )
-        surface.blit(label, label.get_rect(midbottom=(rect.centerx, rect.bottom - 16)))
+        neighbor_label = self._font(label_size, bold=True).render(
+            "BLUE = the only eight cells it can read this generation", True, self.accent
+        )
+        surface.blit(focus_label, focus_label.get_rect(midtop=(rect.centerx, origin_y + cell * 9 + 12)))
+        surface.blit(neighbor_label, neighbor_label.get_rect(midtop=(rect.centerx, origin_y + cell * 9 + 35)))
 
     def _draw_synchronous_page(self, canvas: pygame.Surface, y: int) -> int:
         theme = self.services.theme()
         width = canvas.get_width()
         frames = (
-            ((0, 0, 0, 0, 0), (0, 0, 1, 0, 0), (0, 0, 1, 0, 0), (0, 0, 1, 0, 0), (0, 0, 0, 0, 0)),
-            ((0, 0, 0, 0, 0), (0, 0, 0, 0, 0), (0, 1, 1, 1, 0), (0, 0, 0, 0, 0), (0, 0, 0, 0, 0)),
-            ((0, 0, 0, 0, 0), (0, 0, 1, 0, 0), (0, 0, 1, 0, 0), (0, 0, 1, 0, 0), (0, 0, 0, 0, 0)),
+            (
+                (0, 0, 0, 0, 0, 0, 0),
+                (0, 1, 1, 0, 0, 0, 0),
+                (0, 1, 0, 0, 0, 0, 0),
+                (0, 0, 0, 0, 0, 0, 0),
+            ),
+            (
+                (0, 0, 0, 0, 0, 0, 0),
+                (0, 0, 1, 1, 0, 0, 0),
+                (0, 0, 1, 0, 0, 0, 0),
+                (0, 0, 0, 0, 0, 0, 0),
+            ),
+            (
+                (0, 0, 0, 0, 0, 0, 0),
+                (0, 0, 0, 1, 1, 0, 0),
+                (0, 0, 0, 1, 0, 0, 0),
+                (0, 0, 0, 0, 0, 0, 0),
+            ),
+        )
+        captions = (
+            ("GENERATION 0 - READ", "Every destination inspects the cell on its left."),
+            ("GENERATION 1 - COMMIT", "All calculated results appear together; the shape moved right."),
+            ("GENERATION 2 - REPEAT", "The same rule is applied again. This is not a return to generation 0."),
         )
         gap = 42
         frame_width = (width - gap * 2) // 3
-        visual_height = min(270, max(190, frame_width // 2))
+        visual_height = min(310, max(230, frame_width // 2))
+        heading_font = self._font(self._font_sizes()[3], bold=True)
         label_font = self._font(self._font_sizes()[3], bold=True)
         for index, matrix in enumerate(frames):
             frame = pygame.Rect(index * (frame_width + gap), y, frame_width, visual_height)
+            self._panel(canvas, frame, border=self.accent)
+            title = heading_font.render(captions[index][0], True, theme["text"])
+            canvas.blit(title, title.get_rect(midtop=(frame.centerx, frame.y + 12)))
             self._draw_matrix(
                 canvas,
-                frame,
+                pygame.Rect(frame.x + 16, frame.y + 44, frame.width - 32, frame.height - 108),
                 matrix,
                 (theme["background"], self.accent),
                 border=self.accent,
             )
-            label = label_font.render(f"GENERATION {index}", True, theme["text"])
-            canvas.blit(label, label.get_rect(midbottom=(frame.centerx, frame.bottom - 8)))
+            detail_lines = self._wrap(captions[index][1], label_font, frame.width - 28)
+            for line_index, line in enumerate(detail_lines[:2]):
+                label = label_font.render(line, True, theme["menu_text"])
+                canvas.blit(
+                    label,
+                    label.get_rect(midtop=(frame.centerx, frame.bottom - 53 + line_index * 20)),
+                )
             if index < 2:
                 arrow_x = frame.right + gap // 2
                 pygame.draw.line(canvas, self.GOLD, (arrow_x - 12, frame.centery), (arrow_x + 10, frame.centery), 4)
@@ -506,6 +539,138 @@ class TwoDimensionalTutorial:
             canvas,
             self.page.sections,
             pygame.Rect(0, y + visual_height + 18, width, 850),
+        )
+
+    def _draw_behaviors_page(self, canvas: pygame.Surface, y: int) -> int:
+        """Explain stable, periodic, translating, and transient outcomes visually."""
+        theme = self.services.theme()
+        width = canvas.get_width()
+        palette = (theme["background"], self.accent)
+        block = (
+            (0, 0, 0, 0),
+            (0, 1, 1, 0),
+            (0, 1, 1, 0),
+            (0, 0, 0, 0),
+        )
+        vertical = (
+            (0, 0, 0, 0, 0),
+            (0, 0, 1, 0, 0),
+            (0, 0, 1, 0, 0),
+            (0, 0, 1, 0, 0),
+            (0, 0, 0, 0, 0),
+        )
+        horizontal = (
+            (0, 0, 0, 0, 0),
+            (0, 0, 0, 0, 0),
+            (0, 1, 1, 1, 0),
+            (0, 0, 0, 0, 0),
+            (0, 0, 0, 0, 0),
+        )
+        glider_a = (
+            (0, 1, 0, 0, 0),
+            (0, 0, 1, 0, 0),
+            (1, 1, 1, 0, 0),
+            (0, 0, 0, 0, 0),
+            (0, 0, 0, 0, 0),
+        )
+        glider_b = (
+            (0, 0, 0, 0, 0),
+            (0, 0, 1, 0, 0),
+            (0, 0, 0, 1, 0),
+            (0, 1, 1, 1, 0),
+            (0, 0, 0, 0, 0),
+        )
+        lone = (
+            (0, 0, 0),
+            (0, 1, 0),
+            (0, 0, 0),
+        )
+        empty = tuple(tuple(0 for _ in range(3)) for _ in range(3))
+        rows = (
+            ("STABLE - PERIOD 1", "Gen 0", block, "Gen 1 = Gen 0", block, "The block never changes."),
+            ("OSCILLATOR - PERIOD 2", "Gen 0", vertical, "Gen 1", horizontal, "Gen 2 returns to Gen 0 because the blinker repeats every two updates."),
+            ("TRANSLATING", "Gen 0", glider_a, "Gen 4", glider_b, "The glider repeats its shape one cell down and right."),
+            ("TRANSIENT / DECAY", "Gen 0", lone, "Gen 1", empty, "A lone Conway cell has no surviving neighbors and disappears."),
+        )
+        heading = self._font(self._font_sizes()[1], bold=True)
+        label = self._font(self._font_sizes()[3], bold=True)
+        compact = width < 1100
+        row_height = 232 if compact else 176
+        for index, (title, left_label, left, right_label, right, detail) in enumerate(rows):
+            row = pygame.Rect(0, y + index * (row_height + 12), width, row_height)
+            self._panel(canvas, row, border=self.accent)
+            title_text = heading.render(title, True, self.accent if index != 1 else self.GOLD)
+            canvas.blit(title_text, (row.x + 18, row.y + 15))
+            if compact:
+                left_rect = pygame.Rect(row.x + 20, row.y + 55, 165, row.height - 72)
+                right_rect = pygame.Rect(row.x + 220, row.y + 55, 165, row.height - 72)
+            else:
+                left_rect = pygame.Rect(row.x + 250, row.y + 12, 190, row.height - 24)
+                right_rect = pygame.Rect(row.x + 510, row.y + 12, 190, row.height - 24)
+            self._draw_matrix(canvas, left_rect, left, palette, border=self.accent)
+            self._draw_matrix(canvas, right_rect, right, palette, border=self.accent)
+            for text_value, rect_value in ((left_label, left_rect), (right_label, right_rect)):
+                rendered = label.render(text_value, True, theme["text"])
+                canvas.blit(rendered, rendered.get_rect(midbottom=(rect_value.centerx, rect_value.bottom - 6)))
+            arrow_x = (left_rect.right + right_rect.x) // 2
+            pygame.draw.line(canvas, self.GOLD, (arrow_x - 23, row.centery), (arrow_x + 17, row.centery), 4)
+            pygame.draw.polygon(canvas, self.GOLD, ((arrow_x + 25, row.centery), (arrow_x + 12, row.centery - 8), (arrow_x + 12, row.centery + 8)))
+            detail_start = right_rect.right
+            if index == 1 and width >= 1100:
+                third_rect = pygame.Rect(row.x + 770, row.y + 12, 190, row.height - 24)
+                self._draw_matrix(canvas, third_rect, vertical, palette, border=self.GOLD)
+                third_label = label.render("Gen 2 = Gen 0", True, self.GOLD)
+                canvas.blit(third_label, third_label.get_rect(midbottom=(third_rect.centerx, third_rect.bottom - 6)))
+                self._draw_arrow_between(canvas, right_rect.right, third_rect.x, row.centery)
+                detail_start = third_rect.right
+            detail_rect = pygame.Rect(
+                detail_start + 28,
+                row.y + (68 if compact else 40),
+                row.right - detail_start - 46,
+                row.height - (82 if compact else 54),
+            )
+            self._draw_wrapped(canvas, detail, label, theme["menu_text"], detail_rect, line_height=self._font_sizes()[3] + 6)
+        visual_bottom = y + len(rows) * (row_height + 12)
+        return self._draw_sections(
+            canvas,
+            self.page.sections,
+            pygame.Rect(0, visual_bottom + 8, width, 900),
+        )
+
+    def _draw_boundaries_page(self, canvas: pygame.Surface, y: int) -> int:
+        """Contrast this app's fixed edge with a wrapped toroidal edge."""
+        theme = self.services.theme()
+        width = canvas.get_width()
+        gap = 20
+        panel_width = (width - gap) // 2
+        heading = self._font(self._font_sizes()[1], bold=True)
+        label = self._font(self._font_sizes()[3], bold=True)
+        for index, title in enumerate(("FIXED EDGE - THIS APP", "WRAPPED EDGE - COMPARISON")):
+            panel = pygame.Rect(index * (panel_width + gap), y, panel_width, 330)
+            self._panel(canvas, panel, border=self.accent if index == 0 else self.GOLD)
+            title_text = heading.render(title, True, self.accent if index == 0 else self.GOLD)
+            canvas.blit(title_text, title_text.get_rect(midtop=(panel.centerx, panel.y + 16)))
+            cell = 43
+            grid = pygame.Rect(panel.centerx - cell * 4 // 2, panel.y + 65, cell * 4, cell * 4)
+            for row in range(4):
+                for col in range(4):
+                    box = pygame.Rect(grid.x + col * cell, grid.y + row * cell, cell - 3, cell - 3)
+                    pygame.draw.rect(canvas, self.accent if (row, col) == (1, 3) else theme["background"], box)
+                    pygame.draw.rect(canvas, theme["grid"], box, 2)
+            if index == 0:
+                pygame.draw.line(canvas, self.MAGENTA, (grid.right + 10, grid.y), (grid.right + 10, grid.bottom), 5)
+                cross = label.render("OUTSIDE = INACTIVE", True, self.MAGENTA)
+                canvas.blit(cross, cross.get_rect(midtop=(panel.centerx, grid.bottom + 26)))
+            else:
+                arrow_y = grid.centery
+                pygame.draw.arc(canvas, self.GOLD, pygame.Rect(grid.x - 44, grid.y - 22, grid.width + 88, grid.height + 44), 0.2, 2.95, 4)
+                pygame.draw.polygon(canvas, self.GOLD, ((grid.x - 25, arrow_y), (grid.x - 10, arrow_y - 8), (grid.x - 10, arrow_y + 8)))
+                wrapped = label.render("RIGHT CONNECTS TO LEFT", True, self.GOLD)
+                canvas.blit(wrapped, wrapped.get_rect(midtop=(panel.centerx, grid.bottom + 26)))
+        return self._draw_sections(
+            canvas,
+            self.page.sections,
+            pygame.Rect(0, y + 350, width, 900),
         )
 
     def _draw_model_visual(self, surface: pygame.Surface, rect: pygame.Rect, index: int) -> None:
@@ -678,61 +843,554 @@ class TwoDimensionalTutorial:
         bottom = self._draw_sections(canvas, self.page.sections, sections)
         return max(visual.bottom, bottom)
 
-    def _draw_rule_visual(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+    def _draw_arrow_between(self, surface: pygame.Surface, left: int, right: int, y: int) -> None:
+        """Draw one high-contrast left-to-right transition arrow."""
+        middle = (left + right) // 2
+        pygame.draw.line(surface, self.GOLD, (middle - 19, y), (middle + 13, y), 4)
+        pygame.draw.polygon(
+            surface,
+            self.GOLD,
+            ((middle + 22, y), (middle + 9, y - 8), (middle + 9, y + 8)),
+        )
+
+    def _draw_step_sequence(
+        self,
+        surface: pygame.Surface,
+        rect: pygame.Rect,
+        title: str,
+        steps: Sequence[dict[str, object]],
+    ) -> None:
+        """Draw explicit before/reason/after panels for a local transition."""
         theme = self.services.theme()
         self._panel(surface, rect, border=self.accent)
         heading_size = self._font_sizes()[1]
         label_size = self._font_sizes()[3]
         heading = self._font(heading_size, bold=True)
         label = self._font(label_size, bold=True)
+        title_text = heading.render(title, True, theme["text"])
+        surface.blit(title_text, title_text.get_rect(midtop=(rect.centerx, rect.y + 14)))
+        gap = 38
+        count = len(steps)
+        card_width = (rect.width - 40 - gap * (count - 1)) // count
+        top = rect.y + 54
+        height = rect.height - 72
+        for index, step in enumerate(steps):
+            card = pygame.Rect(rect.x + 20 + index * (card_width + gap), top, card_width, height)
+            pygame.draw.rect(surface, theme["stats_bar"], card, border_radius=9)
+            pygame.draw.rect(surface, step.get("color", self.accent), card, 2, border_radius=9)
+            caption = label.render(str(step["caption"]), True, theme["text"])
+            surface.blit(caption, caption.get_rect(midtop=(card.centerx, card.y + 10)))
+            matrix = step.get("matrix")
+            if matrix is not None:
+                palette = step.get("palette", self._mode_palette())
+                self._draw_matrix(
+                    surface,
+                    pygame.Rect(card.x + 14, card.y + 39, card.width - 28, card.height - 101),
+                    matrix,
+                    palette,
+                    border=step.get("color", self.accent),
+                )
+            else:
+                big = heading.render(str(step.get("big", "")), True, step.get("color", self.accent))
+                surface.blit(big, big.get_rect(center=(card.centerx, card.centery - 3)))
+            detail_lines = self._wrap(str(step.get("detail", "")), label, card.width - 22)
+            for line_index, line in enumerate(detail_lines[:2]):
+                rendered = label.render(line, True, theme["menu_text"])
+                surface.blit(
+                    rendered,
+                    rendered.get_rect(midtop=(card.centerx, card.bottom - 51 + line_index * 19)),
+                )
+            if index < count - 1:
+                self._draw_arrow_between(surface, card.right, card.right + gap, card.centery)
+
+    def _state_cards(self) -> tuple[tuple[str, tuple[int, int, int], str], ...]:
+        theme = self.services.theme()
+        if self.mode_key == "life":
+            return (
+                ("DEAD", theme["background"], "uses Birth list"),
+                ("ALIVE", self.accent, "uses Survival list"),
+            )
+        if self.mode_key == "immigration":
+            return (
+                ("EMPTY", theme["background"], "counts 0"),
+                ("SPECIES A", self.BLUE, "alive; counts 1"),
+                ("SPECIES B", self.ORANGE, "alive; counts 1"),
+            )
+        if self.mode_key == "brians_brain":
+            return (
+                ("OFF", theme["background"], "can be excited"),
+                ("FIRING", (90, 235, 255), "counts as firing"),
+                ("DYING", (128, 82, 190), "not counted"),
+                ("OFF AGAIN", theme["background"], "ready again"),
+            )
+        if self.mode_key == "langtons_ant":
+            return (
+                ("WHITE TILE", theme["background"], "turn right"),
+                ("BLACK TILE", self.accent, "turn left"),
+                ("ANT ARROW", self.GOLD, "position + heading"),
+            )
+        if self.mode_key == "wireworld":
+            return (
+                ("EMPTY", theme["background"], "no circuit"),
+                ("HEAD", (80, 190, 255), "pulse front"),
+                ("TAIL", self.MAGENTA, "pulse wake"),
+                ("CONDUCTOR", self.GOLD, "circuit path"),
+            )
+        return tuple(
+            (f"STATE {state}", color, f"seeks {(state + 1) % 8}")
+            for state, color in enumerate(self._mode_palette())
+        )
+
+    def _draw_state_system_visual(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        theme = self.services.theme()
+        if self.mode_key == "cyclic_automaton":
+            self._draw_cyclic_state_ring(surface, rect)
+            return
+        self._panel(surface, rect, border=self.accent)
+        heading = self._font(self._font_sizes()[1], bold=True)
+        label = self._font(self._font_sizes()[3], bold=True)
+        title = "READ THE STATE SYSTEM FROM LEFT TO RIGHT"
+        if self.mode_key in ("life", "immigration", "langtons_ant"):
+            title = "THESE STATES STORE DIFFERENT INFORMATION"
+        title_text = heading.render(title, True, theme["text"])
+        surface.blit(title_text, title_text.get_rect(midtop=(rect.centerx, rect.y + 15)))
+        cards = self._state_cards()
+        columns = min(len(cards), 4)
+        rows = (len(cards) + columns - 1) // columns
+        gap = 14
+        usable_width = rect.width - 42
+        card_width = (usable_width - gap * (columns - 1)) // columns
+        card_height = (rect.height - 72 - gap * (rows - 1)) // rows
+        for index, (name, color, detail) in enumerate(cards):
+            row, col = divmod(index, columns)
+            card = pygame.Rect(
+                rect.x + 21 + col * (card_width + gap),
+                rect.y + 55 + row * (card_height + gap),
+                card_width,
+                card_height,
+            )
+            pygame.draw.rect(surface, theme["stats_bar"], card, border_radius=8)
+            pygame.draw.rect(surface, color if color != theme["background"] else theme["grid"], card, 3, border_radius=8)
+            swatch_size = min(55, card.height - 72)
+            swatch = pygame.Rect(card.centerx - swatch_size // 2, card.y + 18, swatch_size, swatch_size)
+            pygame.draw.rect(surface, color, swatch, border_radius=7)
+            pygame.draw.rect(surface, theme["text"], swatch, 1, border_radius=7)
+            if self.mode_key == "langtons_ant" and name == "ANT ARROW":
+                pygame.draw.polygon(surface, theme["background"], ((swatch.centerx, swatch.y + 7), (swatch.x + 8, swatch.bottom - 8), (swatch.right - 8, swatch.bottom - 8)))
+            name_text = label.render(name, True, theme["text"])
+            detail_text = label.render(detail, True, theme["menu_text"])
+            surface.blit(name_text, name_text.get_rect(midtop=(card.centerx, swatch.bottom + 10)))
+            surface.blit(detail_text, detail_text.get_rect(midtop=(card.centerx, swatch.bottom + 31)))
+            if rows == 1 and index < len(cards) - 1 and self.mode_key in ("brians_brain", "cyclic_automaton"):
+                self._draw_arrow_between(surface, card.right, card.right + gap, card.centery)
+            if rows == 1 and index in (1, 2) and self.mode_key == "wireworld":
+                self._draw_arrow_between(surface, card.right, card.right + gap, card.centery)
+
+    def _draw_cyclic_state_ring(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        """Draw the eight-state successor relation as an actual closed cycle."""
+        theme = self.services.theme()
+        self._panel(surface, rect, border=self.accent)
+        heading = self._font(self._font_sizes()[1], bold=True)
+        label = self._font(self._font_sizes()[3], bold=True)
+        title = heading.render("EACH STATE SEEKS THE NEXT; STATE 7 WRAPS TO STATE 0", True, theme["text"])
+        surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 14)))
+        positions = (
+            (0.50, 0.23),
+            (0.68, 0.29),
+            (0.77, 0.50),
+            (0.68, 0.71),
+            (0.50, 0.77),
+            (0.32, 0.71),
+            (0.23, 0.50),
+            (0.32, 0.29),
+        )
+        points = [
+            pygame.Vector2(rect.x + rect.width * x, rect.y + rect.height * y)
+            for x, y in positions
+        ]
+        palette = self._mode_palette()
+        for index, start in enumerate(points):
+            end = points[(index + 1) % len(points)]
+            direction = end - start
+            unit = direction.normalize()
+            line_start = start + unit * 31
+            line_end = end - unit * 31
+            pygame.draw.line(surface, theme["grid"], line_start, line_end, 4)
+            tip = line_start + (line_end - line_start) * 0.72
+            perpendicular = pygame.Vector2(-unit.y, unit.x)
+            pygame.draw.polygon(
+                surface,
+                self.GOLD,
+                (tip + unit * 10, tip - unit * 8 + perpendicular * 6, tip - unit * 8 - perpendicular * 6),
+            )
+        for state, (point, color) in enumerate(zip(points, palette)):
+            pygame.draw.circle(surface, color, point, 27)
+            pygame.draw.circle(surface, theme["text"], point, 27, 2)
+            number = heading.render(str(state), True, theme["background"] if state in (2, 3, 4) else theme["text"])
+            surface.blit(number, number.get_rect(center=point))
+        center = label.render("successor = (state + 1) mod 8", True, self.GOLD)
+        surface.blit(center, center.get_rect(center=rect.center))
+
+    def _draw_ant_step(
+        self,
+        surface: pygame.Surface,
+        card: pygame.Rect,
+        *,
+        tile_black: bool,
+        heading: str,
+        moved: bool,
+    ) -> None:
+        theme = self.services.theme()
+        cell = max(20, min(34, (card.height - 92) // 5, (card.width - 26) // 5))
+        grid = pygame.Rect(card.centerx - cell * 5 // 2, card.y + 40, cell * 5, cell * 5)
+        center = (2, 2)
+        for row in range(5):
+            for col in range(5):
+                box = pygame.Rect(grid.x + col * cell, grid.y + row * cell, cell - 2, cell - 2)
+                black = tile_black and (row, col) == center
+                pygame.draw.rect(surface, self.accent if black else theme["background"], box)
+                pygame.draw.rect(surface, theme["grid"], box, 1)
+        row, col = center
+        if moved:
+            if heading == "right":
+                col += 1
+            elif heading == "left":
+                col -= 1
+            elif heading == "down":
+                row += 1
+            else:
+                row -= 1
+        cx = grid.x + col * cell + cell // 2
+        cy = grid.y + row * cell + cell // 2
+        points_by_heading = {
+            "up": ((cx, cy - 12), (cx - 10, cy + 9), (cx + 10, cy + 9)),
+            "right": ((cx + 12, cy), (cx - 9, cy - 10), (cx - 9, cy + 10)),
+            "down": ((cx, cy + 12), (cx - 10, cy - 9), (cx + 10, cy - 9)),
+            "left": ((cx - 12, cy), (cx + 9, cy - 10), (cx + 9, cy + 10)),
+        }
+        pygame.draw.polygon(surface, self.GOLD, points_by_heading[heading])
+        pygame.draw.polygon(surface, theme["text"], points_by_heading[heading], 2)
+
+    def _draw_ant_rule_visual(self, surface: pygame.Surface, rect: pygame.Rect, *, black: bool) -> None:
+        theme = self.services.theme()
+        self._panel(surface, rect, border=self.accent)
+        heading = self._font(self._font_sizes()[1], bold=True)
+        label = self._font(self._font_sizes()[3], bold=True)
+        turn = "LEFT" if black else "RIGHT"
+        title = heading.render(f"READ -> TURN {turn} -> FLIP -> MOVE", True, theme["text"])
+        surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 13)))
+        captions = (
+            f"1. READ {'BLACK' if black else 'WHITE'}",
+            f"2. TURN {turn}",
+            f"3. FLIP TO {'WHITE' if black else 'BLACK'}",
+            "4. MOVE FORWARD",
+        )
+        gap = 34
+        width = (rect.width - 38 - gap * 3) // 4
+        for index, caption in enumerate(captions):
+            card = pygame.Rect(rect.x + 19 + index * (width + gap), rect.y + 51, width, rect.height - 69)
+            pygame.draw.rect(surface, theme["stats_bar"], card, border_radius=8)
+            pygame.draw.rect(surface, self.accent, card, 2, border_radius=8)
+            rendered = label.render(caption, True, theme["text"])
+            surface.blit(rendered, rendered.get_rect(midtop=(card.centerx, card.y + 10)))
+            heading_value = "left" if black and index >= 1 else "right" if not black and index >= 1 else "up"
+            tile_black = black if index < 2 else not black
+            self._draw_ant_step(surface, card, tile_black=tile_black, heading=heading_value, moved=index == 3)
+            if index < 3:
+                self._draw_arrow_between(surface, card.right, card.right + gap, card.centery)
+
+    def _primary_rule_steps(self) -> tuple[str, tuple[dict[str, object], ...]]:
+        theme = self.services.theme()
         key = self.mode_key
         if key == "life":
-            rule = self.services.current_rule_label()
-            title = heading.render(f"CURRENT RULE: {rule}", True, theme["text"])
-            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 16)))
-            badges = (("BIRTH", "3", self.GREEN), ("SURVIVE", "2 or 3", self.accent), ("OTHER", "dead / stays dead", self.MAGENTA))
-        elif key == "immigration":
-            title = heading.render("B3/S23 FIRST - THEN INHERIT COLOR", True, theme["text"])
-            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 16)))
-            badges = (("A + A + B", "new A", self.BLUE), ("A + B + B", "new B", self.ORANGE), ("SURVIVOR", "keeps species", self.GREEN))
-        elif key == "brians_brain":
-            title = heading.render("EXCITATION AND ONE REFRACTORY STEP", True, theme["text"])
-            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 16)))
-            badges = (("OFF + 2 firing", "FIRING", (90, 235, 255)), ("FIRING", "DYING", self.MAGENTA), ("DYING", "OFF", theme["grid"]))
-        elif key == "langtons_ant":
-            title = heading.render("READ -> TURN -> FLIP -> MOVE", True, theme["text"])
-            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 16)))
-            badges = (("WHITE", "turn RIGHT", self.GOLD), ("BLACK", "turn LEFT", self.accent), ("THEN", "move forward", self.GREEN))
-        elif key == "wireworld":
-            title = heading.render("SIGNAL PHASE + LOCAL RECEPTION", True, theme["text"])
-            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 16)))
-            badges = (("HEAD", "TAIL", (80, 190, 255)), ("TAIL", "CONDUCTOR", self.MAGENTA), ("WIRE + 1/2 heads", "HEAD", self.GOLD))
-        else:
-            title = heading.render("SUCCESSOR PRESSURE AROUND THE COLOR CYCLE", True, theme["text"])
-            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 16)))
-            badges = (("state s", "seek s + 1", self.BLUE), ("count", "successor neighbors", self.GOLD), ("threshold met", "advance", self.GREEN))
-        gap = 16
-        badge_width = (rect.width - 44 - gap * 2) // 3
-        top = rect.y + 65
-        for index, (source, result, color) in enumerate(badges):
-            card = pygame.Rect(rect.x + 22 + index * (badge_width + gap), top, badge_width, rect.height - 86)
-            pygame.draw.rect(surface, theme["stats_bar"], card, border_radius=8)
-            pygame.draw.rect(surface, color, card, 3, border_radius=8)
-            source_text = label.render(source, True, theme["menu_text"])
-            result_text = heading.render(result, True, theme["text"])
-            surface.blit(source_text, source_text.get_rect(midtop=(card.centerx, card.y + 18)))
-            pygame.draw.line(surface, color, (card.centerx, card.y + 53), (card.centerx, card.y + 82), 4)
-            pygame.draw.polygon(surface, color, ((card.centerx, card.y + 91), (card.centerx - 7, card.y + 79), (card.centerx + 7, card.y + 79)))
-            surface.blit(result_text, result_text.get_rect(midbottom=(card.centerx, card.bottom - 20)))
+            palette = (theme["background"], self.accent, theme["button_hover"])
+            before = ((1, 1, 0), (1, 2, 0), (0, 0, 0))
+            after = ((1, 1, 0), (1, 1, 0), (0, 0, 0))
+            return (
+                "CONWAY EXAMPLE: B3/S23 (OTHER LIFE-LIKE RULES USE DIFFERENT LISTS)",
+                (
+                    {"caption": "OLD BOARD", "matrix": before, "palette": palette, "detail": "center is DEAD", "color": self.accent},
+                    {"caption": "COUNT NEIGHBORS", "big": "3 LIVE", "detail": "exactly three", "color": self.GOLD},
+                    {"caption": "NEW BOARD", "matrix": after, "palette": palette, "detail": "B3 -> center is BORN", "color": self.GREEN},
+                ),
+            )
+        if key == "immigration":
+            palette = (
+                theme["background"],
+                self.BLUE,
+                self.ORANGE,
+                theme["button_hover"],
+                theme["text"],
+            )
+            before = ((1, 2, 0), (2, 3, 0), (0, 0, 0))
+            after = ((1, 2, 0), (2, 4, 0), (0, 0, 0))
+            return (
+                "STAGE 1: COUNT BOTH SPECIES AS ALIVE",
+                (
+                    {"caption": "OLD BOARD", "matrix": before, "palette": palette, "detail": "A + B + B around empty", "color": self.accent},
+                    {"caption": "OCCUPANCY COUNT", "big": "3 ALIVE", "detail": "colors do not alter B3", "color": self.GOLD},
+                    {"caption": "BIRTH OCCURS", "matrix": after, "palette": palette, "detail": "color is assigned next", "color": self.GREEN},
+                ),
+            )
+        if key == "brians_brain":
+            firing = (90, 235, 255)
+            palette = (theme["background"], firing, (128, 82, 190), theme["button_hover"])
+            before = ((1, 0, 0), (0, 3, 1), (0, 0, 0))
+            after = ((2, 0, 0), (0, 1, 2), (0, 0, 0))
+            return (
+                "ONLY FIRING NEIGHBORS ARE COUNTED",
+                (
+                    {"caption": "OLD BOARD", "matrix": before, "palette": palette, "detail": "center is OFF", "color": firing},
+                    {"caption": "COUNT", "big": "2 FIRING", "detail": "exactly two", "color": self.GOLD},
+                    {"caption": "NEW BOARD", "matrix": after, "palette": palette, "detail": "center starts FIRING", "color": self.GREEN},
+                ),
+            )
+        if key == "wireworld":
+            palette = self._mode_palette()
+            frames = (
+                (3, 3, 2, 1, 3, 3, 3, 3, 3),
+                (3, 3, 3, 2, 1, 3, 3, 3, 3),
+                (3, 3, 3, 3, 2, 1, 3, 3, 3),
+                (3, 3, 3, 3, 3, 2, 1, 3, 3),
+            )
+            steps = tuple(
+                {
+                    "caption": f"GEN {index}",
+                    "matrix": (frame,),
+                    "palette": palette,
+                    "detail": "TAIL behind HEAD",
+                    "color": self.GOLD,
+                }
+                for index, frame in enumerate(frames)
+            )
+            return "THE HEAD-TAIL PHASE RECREATES THE PULSE ONE CELL AHEAD", steps
+        palette = self._mode_palette()
+        before = ((4, 0, 0), (4, 3, 0), (4, 0, 0))
+        after = ((4, 0, 0), (4, 4, 0), (4, 0, 0))
+        return (
+            "STATE 3 SEEKS ONLY STATE 4",
+            (
+                {"caption": "OLD BOARD", "matrix": before, "palette": palette, "detail": "center is state 3", "color": palette[3]},
+                {"caption": "COUNT SUCCESSOR", "big": "3 x STATE 4", "detail": "threshold reached", "color": palette[4]},
+                {"caption": "NEW BOARD", "matrix": after, "palette": palette, "detail": "center advances to 4", "color": self.GREEN},
+            ),
+        )
 
-    def _draw_mode_rule_page(self, canvas: pygame.Surface, y: int) -> int:
-        visual = pygame.Rect(0, y, canvas.get_width(), 250)
-        self._draw_rule_visual(canvas, visual)
+    def _neighbor_matrix(self, count: int, center: int, neighbor: int = 1) -> tuple[tuple[int, ...], ...]:
+        positions = ((0, 0), (0, 1), (0, 2), (1, 0), (1, 2), (2, 0), (2, 1), (2, 2))
+        matrix = [[0, 0, 0], [0, center, 0], [0, 0, 0]]
+        for row, col in positions[:count]:
+            matrix[row][col] = neighbor
+        return tuple(tuple(row) for row in matrix)
+
+    def _secondary_rule_steps(self) -> tuple[str, tuple[dict[str, object], ...]]:
+        theme = self.services.theme()
+        key = self.mode_key
+        if key == "life":
+            palette = (theme["background"], self.accent)
+            return (
+                "A LIVE CENTER USES S23",
+                tuple(
+                    {
+                        "caption": f"{count} LIVE NEIGHBOR{'S' if count != 1 else ''}",
+                        "matrix": self._neighbor_matrix(count, 1),
+                        "palette": palette,
+                        "detail": result,
+                        "color": color,
+                    }
+                    for count, result, color in (
+                        (1, "dies: isolation", self.MAGENTA),
+                        (2, "survives", self.GREEN),
+                        (3, "survives", self.GREEN),
+                        (4, "dies: crowding", self.MAGENTA),
+                    )
+                ),
+            )
+        if key == "immigration":
+            palette = (theme["background"], self.BLUE, self.ORANGE, theme["button_hover"])
+            return (
+                "STAGE 2: COLOR ONLY A NEWBORN",
+                (
+                    {"caption": "A + A + B", "matrix": ((1, 1, 0), (2, 3, 0), (0, 0, 0)), "palette": palette, "detail": "newborn becomes A", "color": self.BLUE},
+                    {"caption": "A + B + B", "matrix": ((1, 2, 0), (2, 3, 0), (0, 0, 0)), "palette": palette, "detail": "newborn becomes B", "color": self.ORANGE},
+                    {"caption": "EXISTING SURVIVOR", "big": "A STAYS A", "detail": "neighbors never recolor it", "color": self.GREEN},
+                ),
+            )
+        if key == "brians_brain":
+            firing = (90, 235, 255)
+            palette = (theme["background"], firing, (128, 82, 190))
+            return (
+                "THE REFRACTORY CYCLE IS UNCONDITIONAL",
+                (
+                    {"caption": "GEN t", "matrix": ((1,),), "palette": palette, "detail": "FIRING; excites neighbors", "color": firing},
+                    {"caption": "GEN t + 1", "matrix": ((2,),), "palette": palette, "detail": "DYING; not counted", "color": self.MAGENTA},
+                    {"caption": "GEN t + 2", "matrix": ((0,),), "palette": palette, "detail": "OFF; ready again", "color": theme["grid"]},
+                ),
+            )
+        if key == "wireworld":
+            palette = self._mode_palette()
+            return (
+                "THE CENTER CONDUCTOR COUNTS NEIGHBORING HEADS",
+                tuple(
+                    {
+                        "caption": f"{count} HEAD NEIGHBOR{'S' if count != 1 else ''}",
+                        "matrix": self._neighbor_matrix(count, 3, 1),
+                        "palette": palette,
+                        "detail": "becomes HEAD" if count in (1, 2) else "stays CONDUCTOR",
+                        "color": (80, 190, 255) if count in (1, 2) else self.GOLD,
+                    }
+                    for count in range(4)
+                ),
+            )
+        palette = self._mode_palette()
+        below = self._neighbor_matrix(2, 3, 4)
+        enough = self._neighbor_matrix(3, 3, 4)
+        return (
+            "EXAMPLE THRESHOLD = 3 SUCCESSOR NEIGHBORS",
+            (
+                {"caption": "COUNT = 2", "matrix": below, "palette": palette, "detail": "below threshold: stays 3", "color": palette[3]},
+                {"caption": "COUNT = 3", "matrix": enough, "palette": palette, "detail": "threshold met: becomes 4", "color": palette[4]},
+            ),
+        )
+
+    def _draw_mode_lesson_page(self, canvas: pygame.Surface, y: int) -> int:
+        """Draw a state, rule, process, or application lesson with mode-specific evidence."""
+        width = canvas.get_width()
+        kind = self.page.kind
+        visual_height = 340
+        visual = pygame.Rect(0, y, width, visual_height)
+        if kind == "mode_states":
+            self._draw_state_system_visual(canvas, visual)
+        elif kind == "mode_rule_primary" and self.mode_key == "langtons_ant":
+            self._draw_ant_rule_visual(canvas, visual, black=False)
+        elif kind == "mode_rule_secondary" and self.mode_key == "langtons_ant":
+            self._draw_ant_rule_visual(canvas, visual, black=True)
+        elif kind == "mode_rule_primary":
+            title, steps = self._primary_rule_steps()
+            self._draw_step_sequence(canvas, visual, title, steps)
+        elif kind == "mode_rule_secondary":
+            title, steps = self._secondary_rule_steps()
+            self._draw_step_sequence(canvas, visual, title, steps)
+        elif kind == "mode_process":
+            self._draw_process_visual(canvas, visual)
+        else:
+            self._draw_application_visual(canvas, visual)
         return self._draw_sections(
             canvas,
             self.page.sections,
-            pygame.Rect(0, visual.bottom + 16, canvas.get_width(), 950),
+            pygame.Rect(0, visual.bottom + 16, width, 1100),
         )
+
+    def _draw_process_visual(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        theme = self.services.theme()
+        key = self.mode_key
+        if key == "immigration":
+            palette = (theme["background"], self.BLUE, self.ORANGE)
+            steps = (
+                {"caption": "OCCUPANCY", "matrix": ((0, 1, 1, 0), (1, 1, 1, 0), (0, 1, 0, 0)), "palette": (theme["background"], theme["text"]), "detail": "predict B3/S23 geometry", "color": theme["text"]},
+                {"caption": "SAME CELLS + LINEAGE", "matrix": ((0, 1, 2, 0), (1, 2, 2, 0), (0, 1, 0, 0)), "palette": palette, "detail": "colors preserve ancestry", "color": self.accent},
+                {"caption": "NEXT BIRTH", "matrix": ((0, 1, 2, 0), (1, 2, 2, 0), (0, 1, 2, 0)), "palette": palette, "detail": "majority parents color it", "color": self.GREEN},
+            )
+            self._draw_step_sequence(surface, rect, "ONE GEOMETRY LAYER + ONE LINEAGE LAYER", steps)
+            return
+        if key == "brians_brain":
+            palette = self._mode_palette()
+            frames = (
+                ((0, 0, 1, 2, 0, 0),),
+                ((0, 0, 0, 1, 2, 0),),
+                ((0, 0, 0, 0, 1, 2),),
+                ((0, 0, 0, 0, 0, 1),),
+            )
+            steps = tuple(
+                {"caption": f"GEN {index}", "matrix": frame, "palette": palette, "detail": "firing front + dying wake", "color": (90, 235, 255)}
+                for index, frame in enumerate(frames)
+            )
+            self._draw_step_sequence(surface, rect, "NEW FIRING APPEARS AHEAD; OLD FIRING COOLS BEHIND", steps)
+            return
+        if key == "langtons_ant":
+            self._panel(surface, rect, border=self.accent)
+            heading = self._font(self._font_sizes()[1], bold=True)
+            label = self._font(self._font_sizes()[3], bold=True)
+            title = heading.render("A SIX-STEP TRACE: THE BOARD REMEMBERS EVERY VISIT", True, theme["text"])
+            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 15)))
+            grid = pygame.Rect(rect.centerx - 250, rect.y + 58, 500, 238)
+            cell = 39
+            origin = (grid.centerx - cell * 6 // 2, grid.centery - cell * 6 // 2)
+            for row in range(6):
+                for col in range(6):
+                    box = pygame.Rect(origin[0] + col * cell, origin[1] + row * cell, cell - 2, cell - 2)
+                    pygame.draw.rect(surface, theme["background"], box)
+                    pygame.draw.rect(surface, theme["grid"], box, 1)
+            path = ((3, 3), (3, 4), (4, 4), (4, 3), (4, 2), (3, 2), (3, 3))
+            points = []
+            for step, (row, col) in enumerate(path):
+                center = (origin[0] + col * cell + cell // 2, origin[1] + row * cell + cell // 2)
+                points.append(center)
+                if step < len(path) - 1:
+                    pygame.draw.rect(surface, self.accent, pygame.Rect(center[0] - 13, center[1] - 13, 26, 26), border_radius=3)
+                    number = label.render(str(step + 1), True, theme["text"])
+                    surface.blit(number, number.get_rect(center=center))
+            pygame.draw.lines(surface, self.GOLD, False, points, 4)
+            note = label.render("Re-entering a flipped tile changes the next turn", True, self.GOLD)
+            surface.blit(note, note.get_rect(midbottom=(rect.centerx, rect.bottom - 16)))
+            return
+        if key == "wireworld":
+            matrix = (
+                (0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+                (3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3),
+                (0, 0, 0, 3, 0, 0, 0, 3, 0, 0, 0, 0, 0),
+                (3, 3, 3, 3, 0, 0, 0, 3, 3, 3, 3, 3, 3),
+                (0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0),
+            )
+            self._panel(surface, rect, border=self.accent)
+            heading = self._font(self._font_sizes()[1], bold=True)
+            label = self._font(self._font_sizes()[3], bold=True)
+            title = heading.render("JUNCTION GEOMETRY CHANGES HOW MANY HEADS REACH A CELL", True, theme["text"])
+            surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 15)))
+            self._draw_matrix(surface, pygame.Rect(rect.x + 150, rect.y + 56, rect.width - 300, rect.height - 104), matrix, self._mode_palette(), border=self.accent)
+            for text_value, position in (("INPUT A", (rect.x + 55, rect.y + 105)), ("INPUT B", (rect.x + 55, rect.y + 230)), ("OUTPUT", (rect.right - 75, rect.centery))):
+                rendered = label.render(text_value, True, self.GOLD)
+                surface.blit(rendered, rendered.get_rect(center=position))
+            return
+        palette = self._mode_palette()
+        frames = tuple(
+            tuple(tuple((row + col + generation) % 8 for col in range(8)) for row in range(5))
+            for generation in range(3)
+        )
+        steps = tuple(
+            {"caption": f"GEN {index}", "matrix": frame, "palette": palette, "detail": "successor front advances", "color": palette[(index + 3) % 8]}
+            for index, frame in enumerate(frames)
+        )
+        self._draw_step_sequence(surface, rect, "COLOR BANDS ADVANCE AROUND THE CYCLIC STATE RING", steps)
+
+    def _draw_application_visual(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        theme = self.services.theme()
+        self._panel(surface, rect, border=self.accent)
+        heading = self._font(self._font_sizes()[1], bold=True)
+        label = self._font(self._font_sizes()[3], bold=True)
+        title = heading.render("BUILD -> INJECT -> STEP -> READ", True, theme["text"])
+        surface.blit(title, title.get_rect(midtop=(rect.centerx, rect.y + 15)))
+        stages = (
+            ("1", "CONDUCTOR", "fixed geometry", self.GOLD),
+            ("2", "HEAD + TAIL", "input pulse", (80, 190, 255)),
+            ("3", "STEP", "inspect junctions", self.MAGENTA),
+            ("4", "OUTPUT", "pulse = logical 1", self.GREEN),
+        )
+        gap = 34
+        width = (rect.width - 40 - gap * 3) // 4
+        for index, (number, name, detail, color) in enumerate(stages):
+            card = pygame.Rect(rect.x + 20 + index * (width + gap), rect.y + 58, width, rect.height - 82)
+            pygame.draw.rect(surface, theme["stats_bar"], card, border_radius=9)
+            pygame.draw.rect(surface, color, card, 3, border_radius=9)
+            pygame.draw.circle(surface, color, (card.centerx, card.y + 55), 29)
+            number_text = heading.render(number, True, theme["background"])
+            surface.blit(number_text, number_text.get_rect(center=(card.centerx, card.y + 55)))
+            name_text = heading.render(name, True, theme["text"])
+            detail_text = label.render(detail, True, theme["menu_text"])
+            surface.blit(name_text, name_text.get_rect(midtop=(card.centerx, card.y + 103)))
+            surface.blit(detail_text, detail_text.get_rect(midtop=(card.centerx, card.y + 139)))
+            if index < 3:
+                self._draw_arrow_between(surface, card.right, card.right + gap, card.centery)
 
     def _draw_mode_experiment_page(self, canvas: pygame.Surface, y: int) -> int:
         theme = self.services.theme()
@@ -807,14 +1465,24 @@ class TwoDimensionalTutorial:
             y = self._draw_lattice_page(canvas, y)
         elif self.page.kind == "synchronous":
             y = self._draw_synchronous_page(canvas, y)
+        elif self.page.kind == "behaviors":
+            y = self._draw_behaviors_page(canvas, y)
         elif self.page.kind == "model":
             y = self._draw_model_page(canvas, y)
+        elif self.page.kind == "boundaries":
+            y = self._draw_boundaries_page(canvas, y)
         elif self.page.kind == "laboratory":
             y = self._draw_laboratory_page(canvas, y)
         elif self.page.kind == "mode_identity":
             y = self._draw_mode_identity_page(canvas, y)
-        elif self.page.kind == "mode_rule":
-            y = self._draw_mode_rule_page(canvas, y)
+        elif self.page.kind in {
+            "mode_states",
+            "mode_rule_primary",
+            "mode_rule_secondary",
+            "mode_process",
+            "mode_application",
+        }:
+            y = self._draw_mode_lesson_page(canvas, y)
         elif self.page.kind == "mode_experiment":
             y = self._draw_mode_experiment_page(canvas, y)
         elif self.page.kind == "mode_sources":

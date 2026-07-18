@@ -66,9 +66,26 @@ class TwoDimensionalTutorialTests(unittest.TestCase):
 
     def test_curriculum_covers_every_registered_mode_without_combining_them(self) -> None:
         self.assertEqual(set(MODE_GUIDES), set(MODE_KEYS))
-        self.assertEqual(len(FOUNDATION_PAGES), 4)
-        self.assertTrue(all(len(guide.pages) == 4 for guide in MODE_GUIDES.values()))
+        self.assertEqual(len(FOUNDATION_PAGES), 6)
+        self.assertEqual(
+            {mode: len(guide.pages) for mode, guide in MODE_GUIDES.items()},
+            {
+                "life": 6,
+                "immigration": 7,
+                "brians_brain": 7,
+                "langtons_ant": 7,
+                "wireworld": 8,
+                "cyclic_automaton": 7,
+            },
+        )
         self.assertTrue(all(guide.sources for guide in MODE_GUIDES.values()))
+        self.assertTrue(
+            all(
+                {"mode_states", "mode_rule_primary", "mode_rule_secondary"}
+                <= {page.kind for page in guide.pages}
+                for guide in MODE_GUIDES.values()
+            )
+        )
 
     def test_explicit_open_pauses_and_starts_in_foundations(self) -> None:
         self.tutorial.open()
@@ -150,7 +167,11 @@ class TwoDimensionalTutorialTests(unittest.TestCase):
         self.mode[0] = "langtons_ant"
         self.tutorial.open()
         self.tutorial.select_tab(self.tutorial.MODE)
-        self.tutorial.page_index = 3
+        self.tutorial.page_index = next(
+            index
+            for index, page in enumerate(self.tutorial.pages)
+            if page.kind == "mode_sources"
+        )
 
         self.tutorial.draw()
 
@@ -166,7 +187,11 @@ class TwoDimensionalTutorialTests(unittest.TestCase):
         self.mode[0] = "brians_brain"
         self.tutorial.open()
         self.tutorial.select_tab(self.tutorial.MODE)
-        self.tutorial.page_index = 3
+        self.tutorial.page_index = next(
+            index
+            for index, page in enumerate(self.tutorial.pages)
+            if page.kind == "mode_sources"
+        )
         self.tutorial.draw()
         _, expected_url, rect = self.tutorial._interactions[0]
 
@@ -181,7 +206,11 @@ class TwoDimensionalTutorialTests(unittest.TestCase):
         self.mode[0] = "immigration"
         self.tutorial.open()
         self.tutorial.select_tab(self.tutorial.MODE)
-        self.tutorial.page_index = 2
+        self.tutorial.page_index = next(
+            index
+            for index, page in enumerate(self.tutorial.pages)
+            if page.kind == "mode_experiment"
+        )
         self.tutorial.draw()
         _, viewport, _, _, _, _ = self.tutorial.geometry()
         self.tutorial.scroll = self.tutorial._maximum_scroll(viewport)

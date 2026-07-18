@@ -490,15 +490,21 @@ ayrı, açılabilir referanslar olarak verir.
 isteğe bağlı olarak açılır. Üstteki iki sekme bilgi yükünü ayırır:
 
 - `2D Foundations`: Izgara ve hücre durumu, Moore komşuluğu, eşzamanlı güncelleme,
-  model bileşenleri, sonlu sınır ve tekrarlanabilir deney iş akışı.
+  stabil/periyodik/hareketli davranış farkları, model bileşenleri, sonlu sınır ve
+  tekrarlanabilir deney iş akışını altı görsel derste anlatır.
 - `Mode: ...`: Yalnızca o anda seçili Life-like, Immigration, Brian's Brain,
   Langton's Ant, Wireworld veya Cyclic CA modunun tarihi, kuralı, deney önerileri
   ve kaynakları.
 
-Ortak dört ders tamamlandığında akış doğrudan aktif modun dört dersine geçer;
+Ortak altı ders tamamlandığında akış doğrudan aktif modun rehberine geçer;
 `Tab` iki bölüm arasında geçiş yapar. Mod değiştirildikten sonra ikinci sekme yeni
 modla ve ilk sayfasıyla yenilenir; diğer beş modun içeriği gösterilmez. Deney
 sayfasındaki düğme tutorial'ı kapatıp doğrudan aktif modun pattern kataloğunu açar.
+Moda özel rehberler sabit sayfa sayısına zorlanmaz: Life-like altı sayfada,
+Immigration, Brian's Brain, Langton's Ant ve Cyclic CA yedi sayfada, devre kurma ve
+sinyal zamanlaması daha ayrıntılı olan Wireworld ise sekiz sayfada tamamlanır.
+Kural sayfaları yalnızca dönüşüm tablosu vermez; eski yerel durum, sayılan komşular,
+karar nedeni ve yeni durum ayrı görsel adımlar olarak gösterilir.
 
 Kaynaklar da moda göre daraltılır: Conway için
 [Scientific American 1970 tanıtımı](https://www.scientificamerican.com/article/mathematical-games-1970-10/),
