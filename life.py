@@ -3676,19 +3676,14 @@ def handle_dimension_menu_event(event: pygame.event.Event) -> bool:
             return True
         if pygame.K_1 <= event.key < pygame.K_1 + len(DIMENSION_DEFINITIONS):
             index = event.key - pygame.K_1
-            dimension = DIMENSION_DEFINITIONS[index].key
-            changed = set_active_dimension(dimension)
-            if changed and dimension == "1d":
-                maybe_open_one_d_tutorial()
+            set_active_dimension(DIMENSION_DEFINITIONS[index].key)
             return True
 
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         modal, cards = dimension_menu_geometry()
         for dimension_key, card in cards:
             if card.collidepoint(event.pos):
-                changed = set_active_dimension(dimension_key)
-                if changed and dimension_key == "1d":
-                    maybe_open_one_d_tutorial()
+                set_active_dimension(dimension_key)
                 return True
         if not modal.collidepoint(event.pos):
             dimension_menu_active = False
@@ -3881,13 +3876,6 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
     return tuple(entries)
 
 
-ONE_D_TUTORIAL_ID = "one_dimensional_foundations"
-
-
-def _mark_one_d_tutorial_seen() -> None:
-    ui_preferences.mark_tutorial_seen(ONE_D_TUTORIAL_ID)
-
-
 def _open_tutorial_url(url: str) -> bool:
     """Open an explicitly selected tutorial reference in the default browser."""
     try:
@@ -3896,7 +3884,7 @@ def _open_tutorial_url(url: str) -> bool:
         return False
 
 
-def activate_one_d_tutorial(*, automatic: bool = False) -> None:
+def activate_one_d_tutorial() -> None:
     """Open the guided 1D lesson after closing competing modal UI."""
     global dimension_menu_active, mode_menu_active, pattern_menu_active
     global simulation_active
@@ -3904,8 +3892,7 @@ def activate_one_d_tutorial(*, automatic: bool = False) -> None:
         set_status("The 1D tutorial is available inside the 1D workspace.", 4.0)
         return
     if "one_d_tutorial" in globals() and one_d_tutorial.active:
-        if not automatic:
-            one_d_tutorial.close()
+        one_d_tutorial.close()
         return
     simulation_active = False
     dimension_menu_active = False
@@ -3917,15 +3904,7 @@ def activate_one_d_tutorial(*, automatic: bool = False) -> None:
     help_panel.close()
     if "export_manager" in globals():
         export_manager.close()
-    one_d_tutorial.open(automatic=automatic)
-
-
-def maybe_open_one_d_tutorial() -> bool:
-    """Present the lesson once when a user first enters the 1D workspace."""
-    if ui_preferences.has_seen_tutorial(ONE_D_TUTORIAL_ID):
-        return False
-    activate_one_d_tutorial(automatic=True)
-    return True
+    one_d_tutorial.open()
 
 
 def toggle_help_panel() -> None:
@@ -4827,7 +4806,6 @@ one_d_tutorial = OneDimensionalTutorial(
     TutorialServices(
         screen=lambda: screen,
         window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
-        content_width=lambda: max(1, WINDOW_WIDTH - MENU_WIDTH),
         theme=lambda: THEMES[current_theme],
         large_font=lambda: font,
         small_font=lambda: small_font,
@@ -4840,7 +4818,6 @@ one_d_tutorial = OneDimensionalTutorial(
         apply_canonical_rule=elementary_controller.load_canonical_elementary_rule,
         open_url=_open_tutorial_url,
         pause=lambda: _set_simulation_running(False),
-        mark_seen=_mark_one_d_tutorial_seen,
         set_status=set_status,
     )
 )
@@ -4909,8 +4886,6 @@ if active_dimension == "3d" and not _switch_display_backend("3d"):
     active_dimension = "2d"
 rebuild_context_menu()
 center_view()
-if active_dimension == "1d":
-    maybe_open_one_d_tutorial()
 set_status(
     "F1: help · F2: tutorial · D: dimension · I: analysis · Space: run/pause",
     5.0,

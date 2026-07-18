@@ -21,8 +21,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 
 ## Ana özellikler
 
-- İlk 1D ziyaretinde açılan; teori, tarih, Wolfram kodu, deney protokolü, önemli
-  kurallar ve akademik kaynakları kapsayan etkileşimli tutorial
+- Sidebar veya `F2` ile açılan; büyük yazı, görsel şema, teori, tarih, deney
+  protokolü, önemli kurallar ve akademik kaynakları kapsayan tam ekran 1D tutorial
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
 - Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
   kurallar için genelleştirilmiş 1D çalışma alanı
@@ -157,8 +157,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
 - `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
 - `help_ui.py`: F1 / `?` ile açılan bağlamsal kısayol ve etkileşim yardım paneli
-- `tutorial_ui.py`: Kaynaklı, etkileşimli ve responsive 1D öğrenme akışı
-- `ui_preferences.py`: Rule favorileri, son deneyler ve tutorial ilerlemesi için yerel tercihler
+- `tutorial_ui.py`: Tam ekran görsel şemalarla kaynaklı ve etkileşimli 1D öğrenme akışı
+- `ui_preferences.py`: Rule favorileri ve son kullanılan deneyler için yerel tercihler
 - `exporting.py`: Güvenli raster, GIF/MP4, CSV/JSON kodlama ve arka plan export motoru
 - `experiment_exports.py`: Workspace snapshot'larını bağlamsal çıktı formatlarına dönüştüren coordinator
 - `export_ui.py`: Aktif workspace'e göre değişen dışa aktarma paneli
@@ -459,11 +459,11 @@ gösterir. `1D`, Wolfram'ın genel 1D cellular automata alanını; `2D`, mevcut 
 açar; `3D` ise oynanabilir spatial Life volume'unu açar. Boyutlar arasında geçiş
 yapmak gridleri, volume'u ve geçmişleri sıfırlamaz.
 
-1D çalışma alanı ilk kez boyut menüsünden açıldığında uygulama duraklar ve yedi
-adımlı öğretici otomatik gösterilir. Bu ilk gösterim yerel UI tercihlerinde tutulur;
-tutorial daha sonra sağ menüdeki `Learn 1D` düğmesi veya `F2` ile her zaman yeniden
-açılabilir. Sol/sağ oklar sayfaları değiştirir, fare tekerleği uzun kaynak listesini
-kaydırır ve `Esc` ya da `F2` laboratuvara döner.
+1D çalışma alanına geçmek tutorial'ı otomatik açmaz. Yedi adımlı öğretici yalnızca
+sağ menüdeki `Tutorial: How 1D Works` düğmesi veya `F2` ile açılır ve simülasyonu
+duraklatır. Tam ekran anlatım büyük yazılar, gerçek kural çıktılarından üretilmiş
+space-time diyagramları ve sıralı görsel kartlar kullanır. Sol/sağ oklar sayfaları
+değiştirir, fare tekerleği kaydırır; `Esc` ya da `F2` laboratuvara döner.
 
 Tutorial; bir space-time diyagramının nasıl okunacağını, von Neumann ve Ulam'dan
 Wolfram'ın sistematik 1D çalışmalarına uzanan tarihi, 0-255 kural kodlamasını, seed

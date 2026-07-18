@@ -1476,10 +1476,10 @@ class ElementaryWorkspaceController(WorkspaceController):
             tooltip="Export the diagram, animation, metrics, or experiment JSON.",
         )
         menu.add_button(
-            "Learn 1D (F2)",
+            "Tutorial: How 1D Works (F2)",
             self.services.activate_tutorial,
             accent=(75, 175, 235),
-            tooltip="Open the guided theory, history, rule, and experiment tutorial.",
+            tooltip="Open a full-screen visual guide to 1D rules, history, and controls.",
         )
         menu.add_button(
             "Keyboard Help (F1)",
