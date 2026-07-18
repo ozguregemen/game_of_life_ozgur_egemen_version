@@ -143,6 +143,10 @@ from three_dimensional_display import (
     ThreeDimensionalDisplayError,
 )
 from tutorial_ui import OneDimensionalTutorial, TutorialServices
+from two_dimensional_tutorial import (
+    TwoDimensionalTutorial,
+    TwoDimensionalTutorialServices,
+)
 from ui_preferences import UIPreferences
 from visuals import CellTransition, get_enhanced_age_color
 from wireworld import (
@@ -3884,6 +3888,14 @@ def _open_tutorial_url(url: str) -> bool:
         return False
 
 
+def _life_tutorial_rule_label() -> str:
+    """Return the active Life-like rule in readable B/S notation."""
+    rule = RULES[current_rule]
+    births = "".join(str(value) for value in rule["birth"]) or "-"
+    survivals = "".join(str(value) for value in rule["survival"]) or "-"
+    return f"{rule['name']} · B{births}/S{survivals}"
+
+
 def activate_one_d_tutorial() -> None:
     """Open the guided 1D lesson after closing competing modal UI."""
     global dimension_menu_active, mode_menu_active, pattern_menu_active
@@ -3902,9 +3914,46 @@ def activate_one_d_tutorial() -> None:
     session_manager.close()
     analysis_panel.close()
     help_panel.close()
+    if "two_d_tutorial" in globals():
+        two_d_tutorial.close()
     if "export_manager" in globals():
         export_manager.close()
     one_d_tutorial.open()
+
+
+def activate_two_d_tutorial() -> None:
+    """Open the shared 2D foundations and active-mode guide."""
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    global simulation_active
+    if active_dimension != "2d":
+        set_status("The 2D tutorial is available inside the 2D workspace.", 4.0)
+        return
+    if "two_d_tutorial" in globals() and two_d_tutorial.active:
+        two_d_tutorial.close()
+        return
+    simulation_active = False
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    active_workspace().controller.deactivate()
+    session_manager.close()
+    analysis_panel.close()
+    help_panel.close()
+    if "one_d_tutorial" in globals():
+        one_d_tutorial.close()
+    if "export_manager" in globals():
+        export_manager.close()
+    two_d_tutorial.open()
+
+
+def activate_contextual_tutorial() -> None:
+    """Open the tutorial belonging to the active dimensional workspace."""
+    if active_dimension == "1d":
+        activate_one_d_tutorial()
+    elif active_dimension == "2d":
+        activate_two_d_tutorial()
+    else:
+        set_status("The 3D tutorial will be added in its dedicated tutorial phase.", 4.0)
 
 
 def toggle_help_panel() -> None:
@@ -3923,6 +3972,8 @@ def toggle_help_panel() -> None:
     analysis_panel.close()
     if "one_d_tutorial" in globals():
         one_d_tutorial.close()
+    if "two_d_tutorial" in globals():
+        two_d_tutorial.close()
     if "export_manager" in globals():
         export_manager.close()
     help_panel.open()
@@ -4019,6 +4070,7 @@ def draw_scene() -> None:
     export_manager.draw()
     help_panel.draw()
     one_d_tutorial.draw()
+    two_d_tutorial.draw()
 
 
 # ---------------------------------------------------------------------------
@@ -4144,6 +4196,12 @@ def _build_2d_sidebar(menu: Menu) -> None:
         activate_export_menu,
         accent=(235, 155, 70),
         tooltip="Export the current grid, timeline, metrics, or experiment JSON.",
+    )
+    menu.add_button(
+        "Tutorial: 2D & Mode Guide (F2)",
+        activate_two_d_tutorial,
+        accent=definition.accent,
+        tooltip="Open 2D foundations plus a guide for only the active mode.",
     )
     menu.add_button(
         "Keyboard Help (F1)",
@@ -4383,7 +4441,7 @@ def handle_keydown(event: pygame.event.Event) -> None:
     modifiers = getattr(event, "mod", pygame.key.get_mods())
     question_mark = event.key == pygame.K_SLASH and bool(modifiers & pygame.KMOD_SHIFT)
     if event.key == pygame.K_F2:
-        activate_one_d_tutorial()
+        activate_contextual_tutorial()
     elif event.key == pygame.K_F1 or question_mark:
         toggle_help_panel()
     elif event.key == pygame.K_s and modifiers & pygame.KMOD_CTRL:
@@ -4491,6 +4549,10 @@ def handle_event(event: pygame.event.Event) -> bool:
 
     if event.type == pygame.VIDEORESIZE:
         update_window_size(event.w, event.h)
+        return True
+
+    if two_d_tutorial.active:
+        two_d_tutorial.handle_event(event)
         return True
 
     if one_d_tutorial.active:
@@ -4822,6 +4884,20 @@ one_d_tutorial = OneDimensionalTutorial(
     )
 )
 
+two_d_tutorial = TwoDimensionalTutorial(
+    TwoDimensionalTutorialServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        theme=lambda: THEMES[current_theme],
+        current_mode=lambda: simulation_mode,
+        current_rule_label=_life_tutorial_rule_label,
+        open_url=_open_tutorial_url,
+        open_patterns=activate_pattern_menu,
+        pause=lambda: _set_simulation_running(False),
+        set_status=set_status,
+    )
+)
+
 timeline_panel = TimelinePanel(
     TimelinePanelServices(
         rect=timeline_rect,
@@ -4915,6 +4991,7 @@ def run() -> None:
                 not session_manager.active
                 and not export_manager.active
                 and not help_panel.active
+                and not two_d_tutorial.active
                 and not one_d_tutorial.active
                 and not dimension_menu_active
                 and not active_workspace().controller.overlay_active

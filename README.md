@@ -24,6 +24,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - Sidebar veya `F2` ile açılan; büyük yazı, görsel şema, teori, tarih, deney
   protokolü, önemli kurallar ve akademik kaynakları kapsayan tam ekran 1D tutorial
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
+- Ortak 2D temellerini aktif Conway, Immigration, Brian's Brain, Langton's Ant,
+  Wireworld veya Cyclic CA rehberinden ayıran bağlamsal, iki sekmeli 2D tutorial
 - Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
   kurallar için genelleştirilmiş 1D çalışma alanı
 - B6/S567 ve B5/S45 spatial Life kurallarıyla çalışan, depth test ve ışıklandırmalı
@@ -70,7 +72,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 | Fare tekerleği | Zoom |
 | Space veya üstteki RUN/PAUSE rozeti | Başlat / durdur |
 | F1 veya `?` | Bağlamsal klavye ve etkileşim yardımını aç / kapat |
-| F2 | Aktif 1D çalışma alanının açıklamalı tutorial ekranını aç / kapat |
+| F2 | Aktif 1D veya 2D çalışma alanının bağlamsal tutorial ekranını aç / kapat |
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
@@ -158,6 +160,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
 - `help_ui.py`: F1 / `?` ile açılan bağlamsal kısayol ve etkileşim yardım paneli
 - `tutorial_ui.py`: Tam ekran görsel şemalarla kaynaklı ve etkileşimli 1D öğrenme akışı
+- `two_dimensional_tutorial_content.py`: Ortak 2D müfredatı, moda özel dersler ve kaynak kataloğu
+- `two_dimensional_tutorial.py`: İki sekmeli, tam ekran ve aktif moda göre değişen 2D tutorial arayüzü
 - `ui_preferences.py`: Rule favorileri ve son kullanılan deneyler için yerel tercihler
 - `exporting.py`: Güvenli raster, GIF/MP4, CSV/JSON kodlama ve arka plan export motoru
 - `experiment_exports.py`: Workspace snapshot'larını bağlamsal çıktı formatlarına dönüştüren coordinator
@@ -478,6 +482,32 @@ Kaynak sayfası [Stanford Encyclopedia of Philosophy CA maddesini](https://plato
 [dört davranış sınıfını](https://www.wolframscience.com/nks/p231--four-classes-of-behavior/)
 ve [Cook'un Rule 110 evrensellik kanıtını](https://doi.org/10.25088/complexsystems.15.1.1)
 ayrı, açılabilir referanslar olarak verir.
+
+## Bağlamsal 2D tutorial
+
+2D çalışma alanına veya başka bir 2D moda geçmek tutorial'ı otomatik açmaz.
+Öğretici sağ menüdeki `Tutorial: 2D & Mode Guide` düğmesi ya da `F2` ile
+isteğe bağlı olarak açılır. Üstteki iki sekme bilgi yükünü ayırır:
+
+- `2D Foundations`: Izgara ve hücre durumu, Moore komşuluğu, eşzamanlı güncelleme,
+  model bileşenleri, sonlu sınır ve tekrarlanabilir deney iş akışı.
+- `Mode: ...`: Yalnızca o anda seçili Life-like, Immigration, Brian's Brain,
+  Langton's Ant, Wireworld veya Cyclic CA modunun tarihi, kuralı, deney önerileri
+  ve kaynakları.
+
+Ortak dört ders tamamlandığında akış doğrudan aktif modun dört dersine geçer;
+`Tab` iki bölüm arasında geçiş yapar. Mod değiştirildikten sonra ikinci sekme yeni
+modla ve ilk sayfasıyla yenilenir; diğer beş modun içeriği gösterilmez. Deney
+sayfasındaki düğme tutorial'ı kapatıp doğrudan aktif modun pattern kataloğunu açar.
+
+Kaynaklar da moda göre daraltılır: Conway için
+[Scientific American 1970 tanıtımı](https://www.scientificamerican.com/article/mathematical-games-1970-10/),
+Immigration için [Don Woods'un oyununu inceleyen çalışma](https://arxiv.org/abs/2004.02720),
+Brian's Brain için [NetLogo eğitim modeli](https://ccl.northwestern.edu/netlogo/models/Brian%27sBrain),
+Langton's Ant için [1986 tarihli özgün makale](https://doi.org/10.1016/0167-2789(86)90237-X),
+Wireworld için [Scientific American Computer Recreations](https://www.scientificamerican.com/article/computer-recreations/)
+ve Cyclic CA için [Fisch'in 1990 makalesi](https://doi.org/10.1016/0167-2789(90)90170-T)
+ayrı, tıklanabilir referanslar olarak sunulur.
 
 Elementary CA, iki hücre durumu ve sol/merkez/sağ üçlüsünden oluşan sekiz olası
 komşuluk kullanır. 0–255 kural numarası, `111` ile `000` arasındaki bu komşulukların

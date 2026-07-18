@@ -638,6 +638,9 @@ class ContextualModeUITests(unittest.TestCase):
     def test_context_menu_only_shows_relevant_mode_actions(self) -> None:
         life.set_simulation_mode("life")
         life_labels = self.menu_labels()
+        self.assertIn("Tutorial: 2D & Mode Guide (F2)", life_labels)
+        self.assertTrue(life.main_menu.header_text.endswith("Life-like"))
+
         self.assertTrue(any(label.startswith("Rule:") for label in life_labels))
         self.assertTrue(any(label.startswith("Heatmap:") for label in life_labels))
         self.assertFalse(any("Electron" in label for label in life_labels))

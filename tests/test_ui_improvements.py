@@ -133,12 +133,14 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         self.original_recents = life.ui_preferences.recent()
         life.help_panel.close()
         life.one_d_tutorial.close()
+        life.two_d_tutorial.close()
         life.ui_preferences.favorite_rules.clear()
         life.ui_preferences.recent_experiments.clear()
 
     def tearDown(self) -> None:
         life.help_panel.close()
         life.one_d_tutorial.close()
+        life.two_d_tutorial.close()
         life.ui_preferences.favorite_rules = self.original_favorites
         life.ui_preferences.recent_experiments = self.original_recents
         life.restore_session_document(self.original_session)
@@ -170,6 +172,27 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         self.assertTrue(modal.contains(close))
         self.assertTrue(modal.contains(back))
         self.assertTrue(modal.contains(next_button))
+        life.draw_scene()
+
+    def test_f2_opens_2d_foundations_and_only_the_active_mode_guide(self) -> None:
+        life.set_simulation_mode("wireworld")
+        life.simulation_active = True
+
+        life.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F2, mod=0))
+        modal, viewport, close, back, next_button, tabs = life.two_d_tutorial.geometry()
+
+        self.assertTrue(life.two_d_tutorial.active)
+        self.assertFalse(life.one_d_tutorial.active)
+        self.assertFalse(life.simulation_active)
+        self.assertEqual(life.two_d_tutorial.tab, life.two_d_tutorial.FOUNDATIONS)
+        self.assertEqual(life.two_d_tutorial.guide.name, "Wireworld")
+        self.assertEqual(life.two_d_tutorial.mode_tab_label, "MODE: WIREWORLD")
+        self.assertGreaterEqual(modal.width, life.WINDOW_WIDTH - 30)
+        self.assertTrue(modal.contains(viewport))
+        self.assertTrue(modal.contains(close))
+        self.assertTrue(modal.contains(back))
+        self.assertTrue(modal.contains(next_button))
+        self.assertFalse(tabs[0].colliderect(tabs[1]))
         life.draw_scene()
 
     def test_selecting_1d_does_not_open_tutorial_automatically(self) -> None:
