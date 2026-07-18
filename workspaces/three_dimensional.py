@@ -186,6 +186,7 @@ class ThreeDimensionalWorkspaceServices:
     grid_top_margin: int
     record_analysis: Callable[[StateObservation], None]
     reset_analysis: Callable[[StateObservation], None]
+    activate_tutorial: Callable[[], None] = lambda: None
     hardware_3d: Callable[[], bool] = lambda: False
     render_volume: Callable[
         [
@@ -1205,6 +1206,15 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             "Scientific Analysis (I)",
             self.services.activate_analysis,
             accent=(90, 195, 255),
+        )
+        menu.add_button(
+            "Tutorial: 3D & Mode Guide (F2)",
+            self.services.activate_tutorial,
+            accent=accent,
+            tooltip=(
+                "Open 3D foundations plus a visual guide for only the active "
+                "Spatial Life or 3D Generations mode."
+            ),
         )
         menu.add_button(
             "Keyboard Help (F1)",

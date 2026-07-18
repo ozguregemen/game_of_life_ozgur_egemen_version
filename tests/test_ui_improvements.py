@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
@@ -134,6 +135,7 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         life.help_panel.close()
         life.one_d_tutorial.close()
         life.two_d_tutorial.close()
+        life.three_d_tutorial.close()
         life.ui_preferences.favorite_rules.clear()
         life.ui_preferences.recent_experiments.clear()
 
@@ -141,6 +143,7 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         life.help_panel.close()
         life.one_d_tutorial.close()
         life.two_d_tutorial.close()
+        life.three_d_tutorial.close()
         life.ui_preferences.favorite_rules = self.original_favorites
         life.ui_preferences.recent_experiments = self.original_recents
         life.restore_session_document(self.original_session)
@@ -194,6 +197,39 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         self.assertTrue(modal.contains(next_button))
         self.assertFalse(tabs[0].colliderect(tabs[1]))
         life.draw_scene()
+
+    def test_f2_opens_3d_foundations_and_only_the_active_mode_guide(self) -> None:
+        with patch.object(life, "_switch_display_backend", return_value=True):
+            self.assertTrue(life.set_active_dimension("3d"))
+        life.three_dimensional_controller.set_mode("generations")
+        life.simulation_active = True
+
+        life.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F2, mod=0))
+        modal, viewport, close, back, next_button, tabs = life.three_d_tutorial.geometry()
+
+        self.assertTrue(life.three_d_tutorial.active)
+        self.assertFalse(life.one_d_tutorial.active)
+        self.assertFalse(life.two_d_tutorial.active)
+        self.assertFalse(life.simulation_active)
+        self.assertEqual(life.three_d_tutorial.tab, life.three_d_tutorial.FOUNDATIONS)
+        self.assertEqual(life.three_d_tutorial.guide.name, "3D Generations")
+        self.assertEqual(life.three_d_tutorial.mode_tab_label, "MODE: 3D GENERATIONS")
+        self.assertGreaterEqual(modal.width, life.WINDOW_WIDTH - 30)
+        self.assertTrue(modal.contains(viewport))
+        self.assertTrue(modal.contains(close))
+        self.assertTrue(modal.contains(back))
+        self.assertTrue(modal.contains(next_button))
+        self.assertFalse(tabs[0].colliderect(tabs[1]))
+        life.draw_scene()
+
+    def test_3d_tutorial_experiment_loads_documented_spatial_life_seed(self) -> None:
+        life.start_three_d_tutorial_experiment("spatial_life")
+
+        controller = life.three_dimensional_controller
+        self.assertEqual(controller.state.mode_key, "spatial_life")
+        self.assertEqual(controller.state.rule_key, "bays_5766")
+        self.assertEqual(controller.state.volume.boundary, "wrap")
+        self.assertEqual(int((controller.state.volume.cells != 0).sum()), 10)
 
     def test_selecting_1d_does_not_open_tutorial_automatically(self) -> None:
         life.set_active_dimension("2d")

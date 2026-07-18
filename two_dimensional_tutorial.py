@@ -67,8 +67,12 @@ class TwoDimensionalTutorial:
         return MODE_GUIDES[self.mode_key]
 
     @property
+    def foundation_pages(self) -> tuple[TutorialPage, ...]:
+        return FOUNDATION_PAGES
+
+    @property
     def pages(self) -> tuple[TutorialPage, ...]:
-        return FOUNDATION_PAGES if self.tab == self.FOUNDATIONS else self.guide.pages
+        return self.foundation_pages if self.tab == self.FOUNDATIONS else self.guide.pages
 
     @property
     def page_index(self) -> int:
@@ -91,10 +95,18 @@ class TwoDimensionalTutorial:
         return f"MODE: {self.guide.short_name.upper()}"
 
     @property
+    def foundation_tab_label(self) -> str:
+        return "2D FOUNDATIONS"
+
+    @property
+    def mode_accent(self) -> tuple[int, int, int]:
+        return MODE_BY_KEY[self.mode_key].accent
+
+    @property
     def accent(self) -> tuple[int, int, int]:
         if self.tab == self.FOUNDATIONS:
             return self.FOUNDATION_ACCENT
-        return MODE_BY_KEY[self.mode_key].accent
+        return self.mode_accent
 
     def open(self) -> None:
         """Pause and show the tutorial only after an explicit user action."""
@@ -189,7 +201,7 @@ class TwoDimensionalTutorial:
         if target < 0:
             if self.tab == self.MODE:
                 self.select_tab(self.FOUNDATIONS)
-                self.foundation_page = len(FOUNDATION_PAGES) - 1
+                self.foundation_page = len(self.foundation_pages) - 1
             else:
                 self.foundation_page = 0
             return
@@ -1549,7 +1561,7 @@ class TwoDimensionalTutorial:
         close_text = kicker_font.render("X", True, theme["button_text"])
         screen.blit(close_text, close_text.get_rect(center=close.center))
 
-        tab_labels = ("2D FOUNDATIONS", self.mode_tab_label)
+        tab_labels = (self.foundation_tab_label, self.mode_tab_label)
         for index, (tab_rect, tab_label) in enumerate(zip(tabs, tab_labels)):
             selected = (index == 0 and self.tab == self.FOUNDATIONS) or (
                 index == 1 and self.tab == self.MODE
@@ -1562,7 +1574,7 @@ class TwoDimensionalTutorial:
             )
             pygame.draw.rect(
                 screen,
-                self.FOUNDATION_ACCENT if index == 0 else MODE_BY_KEY[self.mode_key].accent,
+                self.FOUNDATION_ACCENT if index == 0 else self.mode_accent,
                 tab_rect,
                 3 if selected else 1,
                 border_radius=7,

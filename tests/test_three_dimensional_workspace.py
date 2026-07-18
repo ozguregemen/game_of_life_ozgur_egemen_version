@@ -37,6 +37,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.revisions = {THREE_D_RENDER_KEY: 0}
         self.messages: list[str] = []
         self.analysis = []
+        self.tutorial_opens = 0
 
         def invalidate(key: str) -> None:
             self.revisions[key] += 1
@@ -57,6 +58,9 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
             activate_session_menu=lambda: None,
             activate_analysis=lambda: None,
             activate_help=lambda: None,
+            activate_tutorial=lambda: setattr(
+                self, "tutorial_opens", self.tutorial_opens + 1
+            ),
             toggle_grid=lambda: setattr(self, "grid", not self.grid),
             cycle_theme=lambda: None,
             cached_stats=lambda _key, calculator: calculator(),
@@ -144,6 +148,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.controller.build_sidebar(menu)
         labels = [entry["button"].text for entry in menu.buttons]
         self.assertIn("Session Save / Load (P)", labels)
+        self.assertIn("Tutorial: 3D & Mode Guide (F2)", labels)
         self.assertTrue(any(label.startswith("Rule: B") for label in labels))
         self.assertTrue(any(label.startswith("Axis:") for label in labels))
 

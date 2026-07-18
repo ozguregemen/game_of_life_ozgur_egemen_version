@@ -26,6 +26,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
 - Ortak 2D temellerini aktif Conway, Immigration, Brian's Brain, Langton's Ant,
   Wireworld veya Cyclic CA rehberinden ayıran bağlamsal, iki sekmeli 2D tutorial
+- Hacim, komşuluk, eşzamanlı güncelleme, kamera, görünürlük ve voxel düzenlemeyi;
+  aktif Spatial Life veya 3D Generations rehberinden ayıran iki sekmeli 3D tutorial
 - Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
   kurallar için genelleştirilmiş 1D çalışma alanı
 - B6/S567 ve B5/S45 spatial Life kurallarıyla çalışan, depth test ve ışıklandırmalı
@@ -72,7 +74,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 | Fare tekerleği | Zoom |
 | Space veya üstteki RUN/PAUSE rozeti | Başlat / durdur |
 | F1 veya `?` | Bağlamsal klavye ve etkileşim yardımını aç / kapat |
-| F2 | Aktif 1D veya 2D çalışma alanının bağlamsal tutorial ekranını aç / kapat |
+| F2 | Aktif 1D, 2D veya 3D çalışma alanının bağlamsal tutorial ekranını aç / kapat |
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
@@ -162,6 +164,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `tutorial_ui.py`: Tam ekran görsel şemalarla kaynaklı ve etkileşimli 1D öğrenme akışı
 - `two_dimensional_tutorial_content.py`: Ortak 2D müfredatı, moda özel dersler ve kaynak kataloğu
 - `two_dimensional_tutorial.py`: İki sekmeli, tam ekran ve aktif moda göre değişen 2D tutorial arayüzü
+- `three_dimensional_tutorial_content.py`: Ortak 3D müfredatı, iki 3D moda özel dersler ve kaynaklar
+- `three_dimensional_tutorial.py`: İzometrik voxel şemalı, iki sekmeli ve bağlamsal 3D tutorial arayüzü
 - `ui_preferences.py`: Rule favorileri ve son kullanılan deneyler için yerel tercihler
 - `exporting.py`: Güvenli raster, GIF/MP4, CSV/JSON kodlama ve arka plan export motoru
 - `experiment_exports.py`: Workspace snapshot'larını bağlamsal çıktı formatlarına dönüştüren coordinator
@@ -514,6 +518,38 @@ Langton's Ant için [1986 tarihli özgün makale](https://doi.org/10.1016/0167-2
 Wireworld için [Scientific American Computer Recreations](https://www.scientificamerican.com/article/computer-recreations/)
 ve Cyclic CA için [Fisch'in 1990 makalesi](https://doi.org/10.1016/0167-2789(90)90170-T)
 ayrı, tıklanabilir referanslar olarak sunulur.
+
+## Bağlamsal 3D tutorial
+
+3D çalışma alanı açıldığında öğretici kendiliğinden görünmez. Sağ menüdeki
+`Tutorial: 3D & Mode Guide` düğmesi veya `F2`, simülasyonu duraklatıp iki sekmeli
+tam ekran rehberi açar:
+
+- `3D Foundations`: Gerçek hacim koordinatlarını, 6 yüz ve 26 Moore komşuluğunu,
+  eşzamanlı volume güncellemesini, iç voxel'lerin neden gizlenebildiğini, orbit
+  kamerayı, orientation cube'u, ray tabanlı voxel düzenlemeyi ve kontrollü deney
+  kurmayı yedi görsel derste anlatır.
+- `Mode: ...`: Yalnız seçili `Spatial Life` veya `3D Generations` modunun kural
+  ailesini, durum sistemini, örnek güncellemelerini, deney önerilerini ve
+  kaynaklarını gösterir. Mod değiştiğinde bu sekme yeni rehberin ilk sayfasına döner.
+
+Spatial Life rehberi sekiz sayfada B/S gösterimini 26 komşuluk bağlamında açıklar;
+Bays 5766 için doğum ve hayatta kalma örneklerini, period-4 glider'ı, Bays 4555 ve
+Face Life farklarını gösterir. Deney düğmesi yayımlanmış on-voxel Bays 5766 glider'ını,
+uyumlu kuralı ve wrap sınırını birlikte yükler.
+
+3D Generations rehberi dokuz sayfada `survival / birth / states / neighborhood`
+gösterimini, yalnız state 1'in aktif komşu sayılmasını ve refractory state'lerin
+tek yönlü soğumasını görselleştirir. 4/4/5/M, 3D Brain, Clouds 1 ve Pyroclastic
+örnekleri ayrı kartlarla anlatılır; deney düğmesi seçili Generations preset'ine
+uygun merkezi başlangıç hacmi oluşturur.
+
+Kaynak sekmesi yalnız aktif aileye ait bağlantıları sunar. Spatial Life için
+[Carter Bays'in 1990 tarihli glider makalesi](https://www.complex-systems.com/abstracts/v04_i06_a02/)
+ve [3D glider kataloğu](https://www.ibiblio.org/e-notes/Life/Gliders.htm);
+Generations için [Softology'nin kural ve state açıklaması](https://softologyblog.wordpress.com/2019/12/28/3d-cellular-automata-3/),
+[Visions of Chaos](https://softology.pro/voc.htm) ve açık kaynak görselleştirme
+örnekleri doğrudan açılabilir.
 
 Elementary CA, iki hücre durumu ve sol/merkez/sağ üçlüsünden oluşan sekiz olası
 komşuluk kullanır. 0–255 kural numarası, `111` ile `000` arasındaki bu komşulukların

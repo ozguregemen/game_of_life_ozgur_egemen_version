@@ -142,6 +142,11 @@ from three_dimensional_display import (
     HybridDisplayBackend,
     ThreeDimensionalDisplayError,
 )
+from three_dimensional_patterns import BAYS_5766_GLIDER
+from three_dimensional_tutorial import (
+    ThreeDimensionalTutorial,
+    ThreeDimensionalTutorialServices,
+)
 from tutorial_ui import OneDimensionalTutorial, TutorialServices
 from two_dimensional_tutorial import (
     TwoDimensionalTutorial,
@@ -3896,6 +3901,12 @@ def _life_tutorial_rule_label() -> str:
     return f"{rule['name']} · B{births}/S{survivals}"
 
 
+def _three_d_tutorial_rule_label() -> str:
+    """Return the active 3D preset in readable notation."""
+    rule = three_dimensional_controller.rule
+    return f"{rule.name} · {rule.notation} · {rule.neighborhood.size} neighbors"
+
+
 def activate_one_d_tutorial() -> None:
     """Open the guided 1D lesson after closing competing modal UI."""
     global dimension_menu_active, mode_menu_active, pattern_menu_active
@@ -3916,6 +3927,8 @@ def activate_one_d_tutorial() -> None:
     help_panel.close()
     if "two_d_tutorial" in globals():
         two_d_tutorial.close()
+    if "three_d_tutorial" in globals():
+        three_d_tutorial.close()
     if "export_manager" in globals():
         export_manager.close()
     one_d_tutorial.open()
@@ -3941,9 +3954,51 @@ def activate_two_d_tutorial() -> None:
     help_panel.close()
     if "one_d_tutorial" in globals():
         one_d_tutorial.close()
+    if "three_d_tutorial" in globals():
+        three_d_tutorial.close()
     if "export_manager" in globals():
         export_manager.close()
     two_d_tutorial.open()
+
+
+def activate_three_d_tutorial() -> None:
+    """Open shared 3D foundations and the active 3D mode guide."""
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    global simulation_active
+    if active_dimension != "3d":
+        set_status("The 3D tutorial is available inside the 3D workspace.", 4.0)
+        return
+    if "three_d_tutorial" in globals() and three_d_tutorial.active:
+        three_d_tutorial.close()
+        return
+    simulation_active = False
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    active_workspace().controller.deactivate()
+    session_manager.close()
+    analysis_panel.close()
+    help_panel.close()
+    if "one_d_tutorial" in globals():
+        one_d_tutorial.close()
+    if "two_d_tutorial" in globals():
+        two_d_tutorial.close()
+    if "export_manager" in globals():
+        export_manager.close()
+    three_d_tutorial.open()
+
+
+def start_three_d_tutorial_experiment(mode_key: str) -> None:
+    """Load a documented starting experiment selected from the 3D tutorial."""
+    if mode_key == "spatial_life":
+        three_dimensional_controller.set_mode(mode_key)
+        three_dimensional_controller.seed_pattern(BAYS_5766_GLIDER)
+        set_status("Loaded the documented Bays 5766 glider experiment.", 4.0)
+    else:
+        three_dimensional_controller.set_mode("generations")
+        three_dimensional_controller.seed_generations_core()
+        set_status("Created a central core for the selected 3D Generations rule.", 4.0)
+    rebuild_context_menu()
 
 
 def activate_contextual_tutorial() -> None:
@@ -3953,7 +4008,7 @@ def activate_contextual_tutorial() -> None:
     elif active_dimension == "2d":
         activate_two_d_tutorial()
     else:
-        set_status("The 3D tutorial will be added in its dedicated tutorial phase.", 4.0)
+        activate_three_d_tutorial()
 
 
 def toggle_help_panel() -> None:
@@ -3974,6 +4029,8 @@ def toggle_help_panel() -> None:
         one_d_tutorial.close()
     if "two_d_tutorial" in globals():
         two_d_tutorial.close()
+    if "three_d_tutorial" in globals():
+        three_d_tutorial.close()
     if "export_manager" in globals():
         export_manager.close()
     help_panel.open()
@@ -4071,6 +4128,7 @@ def draw_scene() -> None:
     help_panel.draw()
     one_d_tutorial.draw()
     two_d_tutorial.draw()
+    three_d_tutorial.draw()
 
 
 # ---------------------------------------------------------------------------
@@ -4555,6 +4613,10 @@ def handle_event(event: pygame.event.Event) -> bool:
         two_d_tutorial.handle_event(event)
         return True
 
+    if three_d_tutorial.active:
+        three_d_tutorial.handle_event(event)
+        return True
+
     if one_d_tutorial.active:
         one_d_tutorial.handle_event(event)
         return True
@@ -4737,6 +4799,7 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
     activate_session_menu=activate_session_menu,
     activate_analysis=toggle_analysis_panel,
     activate_help=toggle_help_panel,
+    activate_tutorial=activate_three_d_tutorial,
     toggle_grid=toggle_grid_lines,
     cycle_theme=cycle_theme,
     cached_stats=cached_mode_stats,
@@ -4898,6 +4961,20 @@ two_d_tutorial = TwoDimensionalTutorial(
     )
 )
 
+three_d_tutorial = ThreeDimensionalTutorial(
+    ThreeDimensionalTutorialServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        theme=lambda: THEMES[current_theme],
+        current_mode=lambda: three_dimensional_controller.state.mode_key,
+        current_rule_label=_three_d_tutorial_rule_label,
+        open_url=_open_tutorial_url,
+        start_experiment=start_three_d_tutorial_experiment,
+        pause=lambda: _set_simulation_running(False),
+        set_status=set_status,
+    )
+)
+
 timeline_panel = TimelinePanel(
     TimelinePanelServices(
         rect=timeline_rect,
@@ -4992,6 +5069,7 @@ def run() -> None:
                 and not export_manager.active
                 and not help_panel.active
                 and not two_d_tutorial.active
+                and not three_d_tutorial.active
                 and not one_d_tutorial.active
                 and not dimension_menu_active
                 and not active_workspace().controller.overlay_active
