@@ -15,12 +15,13 @@ MAX_RECENT_EXPERIMENTS = 5
 
 @dataclass
 class UIPreferences:
-    """Favorite Elementary rules and recently used saved experiments."""
+    """Failure-tolerant favorites, recents, and tutorial progress."""
 
     favorite_rules: set[int] = field(default_factory=set)
     recent_experiments: list[dict[str, str]] = field(default_factory=list)
     path: Path = PREFERENCES_PATH
     autosave: bool = True
+    seen_tutorials: set[str] = field(default_factory=set)
 
     @classmethod
     def load(
@@ -71,7 +72,21 @@ class UIPreferences:
                             "name": name.strip(),
                         }
                     )
-            return cls(favorites, recent[:MAX_RECENT_EXPERIMENTS], path, autosave)
+            tutorials_source = raw.get("seen_tutorials", [])
+            if not isinstance(tutorials_source, list):
+                raise TypeError("seen_tutorials must be a list")
+            tutorials = {
+                value.strip()
+                for value in tutorials_source
+                if isinstance(value, str) and value.strip()
+            }
+            return cls(
+                favorites,
+                recent[:MAX_RECENT_EXPERIMENTS],
+                path,
+                autosave,
+                tutorials,
+            )
         except (FileNotFoundError, json.JSONDecodeError, OSError, TypeError, ValueError):
             return cls(path=path, autosave=autosave)
 
@@ -83,6 +98,7 @@ class UIPreferences:
             "version": PREFERENCES_VERSION,
             "favorite_rules": sorted(self.favorite_rules),
             "recent_experiments": self.recent_experiments[:MAX_RECENT_EXPERIMENTS],
+            "seen_tutorials": sorted(self.seen_tutorials),
         }
         temporary = self.path.with_suffix(".json.tmp")
         try:
@@ -136,3 +152,16 @@ class UIPreferences:
 
     def recent(self) -> list[dict[str, str]]:
         return [dict(item) for item in self.recent_experiments]
+
+    def has_seen_tutorial(self, tutorial: str) -> bool:
+        """Return whether a named tutorial has already been presented."""
+        return tutorial in self.seen_tutorials
+
+    def mark_tutorial_seen(self, tutorial: str) -> None:
+        """Persist first-run tutorial progress without failing the application."""
+        if not isinstance(tutorial, str) or not tutorial.strip():
+            raise ValueError("Tutorial identifier cannot be empty.")
+        normalized = tutorial.strip()
+        if normalized not in self.seen_tutorials:
+            self.seen_tutorials.add(normalized)
+            self.save()

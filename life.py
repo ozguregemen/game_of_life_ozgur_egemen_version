@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import random
 import time
+import webbrowser
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from typing import Any, Callable, Mapping
@@ -141,6 +142,7 @@ from three_dimensional_display import (
     HybridDisplayBackend,
     ThreeDimensionalDisplayError,
 )
+from tutorial_ui import OneDimensionalTutorial, TutorialServices
 from ui_preferences import UIPreferences
 from visuals import CellTransition, get_enhanced_age_color
 from wireworld import (
@@ -3674,14 +3676,19 @@ def handle_dimension_menu_event(event: pygame.event.Event) -> bool:
             return True
         if pygame.K_1 <= event.key < pygame.K_1 + len(DIMENSION_DEFINITIONS):
             index = event.key - pygame.K_1
-            set_active_dimension(DIMENSION_DEFINITIONS[index].key)
+            dimension = DIMENSION_DEFINITIONS[index].key
+            changed = set_active_dimension(dimension)
+            if changed and dimension == "1d":
+                maybe_open_one_d_tutorial()
             return True
 
     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
         modal, cards = dimension_menu_geometry()
         for dimension_key, card in cards:
             if card.collidepoint(event.pos):
-                set_active_dimension(dimension_key)
+                changed = set_active_dimension(dimension_key)
+                if changed and dimension_key == "1d":
+                    maybe_open_one_d_tutorial()
                 return True
         if not modal.collidepoint(event.pos):
             dimension_menu_active = False
@@ -3874,6 +3881,53 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
     return tuple(entries)
 
 
+ONE_D_TUTORIAL_ID = "one_dimensional_foundations"
+
+
+def _mark_one_d_tutorial_seen() -> None:
+    ui_preferences.mark_tutorial_seen(ONE_D_TUTORIAL_ID)
+
+
+def _open_tutorial_url(url: str) -> bool:
+    """Open an explicitly selected tutorial reference in the default browser."""
+    try:
+        return bool(webbrowser.open(url, new=2))
+    except (OSError, webbrowser.Error):
+        return False
+
+
+def activate_one_d_tutorial(*, automatic: bool = False) -> None:
+    """Open the guided 1D lesson after closing competing modal UI."""
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    global simulation_active
+    if active_dimension != "1d":
+        set_status("The 1D tutorial is available inside the 1D workspace.", 4.0)
+        return
+    if "one_d_tutorial" in globals() and one_d_tutorial.active:
+        if not automatic:
+            one_d_tutorial.close()
+        return
+    simulation_active = False
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    active_workspace().controller.deactivate()
+    session_manager.close()
+    analysis_panel.close()
+    help_panel.close()
+    if "export_manager" in globals():
+        export_manager.close()
+    one_d_tutorial.open(automatic=automatic)
+
+
+def maybe_open_one_d_tutorial() -> bool:
+    """Present the lesson once when a user first enters the 1D workspace."""
+    if ui_preferences.has_seen_tutorial(ONE_D_TUTORIAL_ID):
+        return False
+    activate_one_d_tutorial(automatic=True)
+    return True
+
+
 def toggle_help_panel() -> None:
     """Open contextual shortcut help after closing competing modal UI."""
     global dimension_menu_active, mode_menu_active, pattern_menu_active
@@ -3888,6 +3942,8 @@ def toggle_help_panel() -> None:
     active_workspace().controller.deactivate()
     session_manager.close()
     analysis_panel.close()
+    if "one_d_tutorial" in globals():
+        one_d_tutorial.close()
     if "export_manager" in globals():
         export_manager.close()
     help_panel.open()
@@ -3983,6 +4039,7 @@ def draw_scene() -> None:
     draw_session_menu()
     export_manager.draw()
     help_panel.draw()
+    one_d_tutorial.draw()
 
 
 # ---------------------------------------------------------------------------
@@ -4346,7 +4403,9 @@ def handle_keydown(event: pygame.event.Event) -> None:
 
     modifiers = getattr(event, "mod", pygame.key.get_mods())
     question_mark = event.key == pygame.K_SLASH and bool(modifiers & pygame.KMOD_SHIFT)
-    if event.key == pygame.K_F1 or question_mark:
+    if event.key == pygame.K_F2:
+        activate_one_d_tutorial()
+    elif event.key == pygame.K_F1 or question_mark:
         toggle_help_panel()
     elif event.key == pygame.K_s and modifiers & pygame.KMOD_CTRL:
         save_quick_session()
@@ -4453,6 +4512,10 @@ def handle_event(event: pygame.event.Event) -> bool:
 
     if event.type == pygame.VIDEORESIZE:
         update_window_size(event.w, event.h)
+        return True
+
+    if one_d_tutorial.active:
+        one_d_tutorial.handle_event(event)
         return True
 
     if help_panel.active:
@@ -4589,6 +4652,7 @@ elementary_services = ElementaryWorkspaceServices(
     activate_analysis=toggle_analysis_panel,
     activate_export=activate_export_menu,
     activate_help=toggle_help_panel,
+    activate_tutorial=activate_one_d_tutorial,
     toggle_grid=toggle_grid_lines,
     cycle_theme=cycle_theme,
     cached_stats=cached_mode_stats,
@@ -4758,6 +4822,29 @@ help_panel = ShortcutHelpPanel(
     )
 )
 
+
+one_d_tutorial = OneDimensionalTutorial(
+    TutorialServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        content_width=lambda: max(1, WINDOW_WIDTH - MENU_WIDTH),
+        theme=lambda: THEMES[current_theme],
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+        current_rule=lambda: (
+            elementary_controller.state.rule
+            if elementary_controller.state.family == FAMILY_ELEMENTARY
+            else 30
+        ),
+        apply_canonical_rule=elementary_controller.load_canonical_elementary_rule,
+        open_url=_open_tutorial_url,
+        pause=lambda: _set_simulation_running(False),
+        mark_seen=_mark_one_d_tutorial_seen,
+        set_status=set_status,
+    )
+)
+
 timeline_panel = TimelinePanel(
     TimelinePanelServices(
         rect=timeline_rect,
@@ -4822,8 +4909,10 @@ if active_dimension == "3d" and not _switch_display_backend("3d"):
     active_dimension = "2d"
 rebuild_context_menu()
 center_view()
+if active_dimension == "1d":
+    maybe_open_one_d_tutorial()
 set_status(
-    "F1: help · D: dimension · M: mode · I: analysis · Space: run/pause",
+    "F1: help · F2: tutorial · D: dimension · I: analysis · Space: run/pause",
     5.0,
 )
 
@@ -4851,6 +4940,7 @@ def run() -> None:
                 not session_manager.active
                 and not export_manager.active
                 and not help_panel.active
+                and not one_d_tutorial.active
                 and not dimension_menu_active
                 and not active_workspace().controller.overlay_active
             ):

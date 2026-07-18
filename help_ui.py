@@ -37,6 +37,7 @@ class ShortcutHelpPanel:
         ("C / G", "Center the view / toggle grid lines"),
         ("Ctrl+S / Ctrl+O", "Quick-save / quick-load the complete session"),
         ("F1 or ?", "Open or close this help panel"),
+        ("F2", "Open the guided tutorial from the 1D workspace"),
     )
 
     def __init__(self, services: HelpPanelServices) -> None:

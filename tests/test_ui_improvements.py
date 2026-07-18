@@ -115,6 +115,20 @@ class PreferenceStorageTests(unittest.TestCase):
             self.assertEqual(loaded.recent_experiments[0]["name"], "Alpha New")
             self.assertEqual(len(loaded.recent_experiments), 2)
 
+    def test_seen_tutorials_round_trip_without_breaking_legacy_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "ui.json"
+            preferences = UIPreferences(path=path)
+            preferences.mark_tutorial_seen("one_dimensional_foundations")
+
+            loaded = UIPreferences.load(path)
+
+            self.assertTrue(
+                loaded.has_seen_tutorial("one_dimensional_foundations")
+            )
+            self.assertFalse(loaded.has_seen_tutorial("two_dimensional_foundations"))
+
+
     def test_corrupt_preferences_fall_back_to_empty_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "ui.json"
@@ -131,14 +145,19 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         self.original_session = life.capture_session_document("UI Restore")
         self.original_favorites = set(life.ui_preferences.favorite_rules)
         self.original_recents = life.ui_preferences.recent()
+        self.original_seen_tutorials = set(life.ui_preferences.seen_tutorials)
         life.help_panel.close()
+        life.one_d_tutorial.close()
         life.ui_preferences.favorite_rules.clear()
         life.ui_preferences.recent_experiments.clear()
+        life.ui_preferences.seen_tutorials.clear()
 
     def tearDown(self) -> None:
         life.help_panel.close()
+        life.one_d_tutorial.close()
         life.ui_preferences.favorite_rules = self.original_favorites
         life.ui_preferences.recent_experiments = self.original_recents
+        life.ui_preferences.seen_tutorials = self.original_seen_tutorials
         life.restore_session_document(self.original_session)
 
     def test_f1_help_is_contextual_pauses_and_fits_window(self) -> None:
@@ -153,6 +172,41 @@ class ApplicationUIImprovementTests(unittest.TestCase):
         self.assertIn("1D", life.help_context_title())
         self.assertTrue(modal.contains(close))
         life.draw_scene()
+
+    def test_f2_tutorial_is_contextual_pauses_and_fits_window(self) -> None:
+        life.set_active_dimension("1d")
+        life.simulation_active = True
+
+        life.handle_keydown(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_F2, mod=0))
+        modal, viewport, close, back, next_button = life.one_d_tutorial.geometry()
+
+        self.assertTrue(life.one_d_tutorial.active)
+        self.assertFalse(life.simulation_active)
+        self.assertTrue(modal.contains(viewport))
+        self.assertTrue(modal.contains(close))
+        self.assertTrue(modal.contains(back))
+        self.assertTrue(modal.contains(next_button))
+        life.draw_scene()
+
+    def test_first_dimension_menu_visit_opens_tutorial_only_once(self) -> None:
+        life.set_active_dimension("2d")
+        life.activate_dimension_menu()
+        event = pygame.event.Event(pygame.KEYDOWN, key=pygame.K_1)
+
+        self.assertTrue(life.handle_dimension_menu_event(event))
+        self.assertEqual(life.active_dimension, "1d")
+        self.assertTrue(life.one_d_tutorial.active)
+        self.assertTrue(
+            life.ui_preferences.has_seen_tutorial(life.ONE_D_TUTORIAL_ID)
+        )
+
+        life.one_d_tutorial.close()
+        life.set_active_dimension("2d")
+        life.activate_dimension_menu()
+        life.handle_dimension_menu_event(event)
+
+        self.assertFalse(life.one_d_tutorial.active)
+
 
     def test_status_badge_is_clickable_and_tool_label_is_explicit(self) -> None:
         life.set_simulation_mode("immigration")

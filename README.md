@@ -21,6 +21,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 
 ## Ana özellikler
 
+- İlk 1D ziyaretinde açılan; teori, tarih, Wolfram kodu, deney protokolü, önemli
+  kurallar ve akademik kaynakları kapsayan etkileşimli tutorial
 - 1D / 2D / 3D çalışma alanlarını gösteren üst seviye boyut seçici
 - Elementary, totalistic, çok durumlu, geniş komşuluklu, higher-order ve reversible
   kurallar için genelleştirilmiş 1D çalışma alanı
@@ -68,6 +70,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 | Fare tekerleği | Zoom |
 | Space veya üstteki RUN/PAUSE rozeti | Başlat / durdur |
 | F1 veya `?` | Bağlamsal klavye ve etkileşim yardımını aç / kapat |
+| F2 | Aktif 1D çalışma alanının açıklamalı tutorial ekranını aç / kapat |
 | P | Session & Experiment Manager panelini aç / kapat |
 | Ctrl + S | Tüm uygulama durumunu `Last Session` olarak hızlı kaydet |
 | Ctrl + O | `Last Session` oturumunu yükle |
@@ -154,7 +157,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
 - `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
 - `help_ui.py`: F1 / `?` ile açılan bağlamsal kısayol ve etkileşim yardım paneli
-- `ui_preferences.py`: Rule favorileri ve son kullanılan deneyler için yerel tercihler
+- `tutorial_ui.py`: Kaynaklı, etkileşimli ve responsive 1D öğrenme akışı
+- `ui_preferences.py`: Rule favorileri, son deneyler ve tutorial ilerlemesi için yerel tercihler
 - `exporting.py`: Güvenli raster, GIF/MP4, CSV/JSON kodlama ve arka plan export motoru
 - `experiment_exports.py`: Workspace snapshot'larını bağlamsal çıktı formatlarına dönüştüren coordinator
 - `export_ui.py`: Aktif workspace'e göre değişen dışa aktarma paneli
@@ -454,6 +458,26 @@ Tekrarlanabilir ölçüm komutları, profiler kullanımı ve referans önce/sonr
 gösterir. `1D`, Wolfram'ın genel 1D cellular automata alanını; `2D`, mevcut altı modu
 açar; `3D` ise oynanabilir spatial Life volume'unu açar. Boyutlar arasında geçiş
 yapmak gridleri, volume'u ve geçmişleri sıfırlamaz.
+
+1D çalışma alanı ilk kez boyut menüsünden açıldığında uygulama duraklar ve yedi
+adımlı öğretici otomatik gösterilir. Bu ilk gösterim yerel UI tercihlerinde tutulur;
+tutorial daha sonra sağ menüdeki `Learn 1D` düğmesi veya `F2` ile her zaman yeniden
+açılabilir. Sol/sağ oklar sayfaları değiştirir, fare tekerleği uzun kaynak listesini
+kaydırır ve `Esc` ya da `F2` laboratuvara döner.
+
+Tutorial; bir space-time diyagramının nasıl okunacağını, von Neumann ve Ulam'dan
+Wolfram'ın sistematik 1D çalışmalarına uzanan tarihi, 0-255 kural kodlamasını, seed
+ve boundary'nin deney sonucundaki rolünü, genelleştirilmiş rule ailelerini ve
+tekrarlanabilir ölçüm akışını açıklar. Rule 30, 90, 110 ve 184 kartları seçildiğinde
+Elementary aile, centered single-cell seed ve infinite state-0 background birlikte
+yüklenir; böylece anlatılan deney doğrudan çalıştırılabilir.
+
+Kaynak sayfası [Stanford Encyclopedia of Philosophy CA maddesini](https://plato.stanford.edu/entries/cellular-automata/),
+[Wolfram'ın 1983 makalesini](https://doi.org/10.1103/RevModPhys.55.601),
+[Elementary CA kataloğunu](https://mathworld.wolfram.com/ElementaryCellularAutomaton.html),
+[dört davranış sınıfını](https://www.wolframscience.com/nks/p231--four-classes-of-behavior/)
+ve [Cook'un Rule 110 evrensellik kanıtını](https://doi.org/10.25088/complexsystems.15.1.1)
+ayrı, açılabilir referanslar olarak verir.
 
 Elementary CA, iki hücre durumu ve sol/merkez/sağ üçlüsünden oluşan sekiz olası
 komşuluk kullanır. 0–255 kural numarası, `111` ile `000` arasındaki bu komşulukların

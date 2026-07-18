@@ -130,6 +130,7 @@ class ElementaryWorkspaceServices:
     activate_analysis: Callable[[], None]
     activate_export: Callable[[], None]
     activate_help: Callable[[], None]
+    activate_tutorial: Callable[[], None]
     toggle_grid: Callable[[], None]
     cycle_theme: Callable[[], None]
     cached_stats: Callable[[str, Callable[[], dict[str, Any]]], dict[str, Any]]
@@ -1013,6 +1014,31 @@ class ElementaryWorkspaceController(WorkspaceController):
             4.0,
         )
 
+    def load_canonical_elementary_rule(self, rule: int) -> None:
+        """Load one tutorial rule under reproducible canonical conditions."""
+        validated_rule = validate_rule(rule)
+        self.save_history()
+        self.state.family = FAMILY_ELEMENTARY
+        self.state.rule = validated_rule
+        self.state.states = 2
+        self.state.radius = 1
+        self.state.brush_state = 1
+        self.state.boundary = BOUNDARY_INFINITE
+        self.state.rule_change_reset = True
+        self.state.comparison_enabled = False
+        self.state.comparison_rule = 90 if validated_rule != 90 else 30
+        self._restart_diagrams(
+            single_state_seed(
+                self.preferred_seed_width(),
+                states=2,
+            )
+        )
+        self._status(
+            f"Tutorial experiment loaded: Rule {validated_rule}, centered "
+            "single-cell seed, infinite state-0 background.",
+            5.0,
+        )
+
     def adjust_rule(self, delta: int) -> None:
         self.set_rule((self.state.rule + delta) % (self.rule_spec.max_code + 1))
 
@@ -1448,6 +1474,12 @@ class ElementaryWorkspaceController(WorkspaceController):
             self.services.activate_export,
             accent=(235, 155, 70),
             tooltip="Export the diagram, animation, metrics, or experiment JSON.",
+        )
+        menu.add_button(
+            "Learn 1D (F2)",
+            self.services.activate_tutorial,
+            accent=(75, 175, 235),
+            tooltip="Open the guided theory, history, rule, and experiment tutorial.",
         )
         menu.add_button(
             "Keyboard Help (F1)",

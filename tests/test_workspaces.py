@@ -9,7 +9,9 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import pygame
 
 import life
+from elementary_ca import BOUNDARY_INFINITE
 from one_dimensional_ca import (
+    FAMILY_ELEMENTARY,
     FAMILY_HIGHER_ORDER,
     FAMILY_MULTISTATE,
     default_rule_spec,
@@ -234,6 +236,29 @@ class ApplicationWorkspaceTests(unittest.TestCase):
 
         self.assertEqual(self.eca.rows[-1][0], 1)
         self.assertEqual(life.elementary_controller.history_status().frame_count, 2)
+
+    def test_tutorial_rule_loader_restores_canonical_elementary_protocol(self) -> None:
+        life.set_active_dimension("1d")
+        spec = default_rule_spec(FAMILY_MULTISTATE, states=3)
+        self.eca.family = spec.family
+        self.eca.rule = spec.code
+        self.eca.states = spec.states
+        self.eca.radius = spec.radius
+        self.eca.rule_change_reset = False
+        self.eca.comparison_enabled = True
+
+        life.elementary_controller.load_canonical_elementary_rule(184)
+
+        self.assertEqual(self.eca.family, FAMILY_ELEMENTARY)
+        self.assertEqual(self.eca.rule, 184)
+        self.assertEqual(self.eca.states, 2)
+        self.assertEqual(self.eca.radius, 1)
+        self.assertEqual(self.eca.boundary, BOUNDARY_INFINITE)
+        self.assertTrue(self.eca.rule_change_reset)
+        self.assertFalse(self.eca.comparison_enabled)
+        self.assertEqual(self.eca.generation, 0)
+        self.assertEqual(sum(self.eca.rows[0]), 1)
+
 
     def test_multistate_family_uses_selected_brush_and_valid_states(self) -> None:
         life.set_active_dimension("1d")
