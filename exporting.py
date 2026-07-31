@@ -45,6 +45,55 @@ class RasterFrame:
 
 
 @dataclass(frozen=True)
+class RGBFrame:
+    """One immutable, top-to-bottom RGB viewport frame."""
+
+    generation: int
+    width: int
+    height: int
+    pixels: bytes
+
+    def __post_init__(self) -> None:
+        if self.generation < 0:
+            raise ValueError("Frame generation cannot be negative.")
+        if self.width < 1 or self.height < 1:
+            raise ValueError("RGB frame dimensions must be positive.")
+        if len(self.pixels) != self.width * self.height * 3:
+            raise ValueError("RGB frame byte count does not match its dimensions.")
+
+    @classmethod
+    def from_array(cls, generation: int, pixels: np.ndarray) -> "RGBFrame":
+        """Freeze one uint8 ``height x width x RGB`` array for background work."""
+
+        array = np.asarray(pixels)
+        if array.dtype != np.uint8 or array.ndim != 3 or array.shape[2] != 3:
+            raise TypeError("RGB frame arrays must have uint8 shape (height, width, 3).")
+        contiguous = np.ascontiguousarray(array)
+        return cls(
+            generation=int(generation),
+            width=int(contiguous.shape[1]),
+            height=int(contiguous.shape[0]),
+            pixels=contiguous.tobytes(order="C"),
+        )
+
+    def as_array(self, *, even_dimensions: bool = False) -> np.ndarray:
+        """Return an array view, optionally padded for YUV420 video encoders."""
+
+        source = np.frombuffer(self.pixels, dtype=np.uint8).reshape(
+            self.height,
+            self.width,
+            3,
+        )
+        if not even_dimensions or not (self.height % 2 or self.width % 2):
+            return source
+        height = self.height + self.height % 2
+        width = self.width + self.width % 2
+        padded = np.zeros((height, width, 3), dtype=np.uint8)
+        padded[: self.height, : self.width] = source
+        return padded
+
+
+@dataclass(frozen=True)
 class ExportOutcome:
     """Completed background export result consumed by the Pygame thread."""
 
@@ -220,6 +269,28 @@ def save_png(
         raise ExportError(f"Could not write PNG '{target.name}': {exc}") from exc
 
 
+def save_rgb_png(
+    frame: RGBFrame,
+    path: Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Atomically save an already-rendered RGB viewport as lossless PNG."""
+
+    target = _prepare_target(path, overwrite=overwrite)
+    temporary = _temporary_path(target)
+    try:
+        Image.fromarray(frame.as_array()).save(
+            temporary,
+            format="PNG",
+            optimize=True,
+        )
+        return _replace_temporary(temporary, target)
+    except (OSError, ValueError) as exc:
+        temporary.unlink(missing_ok=True)
+        raise ExportError(f"Could not write PNG '{target.name}': {exc}") from exc
+
+
 def save_gif(
     frames: Sequence[RasterFrame],
     palette: Palette,
@@ -248,6 +319,47 @@ def save_gif(
         )
         for frame in frames
     ]
+    temporary = _temporary_path(target)
+    try:
+        images[0].save(
+            temporary,
+            format="GIF",
+            save_all=True,
+            append_images=images[1:],
+            duration=duration_ms,
+            loop=loop,
+            optimize=False,
+            disposal=2,
+        )
+        return _replace_temporary(temporary, target)
+    except (OSError, ValueError) as exc:
+        temporary.unlink(missing_ok=True)
+        raise ExportError(f"Could not write GIF '{target.name}': {exc}") from exc
+
+
+def _validate_rgb_animation(frames: Sequence[RGBFrame]) -> None:
+    if not frames:
+        raise ValueError("At least one RGB frame is required")
+    size = (frames[0].width, frames[0].height)
+    if any((frame.width, frame.height) != size for frame in frames):
+        raise ValueError("All RGB animation frames must have the same dimensions")
+
+
+def save_rgb_gif(
+    frames: Sequence[RGBFrame],
+    path: Path,
+    *,
+    duration_ms: int = 100,
+    loop: int = 0,
+    overwrite: bool = False,
+) -> Path:
+    """Atomically encode pre-rendered viewport frames as an animated GIF."""
+
+    if duration_ms < 10:
+        raise ValueError("duration_ms must be at least 10")
+    _validate_rgb_animation(frames)
+    target = _prepare_target(path, overwrite=overwrite)
+    images = [Image.fromarray(frame.as_array()) for frame in frames]
     temporary = _temporary_path(target)
     try:
         images[0].save(
@@ -310,6 +422,52 @@ def save_mp4(
                     even_dimensions=True,
                 )
             )
+        writer.close()
+        writer = None
+        return _replace_temporary(temporary, target)
+    except Exception as exc:
+        if writer is not None:
+            try:
+                writer.close()
+            except Exception:
+                pass
+        temporary.unlink(missing_ok=True)
+        raise ExportError(f"Could not write MP4 '{target.name}': {exc}") from exc
+
+
+def save_rgb_mp4(
+    frames: Sequence[RGBFrame],
+    path: Path,
+    *,
+    fps: int = 20,
+    overwrite: bool = False,
+) -> Path:
+    """Stream pre-rendered RGB viewport frames to an H.264 MP4."""
+
+    if fps < 1 or fps > 120:
+        raise ValueError("fps must be between 1 and 120")
+    _validate_rgb_animation(frames)
+    try:
+        import imageio.v2 as imageio
+    except ImportError as exc:  # pragma: no cover - guarded by requirements.txt
+        raise ExportError(
+            "MP4 export requires imageio and imageio-ffmpeg."
+        ) from exc
+
+    target = _prepare_target(path, overwrite=overwrite)
+    temporary = _temporary_path(target)
+    writer = None
+    try:
+        writer = imageio.get_writer(
+            temporary,
+            fps=fps,
+            codec="libx264",
+            format="FFMPEG",
+            macro_block_size=1,
+            pixelformat="yuv420p",
+        )
+        for frame in frames:
+            writer.append_data(frame.as_array(even_dimensions=True))
         writer.close()
         writer = None
         return _replace_temporary(temporary, target)

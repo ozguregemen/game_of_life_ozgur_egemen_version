@@ -53,6 +53,7 @@ from help_ui import HelpPanelServices, ShortcutHelpPanel
 from export_ui import ExportMenu, ExportMenuServices
 from exporting import (
     ExportRunner,
+    RGBFrame,
     RasterFrame,
     sampled_indices,
 )
@@ -1674,6 +1675,34 @@ def capture_current_raster() -> RasterFrame:
 def capture_timeline_rasters() -> tuple[RasterFrame, ...]:
     """Return sampled, normalized animation frames without moving history."""
     return export_coordinator.capture_timeline_rasters()
+
+
+def _capture_three_d_viewport_frame(
+    snapshot: Mapping[str, Any],
+    maximum_edge: int,
+) -> RGBFrame:
+    """Render an immutable 3D snapshot with the currently visible camera style."""
+
+    if maximum_edge < 1:
+        raise ValueError("3D viewport export size must be positive.")
+    viewport = grid_viewport()
+    scale = min(1.0, maximum_edge / max(viewport.width, viewport.height))
+    target_size = (
+        max(1, round(viewport.width * scale)),
+        max(1, round(viewport.height * scale)),
+    )
+    volume = three_dimensional_controller.volume_from_export_snapshot(snapshot)
+    theme = THEMES[current_theme]
+    pixels = display_backend.capture_volume(
+        volume,
+        three_dimensional_controller.state.camera,
+        target_size,
+        background=theme["background"],
+        alive_color=theme["cell"],
+        accent_color=DIMENSION_BY_KEY["3d"].accent,
+        settings=three_dimensional_controller.render_settings(),
+    )
+    return RGBFrame.from_array(int(snapshot["generation"]), pixels)
 
 
 def capture_shareable_experiment_document() -> dict[str, Any]:
@@ -4433,6 +4462,7 @@ export_coordinator = ExperimentExportCoordinator(
             "state_count": three_dimensional_controller.state.volume.state_count,
             "shape": three_dimensional_controller.state.volume.shape,
         },
+        three_d_viewport_frame=_capture_three_d_viewport_frame,
         timeline_snapshots=_active_export_timeline_snapshots,
         analysis_series=active_analysis_series,
         history_status=active_history_status,
@@ -4449,6 +4479,7 @@ export_manager = ExportMenu(
         export_png=export_coordinator.export_png,
         export_gif=export_coordinator.export_gif,
         export_mp4=export_coordinator.export_mp4,
+        export_slice_atlas=export_coordinator.export_slice_atlas,
         export_csv=export_coordinator.export_csv,
         export_json=export_coordinator.export_json,
         set_status=set_status,

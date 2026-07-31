@@ -11,6 +11,7 @@ import numpy as np
 from exporting import (
     ExportError,
     ExportRunner,
+    RGBFrame,
     RasterFrame,
     export_path,
     save_analysis_csv,
@@ -18,6 +19,9 @@ from exporting import (
     save_gif,
     save_mp4,
     save_png,
+    save_rgb_gif,
+    save_rgb_mp4,
+    save_rgb_png,
 )
 from mode_registry import MODE_BY_KEY
 from one_dimensional_ca import FAMILY_ELEMENTARY, RULE_FAMILY_BY_KEY, RuleSpec
@@ -42,6 +46,8 @@ from wireworld import CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL, EMPTY as WIRE_EMP
 
 
 THREE_D_ATLAS_SEPARATOR = 255
+THREE_D_VIEWPORT_PNG_MAX_EDGE = 1920
+THREE_D_VIEWPORT_ANIMATION_MAX_EDGE = 720
 
 
 @dataclass(frozen=True)
@@ -58,6 +64,7 @@ class ExperimentExportServices:
     two_d_snapshot: Callable[[str], Mapping[str, Any]]
     three_d_snapshot: Callable[[], Mapping[str, Any]]
     three_d_context: Callable[[], Mapping[str, Any]]
+    three_d_viewport_frame: Callable[[Mapping[str, Any], int], RGBFrame]
     timeline_snapshots: Callable[[], Sequence[Mapping[str, Any]]]
     analysis_series: Callable[[], AnalysisSeries]
     history_status: Callable[[], TimelineStatus]
@@ -421,6 +428,29 @@ class ExperimentExportCoordinator:
         mode = self.services.active_mode()
         return tuple(self._from_2d_snapshot(mode, snapshot) for snapshot in snapshots)
 
+    def capture_current_viewport(self) -> RGBFrame:
+        """Capture the current 3D camera view with its live render settings."""
+
+        if self.services.active_dimension() != "3d":
+            raise ValueError("Viewport capture is only available in the 3D workspace.")
+        return self.services.three_d_viewport_frame(
+            self.services.three_d_snapshot(),
+            THREE_D_VIEWPORT_PNG_MAX_EDGE,
+        )
+
+    def capture_timeline_viewports(self) -> tuple[RGBFrame, ...]:
+        """Render sampled 3D history through one fixed camera and visual style."""
+
+        if self.services.active_dimension() != "3d":
+            raise ValueError("Viewport timelines are only available in 3D.")
+        return tuple(
+            self.services.three_d_viewport_frame(
+                snapshot,
+                THREE_D_VIEWPORT_ANIMATION_MAX_EDGE,
+            )
+            for snapshot in self.services.timeline_snapshots()
+        )
+
     def _queue(self, label: str, work: Callable[[], Path]) -> bool:
         if not self.runner.submit(label, work):
             self.services.set_status(
@@ -432,6 +462,20 @@ class ExperimentExportCoordinator:
         return True
 
     def export_png(self) -> bool:
+        if self.services.active_dimension() == "3d":
+            try:
+                frame = self.capture_current_viewport()
+                path = export_path(self._stem("viewport"), ".png")
+            except (OSError, RuntimeError, TypeError, ValueError, ExportError) as exc:
+                self.services.set_status(
+                    f"3D viewport PNG export could not start: {exc}",
+                    6.0,
+                )
+                return False
+            return self._queue(
+                "3D viewport PNG",
+                lambda: save_rgb_png(frame, path),
+            )
         try:
             frame = self.capture_current_raster()
             palette = self.palette()
@@ -442,6 +486,23 @@ class ExperimentExportCoordinator:
         return self._queue("PNG diagram", lambda: save_png(frame, palette, path))
 
     def _export_animation(self, format_name: str) -> bool:
+        if self.services.active_dimension() == "3d":
+            try:
+                rgb_frames = self.capture_timeline_viewports()
+                suffix = ".gif" if format_name == "GIF" else ".mp4"
+                path = export_path(self._stem("viewport-timeline"), suffix)
+            except (OSError, RuntimeError, TypeError, ValueError, ExportError) as exc:
+                self.services.set_status(
+                    f"3D viewport {format_name} export could not start: {exc}",
+                    6.0,
+                )
+                return False
+            work = (
+                (lambda: save_rgb_gif(rgb_frames, path))
+                if format_name == "GIF"
+                else (lambda: save_rgb_mp4(rgb_frames, path))
+            )
+            return self._queue(f"3D viewport {format_name}", work)
         try:
             frames = self.capture_timeline_rasters()
             palette = self.palette()
@@ -465,6 +526,30 @@ class ExperimentExportCoordinator:
 
     def export_mp4(self) -> bool:
         return self._export_animation("MP4")
+
+    def export_slice_atlas(self) -> bool:
+        """Preserve the deterministic orthogonal atlas as a scientific 3D export."""
+
+        if self.services.active_dimension() != "3d":
+            self.services.set_status(
+                "Slice atlas export is only available in the 3D workspace.",
+                4.0,
+            )
+            return False
+        try:
+            frame = self._from_3d_snapshot(self.services.three_d_snapshot())
+            palette = self.palette()
+            path = export_path(self._stem("slice-atlas"), ".png")
+        except (OSError, TypeError, ValueError, ExportError) as exc:
+            self.services.set_status(
+                f"3D slice atlas export could not start: {exc}",
+                5.0,
+            )
+            return False
+        return self._queue(
+            "3D slice atlas PNG",
+            lambda: save_png(frame, palette, path),
+        )
 
     def export_csv(self) -> bool:
         series = self.services.analysis_series()

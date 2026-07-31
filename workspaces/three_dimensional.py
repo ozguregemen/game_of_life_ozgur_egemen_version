@@ -811,6 +811,38 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
         return self._timeline_snapshot()
 
+    @staticmethod
+    def volume_from_export_snapshot(snapshot: Mapping[str, Any]) -> Volume3D:
+        """Rebuild an isolated volume without mutating the visible timeline."""
+
+        shape = tuple(int(value) for value in snapshot["shape"])
+        if len(shape) != 3 or any(length < 1 for length in shape):
+            raise ValueError("3D export shape must contain three positive axes.")
+        raw_cells = snapshot["cells"]
+        if isinstance(raw_cells, (bytes, bytearray, memoryview)):
+            flat = np.frombuffer(raw_cells, dtype=np.uint8)
+            if flat.size != int(np.prod(shape)):
+                raise ValueError("3D export cells do not match the volume shape.")
+            cells = flat.reshape(shape)
+        else:
+            cells = np.asarray(raw_cells, dtype=np.uint8)
+            if cells.shape != shape:
+                raise ValueError("3D export cells do not match the volume shape.")
+        rule_key = str(snapshot["rule"])
+        rule = ALL_RULES_3D[rule_key]
+        mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
+        if mode_for_rule(rule_key) != mode_key:
+            raise ValueError("3D export rule does not belong to its saved mode.")
+        state_count = int(snapshot.get("state_count", rule_state_count(rule)))
+        if state_count != rule_state_count(rule):
+            raise ValueError("3D export state count does not match its rule.")
+        return Volume3D(
+            cells.copy(),
+            state_count=state_count,
+            boundary=str(snapshot["boundary"]),
+            neighborhood=rule.neighborhood,
+        )
+
     def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
         previous_shape = self.state.volume.shape
         shape = tuple(int(value) for value in snapshot["shape"])

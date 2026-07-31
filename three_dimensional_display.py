@@ -25,6 +25,20 @@ class ThreeDimensionalDisplayError(RuntimeError):
     """Raised when the OpenGL 3D display cannot be created safely."""
 
 
+def framebuffer_rgb_array(
+    payload: bytes,
+    size: tuple[int, int],
+) -> np.ndarray:
+    """Convert bottom-up OpenGL RGB bytes to a top-down byte-owning copy."""
+
+    width, height = size
+    expected = width * height * 3
+    if width < 1 or height < 1 or len(payload) != expected:
+        raise ValueError("Framebuffer RGB payload does not match its dimensions.")
+    bottom_up = np.frombuffer(payload, dtype=np.uint8).reshape(height, width, 3)
+    return np.flipud(bottom_up).copy()
+
+
 class HybridDisplayBackend:
     """Keep 1D/2D on Pygame surfaces and use OpenGL only for the 3D workspace.
 
@@ -44,6 +58,7 @@ class HybridDisplayBackend:
         self._overlay_buffer: Any | None = None
         self._overlay_vao: Any | None = None
         self._overlay_texture: Any | None = None
+        self._capture_revision = -1
         pygame.display.set_caption(caption)
 
     @property
@@ -164,6 +179,90 @@ class HybridDisplayBackend:
             settings=settings,
         )
         return True
+
+    def capture_volume(
+        self,
+        volume: Volume3D,
+        camera: OrbitCamera3D,
+        size: tuple[int, int],
+        *,
+        background: tuple[int, int, int],
+        alive_color: tuple[int, int, int],
+        accent_color: tuple[int, int, int],
+        settings: VoxelRenderSettings,
+    ) -> np.ndarray:
+        """Render one camera-accurate volume into an offscreen RGB framebuffer.
+
+        OpenGL contexts are thread-affine, so this capture runs on the Pygame
+        event thread. The returned byte-owning array can safely be handed to a
+        background PNG/GIF/MP4 encoder.
+        """
+
+        width, height = (int(size[0]), int(size[1]))
+        if width < 1 or height < 1:
+            raise ValueError("3D export viewport dimensions must be positive.")
+        if (
+            not self.is_opengl
+            or self.context is None
+            or self.voxel_renderer is None
+        ):
+            raise ThreeDimensionalDisplayError(
+                "A hardware OpenGL 3.3 viewport is required for 3D viewport export."
+            )
+
+        color_texture = None
+        depth_buffer = None
+        framebuffer = None
+        try:
+            color_texture = self.context.texture((width, height), components=3)
+            depth_buffer = self.context.depth_renderbuffer((width, height))
+            framebuffer = self.context.framebuffer(
+                color_attachments=(color_texture,),
+                depth_attachment=depth_buffer,
+            )
+            framebuffer.use()
+            self.context.viewport = (0, 0, width, height)
+            self.context.scissor = None
+            self.context.clear(
+                *(channel / 255.0 for channel in background),
+                alpha=1.0,
+                depth=1.0,
+            )
+            self._capture_revision -= 1
+            self.voxel_renderer.render(
+                volume,
+                camera,
+                (0, 0, width, height),
+                height,
+                revision=self._capture_revision,
+                alive_color=alive_color,
+                accent_color=accent_color,
+                selected=None,
+                settings=settings,
+            )
+            return framebuffer_rgb_array(
+                framebuffer.read(components=3, alignment=1),
+                (width, height),
+            )
+        except ThreeDimensionalDisplayError:
+            raise
+        except Exception as exc:
+            raise ThreeDimensionalDisplayError(
+                f"3D viewport could not be captured: {exc}"
+            ) from exc
+        finally:
+            try:
+                self.context.screen.use()
+                self.context.viewport = (0, 0, *self.size)
+                self.context.scissor = None
+            except Exception:
+                pass
+            for resource in (framebuffer, depth_buffer, color_texture):
+                if resource is not None:
+                    try:
+                        resource.release()
+                    except Exception:
+                        pass
 
     def present(self) -> None:
         """Composite Pygame UI over OpenGL, or flip the software display."""
