@@ -53,8 +53,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - Tam grid kopyaları yerine periyodik checkpoint + hücre/satır deltaları kullanan geçmiş
 - Population, density, entropy ve değişim oranı zaman serilerini gösteren bilimsel panel
 - Periyot/stabilizasyon algılama ve ortak koşullarda 1D Wolfram rule karşılaştırması
-- 1D space-time, 2D grid ve 3D ortogonal kesit atlası PNG; timeline GIF/MP4,
-  ölçüm CSV ve deney JSON dışa aktarma
+- 1D space-time ve 2D grid rasterları; kamera-doğru 3D viewport PNG/GIF/MP4,
+  ortogonal kesit atlası, ölçüm CSV ve deney JSON dışa aktarma
 - Katlanabilir sidebar, tooltip, bağlamsal F1 yardımı ve belirgin run/pause/araç rozetleri
 - Aranabilir/favorilenebilir Elementary rule kataloğu ve son kullanılan deneyler
 - Durumları yalnız renkle anlatmayan, renk körlüğüne uygun yüksek kontrastlı tema
@@ -373,15 +373,21 @@ Hamming değişimi, komşu uyumu, periyot ve stabilizasyon generation'ını birl
 ## Dışa aktarma
 
 Sağ menüdeki `Export Results` düğmesi veya `X`, aktif 1D/2D/3D workspace'i
-duraklatıp güncel düzenlemeyi timeline'a işler ve beş bağlamsal çıktı sunar.
+duraklatıp güncel düzenlemeyi timeline'a işler. 1D/2D'de beş, 3D'de altı
+bağlamsal çıktı sunar.
 
-- `PNG Diagram / Slice Atlas`: 1D'de tüm space-time diyagramını, 2D'de güncel durum
-  grid'ini; 3D'de seçili kesim düzlemiyle kesişen XY, XZ ve YZ görünümlerini tek
-  kayıpsız atlas içinde nearest-neighbor ölçeklemeyle yazar.
+- `PNG Diagram / 3D Viewport`: 1D'de tüm space-time diyagramını, 2D'de güncel durum
+  grid'ini yazar. 3D'de orbit kameranın gördüğü sahneyi; clipping/layer filtresi,
+  opacity, renk şeması, lighting, outline ve voxel spacing ayarlarıyla kayıpsız PNG'ye
+  dönüştürür. Geçici UI katmanları ve voxel seçim vurgusu çıktıya dahil edilmez.
 - `Animated GIF`: Timeline'ın ilk ve son frame'i dahil en fazla 120 eşit aralıklı
-  frame'ini döngüsel animasyon olarak üretir. 3D frame'ler ortogonal kesit atlaslarıdır.
-- `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar; 3D'de atlas
-  düzeni frame'ler arasında sabit kalır.
+  frame'ini döngüsel animasyon olarak üretir. 3D frame'lerin tamamı mevcut kamera ve
+  görünüm ayarları korunarak offscreen OpenGL framebuffer'da render edilir.
+- `MP4 Video`: Aynı timeline örneklerini 20 FPS H.264 video olarak yazar; 3D kamera
+  ve görsel stil frame'ler arasında sabit kalır.
+- `PNG Orthogonal Slice Atlas`: Yalnız 3D'de seçili düzlemle kesişen XY, XZ ve YZ
+  kesitlerini tek, deterministik ve nearest-neighbor ölçeklenmiş bilimsel atlas içinde
+  yazar. Bu seçenek OpenGL olmayan headless ortamlarda da kullanılabilir.
 - `Generation Metrics CSV`: Population, density, state/block entropy, Hamming değişimi,
   komşu uyumu, normalize büyüme, durum kullanımı, algılanan periyot ve stabilizasyon
   generation'ını UTF-8 CSV olarak verir.
@@ -392,9 +398,10 @@ Kodlama işlemleri Pygame event thread'i dışında sırayla çalışır; tamaml
 durumu alt barda gösterilir. Uzun timeline'larda kontrollü dosya boyutu için animasyon
 örneklenir, fakat ilk ve son kayıt daima korunur. 1D satırları genişlik değiştiğinde
 merkez hizalıdır; Life ve Immigration yaş sayaçları gerçek hücre durumlarına normalize
-edilir ve Langton karıncası frame üzerinde ayrıca işaretlenir. 3D raster çıktıları
-OpenGL framebuffer'ından ekran görüntüsü almak yerine volume snapshot'larından üretilir;
-bu nedenle ekran kartından, kamera açısından ve headless test ortamından bağımsızdır.
+edilir ve Langton karıncası frame üzerinde ayrıca işaretlenir. 3D viewport çıktısının
+voxel sahnesi ana Pygame/OpenGL thread'inde offscreen framebuffer'a çizilir; immutable
+RGB frame'ler PNG/GIF/MP4 kodlaması için arka plan işine aktarılır. Donanım viewport'u
+olmayan ortamlarda açık bir hata gösterilir ve ortogonal atlas alternatifi kullanılabilir.
 
 Dosyalar otomatik, güvenli ve zaman damgalı adlarla `exports/` klasörüne atomik olarak
 yazılır. Bu klasör Git tarafından izlenmez. Paylaşılabilir JSON, `sessions/` klasörüne

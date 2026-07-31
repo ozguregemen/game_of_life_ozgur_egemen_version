@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from dataclasses import replace
 
 import numpy as np
 
@@ -11,8 +12,13 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
-from experiment_exports import THREE_D_ATLAS_SEPARATOR, ExperimentExportCoordinator
-from exporting import render_frame_array
+from experiment_exports import (
+    THREE_D_ATLAS_SEPARATOR,
+    THREE_D_VIEWPORT_ANIMATION_MAX_EDGE,
+    THREE_D_VIEWPORT_PNG_MAX_EDGE,
+    ExperimentExportCoordinator,
+)
+from exporting import RGBFrame, render_frame_array
 from session_storage import validate_session_document
 
 
@@ -124,6 +130,46 @@ class ExportIntegrationTests(unittest.TestCase):
         self.assertEqual(frame.rows[0][5], THREE_D_ATLAS_SEPARATOR)
         self.assertEqual(frame.rows[5][6], 0)
 
+    def test_3d_viewport_capture_uses_gpu_service_without_moving_timeline(self) -> None:
+        life.set_active_dimension("3d")
+        controller = life.three_dimensional_controller
+        controller.seed_cluster()
+        controller.reset_history()
+        controller.advance()
+        cursor_before = controller.timeline.timeline.cursor
+        calls: list[tuple[int, int]] = []
+
+        def fake_capture(snapshot: object, maximum_edge: int) -> RGBFrame:
+            assert isinstance(snapshot, dict)
+            generation = int(snapshot["generation"])
+            calls.append((generation, maximum_edge))
+            return RGBFrame.from_array(
+                generation,
+                np.full((2, 3, 3), generation, dtype=np.uint8),
+            )
+
+        original_services = life.export_coordinator.services
+        life.export_coordinator.services = replace(
+            original_services,
+            three_d_viewport_frame=fake_capture,
+        )
+        try:
+            current = life.export_coordinator.capture_current_viewport()
+            timeline = life.export_coordinator.capture_timeline_viewports()
+        finally:
+            life.export_coordinator.services = original_services
+
+        self.assertEqual(current.generation, 1)
+        self.assertEqual([frame.generation for frame in timeline], [0, 1])
+        self.assertEqual(controller.timeline.timeline.cursor, cursor_before)
+        self.assertEqual(calls[0], (1, THREE_D_VIEWPORT_PNG_MAX_EDGE))
+        self.assertTrue(
+            all(
+                edge == THREE_D_VIEWPORT_ANIMATION_MAX_EDGE
+                for _, edge in calls[1:]
+            )
+        )
+
     def test_3d_timeline_export_preserves_cursor(self) -> None:
         life.set_active_dimension("3d")
         controller = life.three_dimensional_controller
@@ -206,7 +252,7 @@ class ExportIntegrationTests(unittest.TestCase):
         self.assertTrue(all(modal.contains(card) for _, card in cards))
         life.draw_scene()
 
-    def test_x_opens_3d_export_menu_with_slice_atlas_options(self) -> None:
+    def test_x_opens_3d_export_menu_with_viewport_and_slice_atlas_options(self) -> None:
         life.set_active_dimension("3d")
 
         life.handle_keydown(
@@ -215,8 +261,12 @@ class ExportIntegrationTests(unittest.TestCase):
 
         self.assertTrue(life.export_manager.active)
         entries = life.export_manager.entries()
-        self.assertEqual(entries[0]["name"], "PNG Slice Atlas")
-        self.assertIn("3D slice-atlas", str(entries[1]["detail"]))
+        self.assertEqual(len(entries), 6)
+        self.assertEqual(entries[0]["name"], "PNG 3D Viewport")
+        self.assertIn("OpenGL viewport", str(entries[1]["detail"]))
+        self.assertEqual(entries[3]["name"], "PNG Orthogonal Slice Atlas")
+        modal, cards = life.export_manager.geometry()
+        self.assertTrue(all(modal.contains(card) for _, card in cards))
 
     def test_shareable_json_remains_a_valid_reloadable_session(self) -> None:
         self.configure_life_blinker()

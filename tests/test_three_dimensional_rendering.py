@@ -4,6 +4,7 @@ from math import isclose
 import numpy as np
 
 from three_dimensional_ca import Volume3D
+from three_dimensional_display import framebuffer_rgb_array
 from three_dimensional_rendering import (
     CAMERA_FACE_DIRECTIONS,
     OrbitCamera3D,
@@ -19,6 +20,22 @@ from three_dimensional_rendering import (
     voxel_instance_data,
     voxel_render_instance_data,
 )
+
+
+class FramebufferCaptureTests(unittest.TestCase):
+    def test_bottom_up_opengl_bytes_become_top_down_rgb(self) -> None:
+        bottom_row = bytes((255, 0, 0, 0, 255, 0))
+        top_row = bytes((0, 0, 255, 9, 8, 7))
+
+        pixels = framebuffer_rgb_array(bottom_row + top_row, (2, 2))
+
+        self.assertEqual(tuple(pixels[0, 0]), (0, 0, 255))
+        self.assertEqual(tuple(pixels[1, 0]), (255, 0, 0))
+        self.assertTrue(pixels.flags["C_CONTIGUOUS"])
+
+    def test_framebuffer_byte_count_is_validated(self) -> None:
+        with self.assertRaisesRegex(ValueError, "payload"):
+            framebuffer_rgb_array(b"bad", (2, 2))
 
 
 class Camera3DTests(unittest.TestCase):

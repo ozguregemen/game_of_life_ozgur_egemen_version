@@ -10,10 +10,12 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from exporting import (
     ExportRunner,
+    RGBFrame,
     RasterFrame,
     export_path,
     render_frame_array,
@@ -23,6 +25,9 @@ from exporting import (
     save_gif,
     save_mp4,
     save_png,
+    save_rgb_gif,
+    save_rgb_mp4,
+    save_rgb_png,
 )
 from scientific_analysis import AnalysisSample
 
@@ -115,6 +120,55 @@ class RasterExportTests(unittest.TestCase):
             payload = path.read_bytes()
             self.assertGreater(len(payload), 500)
             self.assertIn(b"ftyp", payload[:32])
+
+    def test_rgb_frame_freezes_exact_viewport_pixels(self) -> None:
+        pixels = np.asarray(
+            (((255, 0, 0), (0, 255, 0)), ((0, 0, 255), (8, 9, 10))),
+            dtype=np.uint8,
+        )
+        frame = RGBFrame.from_array(12, pixels)
+        pixels[:, :] = 0
+
+        self.assertEqual((frame.width, frame.height), (2, 2))
+        self.assertEqual(tuple(frame.as_array()[0, 0]), (255, 0, 0))
+        with self.assertRaisesRegex(ValueError, "byte count"):
+            RGBFrame(0, 2, 2, b"too short")
+
+    def test_rgb_png_preserves_top_down_camera_frame(self) -> None:
+        frame = RGBFrame.from_array(
+            3,
+            np.asarray(
+                (((1, 2, 3), (4, 5, 6)), ((7, 8, 9), (10, 11, 12))),
+                dtype=np.uint8,
+            ),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "viewport.png"
+            save_rgb_png(frame, path)
+
+            with Image.open(path) as image:
+                self.assertEqual(image.size, (2, 2))
+                self.assertEqual(image.getpixel((0, 0)), (1, 2, 3))
+                self.assertEqual(image.getpixel((1, 1)), (10, 11, 12))
+
+    def test_rgb_gif_and_mp4_encode_pre_rendered_frames(self) -> None:
+        frames = tuple(
+            RGBFrame.from_array(
+                generation,
+                np.full((4, 6, 3), generation * 80, dtype=np.uint8),
+            )
+            for generation in range(3)
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            gif_path = Path(temporary) / "viewport.gif"
+            mp4_path = Path(temporary) / "viewport.mp4"
+            save_rgb_gif(frames, gif_path, duration_ms=70)
+            save_rgb_mp4(frames, mp4_path, fps=5)
+
+            with Image.open(gif_path) as image:
+                self.assertEqual(image.n_frames, 3)
+                self.assertEqual(image.size, (6, 4))
+            self.assertIn(b"ftyp", mp4_path.read_bytes()[:32])
 
 
 class DataExportTests(unittest.TestCase):

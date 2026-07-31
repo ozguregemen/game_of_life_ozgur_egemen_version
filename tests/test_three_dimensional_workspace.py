@@ -336,6 +336,17 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.controller.state.volume.set_cell((0, 0, 0), 1)
         self.assertEqual(snapshot["cells"], before)
 
+    def test_export_snapshot_rebuilds_an_isolated_render_volume(self) -> None:
+        self.controller.state.volume.set_cell((2, 3, 4), 1)
+        snapshot = self.controller.export_snapshot()
+
+        exported = self.controller.volume_from_export_snapshot(snapshot)
+        exported.set_cell((2, 3, 4), 0)
+
+        self.assertEqual(exported.shape, self.controller.state.volume.shape)
+        self.assertEqual(exported.neighborhood, self.controller.rule.neighborhood)
+        self.assertEqual(self.controller.state.volume.get_cell((2, 3, 4)), 1)
+
     def test_volume_presets_are_cubic_and_resizing_is_timeline_reversible(self) -> None:
         self.assertEqual(self.controller.state.volume.shape, DEFAULT_VOLUME_SHAPE)
         self.assertEqual(DEFAULT_VOLUME_SHAPE, (48, 48, 48))
