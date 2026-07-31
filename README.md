@@ -1,5 +1,9 @@
 # Özgür Egemen Cellular Automata Lab
 
+[![tests](https://github.com/ozguregemen/game_of_life_ozgur_egemen_version/actions/workflows/tests.yml/badge.svg)](https://github.com/ozguregemen/game_of_life_ozgur_egemen_version/actions/workflows/tests.yml)
+
+Güncel uygulama sürümü: `0.9.0`.
+
 Pygame ile hazırlanmış, Conway's Game of Life ve farklı cellular automata
 kurallarını çalıştıran etkileşimli bir simülasyon ve pattern editörü.
 
@@ -62,6 +66,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - 1D'de tüm viewport'u kaplayan sanal grid ve Compact/Viewport/Wide seed genişlikleri
 - Yeniden boyutlandırıldığında simülasyonu koruyan sabit mantıksal grid
 - Tüm boyutları, modları ve kamera konumlarını içeren sürümlü JSON oturumları
+- Kaydedilmiş RNG durumları ve görülebilir master seed ile tekrar üretilebilir deneyler
 - Rule, boundary ve seed'i yeniden kullanılabilir yapan 1D deney profilleri
 
 ## Kontroller
@@ -404,11 +409,14 @@ oturum/profile güvenliğini ve tam-state round-trip davranışını; 3D volume/
 orbit kamera, yön küpü yüz hizalaması, ray seçimi ve voxel geometri çekirdeğini; üç workspace'in SDL dummy
 video driver ile başlangıcını kapsar. Ayrıca gerçek OpenGL smoke testi instanced
 renderer'ın bir volume frame'i üretebildiğini doğrulamak için elle çalıştırılabilir.
+GitHub Actions aynı syntax, unittest ve SDL dummy başlangıç kontrollerini Windows ve
+Linux üzerinde Python 3.10 ile 3.14 için otomatik çalıştırır.
 
 ## Tam oturum kaydetme ve yükleme
 
 Sağ menüdeki `Session & Profiles` düğmesi veya `P`, oturum yöneticisini açar.
-`Quick Save` / `Ctrl+S`, mevcut durumu `sessions/last_session.json` dosyasına
+`Quick Save` / `Ctrl+S`, mevcut durumu işletim sisteminin kullanıcı veri
+dizinindeki `sessions/last_session.json` dosyasına
 kontrollü olarak yazar; `Quick Load` / `Ctrl+O` aynı kurtarma noktasını yükler.
 İsimlendirilmiş oturumlar ayrıca kaydedilebilir ve yöneticideki katalogdan seçilebilir.
 
@@ -416,8 +424,10 @@ Bir oturum; aktif dimension ve 2D mode bilgisinin yanında tema, hız, görünü
 seçenekleri, 1D/2D/3D kamera konumları, hücre boyutları, bütün altı 2D modun grid ve
 generation değerleri, Life rule'u, moda özel fırçalar, 1D alanının rule family/spec,
 boundary, seed, tam diyagram, second-order hafıza ve karşılaştırma durumu ile 3D
-volume'un hücreleri, kuralı, sınırı, clipping/katman/opacity görünümü ve orbit
-kamerasını içerir. Yükleme simülasyonu
+volume'un hücreleri, kuralı, sınırı, clipping/katman/opacity görünümü, orbit
+kamerası, uygulama sürümü, master seed ve bütün bağımsız rastgele sayı üreteçlerinin
+tam durumunu içerir. Böylece yüklenen bir deneyin sonraki randomize işlemleri de aynı
+akışı sürdürür. Yükleme simülasyonu
 güvenli biçimde duraklatır ve her workspace için yüklenen durumu yeni timeline
 başlangıç checkpoint'i yapar. Dosya tamamen doğrulanmadan
 canlı uygulama state'i değiştirilmez.
@@ -430,10 +440,31 @@ family, state count, radius, boundary, background, karşılaştırma rule'u ve g
 satırı yeniden kullanılabilir seed olarak saklar.
 Profil yüklendiğinde deney generation `0` noktasından yeniden başlatılır.
 
-Oturum ve profil dosyaları UTF-8 JSON kullanır, sürüm numarası taşır, güvenli dosya
+Oturum ve profil dosyaları UTF-8 JSON kullanır, sürüm numarası taşır, eski `v1`
+belgelerini bellekte `v2` şemasına geçirir, güvenli dosya
 adlarına dönüştürülür ve geçici dosya üzerinden atomik olarak yazılır. Bozuk JSON,
 uyumsuz sürüm, geçersiz hücre durumu veya farklı grid boyutu kontrollü hata üretir;
-`sessions/` kullanıcı verisi olduğu için Git tarafından izlenmez.
+kullanıcı verisi Git tarafından izlenmez.
+
+## Kullanıcı verisi ve taşınabilir çalışma
+
+Oturumlar, özel patternler, dışa aktarımlar ve arayüz tercihleri artık kaynak kod
+klasörüne yazılmaz. Windows'ta veri `%LOCALAPPDATA%\cellular-automata-lab`, tercihler
+`%APPDATA%\cellular-automata-lab`; Linux'ta XDG data/config; macOS'ta
+`~/Library/Application Support/cellular-automata-lab` altında saklanır. Eski
+`sessions/`, `patterns/` ve `ui_preferences.json` dosyaları ilk açılışta yeni konuma
+kopyalanır; mevcut hedef dosyaların üzerine yazılmaz.
+
+Taşınabilir kurulum veya izole test için bütün kullanıcı verisi tek dizine alınabilir:
+
+```powershell
+$env:CELLULAR_AUTOMATA_LAB_HOME = "C:\CA-Lab-Data"
+python life.py
+```
+
+Yeni bir süreci bilinen bir deney seed'iyle başlatmak için `LIFE_RANDOM_SEED`
+kullanılabilir. Kayıtlı oturumlar devam etmek için bundan daha güçlü olan tam RNG
+durumlarını taşır.
 
 ## Render performansı
 

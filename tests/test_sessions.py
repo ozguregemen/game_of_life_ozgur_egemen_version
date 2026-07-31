@@ -207,6 +207,30 @@ class ApplicationSessionTests(unittest.TestCase):
         self.assertEqual(life.active_dimension, original_dimension)
         self.assertEqual(life.grid[0][0], original_cell)
 
+    def test_session_restore_continues_every_random_stream_exactly(self) -> None:
+        generators = (
+            life.life_rng,
+            life.immigration_rng,
+            life.brain_rng,
+            life.ant_rng,
+            life.wireworld_rng,
+            life.cyclic_rng,
+            life.elementary_controller.state.rng,
+            life.three_dimensional_controller.state.rng,
+        )
+        for index, generator in enumerate(generators):
+            generator.seed(1000 + index)
+            generator.random()
+        life.experiment_seed = 8675309
+        document = life.capture_session_document("Reproducible")
+        expected = [[generator.random() for _ in range(8)] for generator in generators]
+
+        life.restore_session_document(document)
+        actual = [[generator.random() for _ in range(8)] for generator in generators]
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(life.experiment_seed, 8675309)
+
     def test_quick_save_and_load_keyboard_shortcuts(self) -> None:
         life.grid[0][0] = 9
         save_event = life.pygame.event.Event(

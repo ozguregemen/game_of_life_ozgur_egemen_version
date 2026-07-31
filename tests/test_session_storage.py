@@ -179,6 +179,33 @@ class SessionStorageTests(unittest.TestCase):
         ):
             session_storage.validate_session_document(document)
 
+    def test_version_one_session_is_migrated_without_mutating_source(self) -> None:
+        document = self.valid_session("Version One")
+        document["version"] = 1
+        document["application"].pop("app_version")
+        document["application"].pop("random_seed")
+        document["workspaces"]["1d"].pop("rng")
+        document["workspaces"]["2d"].pop("rng")
+        document["workspaces"]["3d"].pop("rng")
+
+        normalized = session_storage.validate_session_document(document)
+
+        self.assertEqual(document["version"], 1)
+        self.assertEqual(normalized["version"], session_storage.DOCUMENT_VERSION)
+        self.assertEqual(normalized["application"]["app_version"], "legacy")
+        self.assertEqual(normalized["application"]["random_seed"], 0)
+        self.assertEqual(normalized["workspaces"]["1d"]["rng"]["engine"], "python-mt19937")
+
+    def test_invalid_random_state_is_rejected_before_writing(self) -> None:
+        document = self.valid_session("Bad Random State")
+        document["workspaces"]["3d"]["rng"]["state"] = [1, "bad"]
+
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "workspaces.3d.rng is invalid",
+        ):
+            session_storage.save_session(document)
+
     def test_legacy_session_without_3d_workspace_gets_an_empty_volume(self) -> None:
         document = self.valid_session("Legacy 2D")
         document["workspaces"].pop("3d")
