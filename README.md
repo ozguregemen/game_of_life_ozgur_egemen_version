@@ -136,10 +136,11 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 
 ## Dosyalar
 
-- `life.py`: Uygulama kabuğu, pencere koordinasyonu ve mevcut 2D mod uygulamaları
+- `life.py`: Pygame uygulama kabuğu, üst seviye pencere/overlay koordinasyonu ve çizim sunumu
 - `workspaces/base.py`: Ortak workspace controller/renderer sözleşmesi ve registry
 - `workspaces/elementary_1d.py`: 1D state, history, input, sidebar ve renderer
-- `workspaces/two_dimensional.py`: Altı mevcut 2D modu ortak workspace akışına bağlayan adaptör
+- `workspaces/two_dimensional.py`: Altı 2D modun sahipli state modelleri, kuralları,
+  fırçaları, timeline'ları, analiz gözlemleri ve session yaşam döngüsü
 - `workspaces/three_dimensional.py`: 3D volume state, dünya-uzayı input, timeline, sidebar ve renderer
 - `dimension_registry.py`: 1D / 2D / 3D çalışma alanı metadata tanımları
 - `elementary_ca.py`: Wolfram elementary cellular automata kural çekirdeği
@@ -190,9 +191,18 @@ viewport cache anahtarı, temel çizim, dinamik katmanlar, bilgi/istatistik barl
 modal çizimini üstlenir. Ana event loop seçili boyutun ayrıntılarını bilmeden bu
 ortak arayüzü çağırır.
 
-Genelleştirilmiş 1D ve donanım hızlandırmalı 3D CA kendi state/controller/renderer modüllerinde
-yaşar. Mevcut 2D modlar davranışları değiştirilmeden bir workspace adaptörüyle aynı
-akışa bağlanmıştır. Ana event loop üç boyutta da aynı workspace sözleşmesini kullanır.
+Genelleştirilmiş 1D, altı modlu 2D ve donanım hızlandırmalı 3D CA kendi
+state/controller katmanlarında yaşar. Ana event loop üç boyutta da aynı workspace
+sözleşmesini kullanır.
+
+2D katmanı artık callback tabanlı bir state adaptörü değildir.
+`TwoDimensionalWorkspaceState`, Life, Immigration, Brian's Brain, Langton's Ant,
+Wireworld ve Cyclic CA için ayrı model nesneleri ile ortak kamerayı taşır.
+`TwoDimensionalWorkspaceController`; generation yürütme, clear/randomize, aktif
+fırça, pattern hücresi, bağımsız timeline, bilimsel gözlem ve tam session
+snapshot/restore işlemlerinin sahibidir. `life.py` içinde kalan eski isim görünümü,
+mevcut eklenti ve test çağrılarını bir geçiş süresince bozmayan sınır katmanıdır;
+simülasyon kuralları veya geçmiş motoru bu görünümde çalışmaz.
 
 ## UI'dan bağımsız 3D çekirdek
 
