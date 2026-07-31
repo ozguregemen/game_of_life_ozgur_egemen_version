@@ -10,6 +10,7 @@ import numpy as np
 import pygame
 
 from dimension_registry import DIMENSION_BY_KEY
+from rng_state import encode_random_state, restore_random_state
 from scientific_analysis import StateObservation
 from surface_rasterizer import StateGridRasterizer
 from themes import THEMES, Menu
@@ -872,6 +873,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 "voxel_scale": self.state.voxel_scale,
                 "occlusion": self.state.occlusion_strength,
             },
+            "rng": encode_random_state(self.state.rng),
         }
 
     def restore(self, snapshot: Mapping[str, Any]) -> None:
@@ -929,6 +931,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.state.outline_thickness = render_settings.outline
         self.state.voxel_scale = render_settings.voxel_scale
         self.state.occlusion_strength = render_settings.occlusion
+        restore_random_state(self.state.rng, snapshot["rng"])
         if "target" in camera:
             self.state.camera = OrbitCamera3D.from_mapping(camera)
         else:

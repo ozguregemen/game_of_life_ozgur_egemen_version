@@ -7,9 +7,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-PREFERENCES_PATH = Path(__file__).resolve().with_name("ui_preferences.json")
+from app_metadata import APP_VERSION
+from app_paths import APPLICATION_PATHS
+
+PREFERENCES_PATH = APPLICATION_PATHS.preferences
 PREFERENCES_SCHEMA = "cellular-automata-lab/ui-preferences"
-PREFERENCES_VERSION = 1
+PREFERENCES_VERSION = 2
 MAX_RECENT_EXPERIMENTS = 5
 
 
@@ -35,7 +38,8 @@ class UIPreferences:
                 raise TypeError("preferences must be an object")
             if raw.get("schema") != PREFERENCES_SCHEMA:
                 raise ValueError("unknown preferences schema")
-            if raw.get("version") != PREFERENCES_VERSION:
+            version = raw.get("version")
+            if version not in (1, PREFERENCES_VERSION):
                 raise ValueError("unsupported preferences version")
             favorites_source = raw.get("favorite_rules", [])
             if not isinstance(favorites_source, list):
@@ -81,6 +85,7 @@ class UIPreferences:
         document: dict[str, Any] = {
             "schema": PREFERENCES_SCHEMA,
             "version": PREFERENCES_VERSION,
+            "app_version": APP_VERSION,
             "favorite_rules": sorted(self.favorite_rules),
             "recent_experiments": self.recent_experiments[:MAX_RECENT_EXPERIMENTS],
         }

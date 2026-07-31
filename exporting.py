@@ -15,13 +15,14 @@ from uuid import uuid4
 import numpy as np
 from PIL import Image
 
+from app_paths import APPLICATION_PATHS
 from scientific_analysis import AnalysisSample
 from session_storage import safe_storage_filename
 
 Color = tuple[int, int, int]
 Palette = Mapping[int, Color]
 
-EXPORT_DIRECTORY = Path(__file__).resolve().with_name("exports")
+EXPORT_DIRECTORY = APPLICATION_PATHS.exports
 MAX_ANIMATION_FRAMES = 120
 
 

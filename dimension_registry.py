@@ -46,12 +46,12 @@ DIMENSION_DEFINITIONS = (
         key="3d",
         name="3D · Spatial Automata",
         summary=(
-            "Run binary spatial Life rules in a bounded volume and edit "
-            "interactive X, Y, or Z slices."
+            "Run Spatial Life and multi-state Generations rules in a "
+            "hardware-rendered voxel volume."
         ),
         accent=(190, 120, 255),
         available=True,
-        status_hint="Explore a playable volume through editable axis-aligned slices.",
+        status_hint="Orbit, clip, inspect, and edit a playable 3D voxel volume.",
     ),
 )
 

@@ -8,9 +8,11 @@ import math
 import re
 import unicodedata
 import warnings
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from app_paths import APPLICATION_PATHS
 from elementary_ca import BOUNDARY_MODES
 from mode_registry import MODE_KEYS
 from one_dimensional_ca import (
@@ -38,15 +40,16 @@ from three_dimensional_modes import (
 )
 from three_dimensional_rules import DEFAULT_RULE_3D
 from three_dimensional_rendering import COLOR_SCHEMES, LIGHTING_MODES
+from rng_state import MAX_SEED, decode_random_state, encode_random_state, seeded_random
 
 SESSION_SCHEMA = "cellular-automata-lab/session"
 PROFILE_SCHEMA = "cellular-automata-lab/elementary-profile"
-DOCUMENT_VERSION = 1
+DOCUMENT_VERSION = 2
 MAX_DOCUMENT_BYTES = 20 * 1024 * 1024
 VIEW_MODES_3D = ("all", "clip", "layer")
 
-SESSION_DIRECTORY = Path(__file__).resolve().with_name("sessions")
-PROFILE_DIRECTORY = SESSION_DIRECTORY / "eca_profiles"
+SESSION_DIRECTORY = APPLICATION_PATHS.sessions
+PROFILE_DIRECTORY = APPLICATION_PATHS.profiles
 
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|]+')
 _WHITESPACE = re.compile(r"\s+")
@@ -88,6 +91,44 @@ def safe_storage_filename(name: str) -> str:
 def utc_timestamp() -> str:
     """Return an ISO-8601 UTC timestamp suitable for JSON metadata."""
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
+
+
+def _upgrade_document(value: Any, schema: str, label: str) -> dict[str, Any]:
+    """Copy and migrate supported historic documents to the current version."""
+    source = _mapping(value, label)
+    if source.get("schema") != schema:
+        raise DocumentValidationError(
+            f"File is not a Cellular Automata Lab {label}."
+        )
+    version = source.get("version")
+    if version == DOCUMENT_VERSION:
+        return deepcopy(dict(source))
+    if version == 1:
+        migrated = deepcopy(dict(source))
+        migrated["version"] = DOCUMENT_VERSION
+        return migrated
+    raise DocumentValidationError(
+        f"Unsupported {label} version: {version!r}."
+    )
+
+
+def _random_state(value: Any, label: str, stream: str) -> dict[str, Any]:
+    """Validate a JSON random state or supply a deterministic legacy state."""
+    source = (
+        encode_random_state(seeded_random(0, stream))
+        if value is None
+        else dict(_mapping(value, label))
+    )
+    try:
+        version, internal, gaussian = decode_random_state(source)
+    except (TypeError, ValueError) as exc:
+        raise DocumentValidationError(f"{label} is invalid: {exc}") from exc
+    return {
+        "engine": source["engine"],
+        "version": version,
+        "state": list(internal),
+        "gaussian": gaussian,
+    }
 
 
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -444,6 +485,11 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
             minimum_size=2,
             maximum_size=16,
         ),
+        "rng": _random_state(
+            workspace.get("rng"),
+            "workspaces.1d.rng",
+            "1d",
+        ),
     }
 
 
@@ -671,6 +717,21 @@ def _validate_2d_workspace(value: Any) -> dict[str, Any]:
                 ),
             },
         },
+        "rng": {
+            stream: _random_state(
+                _mapping(workspace.get("rng", {}), "workspaces.2d.rng").get(stream),
+                f"workspaces.2d.rng.{stream}",
+                f"2d:{stream}",
+            )
+            for stream in (
+                "life",
+                "immigration",
+                "brians_brain",
+                "langtons_ant",
+                "wireworld",
+                "cyclic_automaton",
+            )
+        },
     }
 
 
@@ -700,6 +761,7 @@ def _default_3d_workspace() -> dict[str, Any]:
             "voxel_scale": 0.80,
             "occlusion": 0.65,
         },
+        "rng": encode_random_state(seeded_random(0, "3d")),
     }
 
 
@@ -939,18 +1001,17 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
             "voxel_scale": voxel_scale,
             "occlusion": occlusion,
         },
+        "rng": _random_state(
+            workspace.get("rng"),
+            "workspaces.3d.rng",
+            "3d",
+        ),
     }
 
 
 def validate_session_document(value: Any) -> dict[str, Any]:
     """Validate and normalize a full application-session document."""
-    document = _mapping(value, "session")
-    if document.get("schema") != SESSION_SCHEMA:
-        raise DocumentValidationError("File is not a Cellular Automata Lab session.")
-    if document.get("version") != DOCUMENT_VERSION:
-        raise DocumentValidationError(
-            f"Unsupported session version: {document.get('version')!r}."
-        )
+    document = _upgrade_document(value, SESSION_SCHEMA, "session")
     application = _mapping(document.get("application"), "application")
     display = _mapping(application.get("display"), "application.display")
     workspaces = _mapping(document.get("workspaces"), "workspaces")
@@ -960,6 +1021,16 @@ def validate_session_document(value: Any) -> dict[str, Any]:
         "name": _text(document.get("name"), "name"),
         "saved_at": _text(document.get("saved_at"), "saved_at"),
         "application": {
+            "app_version": _text(
+                application.get("app_version", "legacy"),
+                "application.app_version",
+            ),
+            "random_seed": _integer(
+                application.get("random_seed", 0),
+                "application.random_seed",
+                minimum=0,
+                maximum=MAX_SEED,
+            ),
             "dimension": _choice(
                 application.get("dimension"),
                 "application.dimension",
@@ -1010,13 +1081,7 @@ def validate_session_document(value: Any) -> dict[str, Any]:
 
 def validate_profile_document(value: Any) -> dict[str, Any]:
     """Validate and normalize a reusable generalized 1D experiment profile."""
-    document = _mapping(value, "profile")
-    if document.get("schema") != PROFILE_SCHEMA:
-        raise DocumentValidationError("File is not a 1D experiment profile.")
-    if document.get("version") != DOCUMENT_VERSION:
-        raise DocumentValidationError(
-            f"Unsupported profile version: {document.get('version')!r}."
-        )
+    document = _upgrade_document(value, PROFILE_SCHEMA, "profile")
     experiment = _mapping(document.get("experiment"), "experiment")
     spec = _rule_spec(experiment, "experiment")
     comparison_source = experiment.get("comparison", {})
@@ -1026,6 +1091,10 @@ def validate_profile_document(value: Any) -> dict[str, Any]:
         "version": DOCUMENT_VERSION,
         "name": _text(document.get("name"), "name"),
         "saved_at": _text(document.get("saved_at"), "saved_at"),
+        "app_version": _text(
+            document.get("app_version", "legacy"),
+            "app_version",
+        ),
         "experiment": {
             "rule": spec.code,
             "rule_spec": spec.as_dict(),
@@ -1066,6 +1135,11 @@ def validate_profile_document(value: Any) -> dict[str, Any]:
                     maximum=spec.max_code,
                 ),
             },
+            "rng": _random_state(
+                experiment.get("rng"),
+                "experiment.rng",
+                "1d",
+            ),
         },
     }
 

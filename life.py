@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import random
 import time
 import webbrowser
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -11,6 +10,9 @@ from typing import Any, Callable, Mapping
 os.environ["SDL_VIDEO_CENTERED"] = "1"
 
 import pygame
+
+from app_metadata import APP_NAME, APP_VERSION
+from app_paths import migrate_legacy_user_data
 
 from analysis_ui import AnalysisPanelServices, ScientificAnalysisPanel
 from brians_brain import (
@@ -95,7 +97,15 @@ from patterns import (
     get_patterns_for_category,
     get_patterns_for_mode,
     rotate_pattern,
+    refresh_pattern_cache,
     save_pattern,
+)
+from rng_state import (
+    MAX_SEED,
+    encode_random_state,
+    new_experiment_seed,
+    restore_random_state,
+    seeded_random,
 )
 from rules import RULES, apply_rules_2d, find_patterns
 from session_storage import (
@@ -212,8 +222,11 @@ PATTERN_ROW_HEIGHT = 30
 
 BLACK = (0, 0, 0)
 
+migrate_legacy_user_data()
+refresh_pattern_cache()
+
 pygame.init()
-APPLICATION_CAPTION = "Özgür Egemen's Cellular Automata Lab"
+APPLICATION_CAPTION = f"{APP_NAME} · v{APP_VERSION}"
 display_backend = HybridDisplayBackend(
     (WINDOW_WIDTH, WINDOW_HEIGHT),
     APPLICATION_CAPTION,
@@ -241,32 +254,44 @@ grid = make_grid()
 trail_grid = make_grid()
 activity_grid = make_float_grid()
 
+requested_experiment_seed = os.environ.get("LIFE_RANDOM_SEED")
+try:
+    experiment_seed = (
+        int(requested_experiment_seed)
+        if requested_experiment_seed is not None
+        else new_experiment_seed()
+    )
+except ValueError:
+    experiment_seed = new_experiment_seed()
+experiment_seed = max(0, min(MAX_SEED, experiment_seed))
+life_rng = seeded_random(experiment_seed, "2d:life")
+
 immigration_grid: ImmigrationGrid = make_immigration_grid(ROWS, COLS)
 immigration_generation = 0
 active_species = SPECIES_A
-immigration_rng = random.Random()
+immigration_rng = seeded_random(experiment_seed, "2d:immigration")
 
 brain_grid: BrainGrid = make_brain_grid(ROWS, COLS)
 brain_generation = 0
-brain_rng = random.Random()
+brain_rng = seeded_random(experiment_seed, "2d:brians_brain")
 
 ant_grid: AntGrid = make_ant_grid(ROWS, COLS)
 ant_state = centered_ant(ROWS, COLS)
 ant_generation = 0
 ant_last_report = AntStepReport()
-ant_rng = random.Random()
+ant_rng = seeded_random(experiment_seed, "2d:langtons_ant")
 
 wireworld_grid: WireworldGrid = make_wireworld_grid(ROWS, COLS)
 wireworld_generation = 0
 wireworld_brush = CONDUCTOR
-wireworld_rng = random.Random()
+wireworld_rng = seeded_random(experiment_seed, "2d:wireworld")
 WIRE_BRUSH_STATES = (CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL)
 
 cyclic_grid: CyclicGrid = make_cyclic_grid(ROWS, COLS)
 cyclic_generation = 0
 cyclic_brush = 1
 cyclic_threshold = CYCLIC_DEFAULT_THRESHOLD
-cyclic_rng = random.Random()
+cyclic_rng = seeded_random(experiment_seed, "2d:cyclic_automaton")
 
 SIMULATION_MODES = MODE_KEYS
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
@@ -1030,7 +1055,7 @@ def _randomize_2d_grid(density: float = 0.20) -> None:
 
     save_history()
     grid = [
-        [1 if random.random() < density else 0 for _ in range(COLS)]
+        [1 if life_rng.random() < density else 0 for _ in range(COLS)]
         for _ in range(ROWS)
     ]
     trail_grid = make_grid()
@@ -1506,6 +1531,8 @@ def capture_session_document(name: str = "Last Session") -> dict[str, Any]:
         "name": name,
         "saved_at": utc_timestamp(),
         "application": {
+            "app_version": APP_VERSION,
+            "random_seed": experiment_seed,
             "dimension": active_dimension,
             "mode": simulation_mode,
             "theme": current_theme,
@@ -1528,6 +1555,7 @@ def capture_session_document(name: str = "Last Session") -> dict[str, Any]:
 def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
     """Validate then atomically replace the application's persistent state."""
     global active_dimension, simulation_mode, current_theme, speed
+    global experiment_seed
     global show_grid, show_heatmap, show_age_numbers
     global show_coordinates, show_quadrants, simulation_active
     global single_step_requested, selected_pattern, pattern_menu_active
@@ -1546,6 +1574,7 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
         raise DocumentValidationError(
             "The saved 3D workspace requires an OpenGL 3.3 renderer."
         )
+    experiment_seed = application["random_seed"]
     active_workspace().controller.deactivate()
     workspace_registry.get("1d").controller.restore(normalized["workspaces"]["1d"])
     workspace_registry.get("2d").controller.restore(normalized["workspaces"]["2d"])
@@ -1642,6 +1671,7 @@ def capture_experiment_profile(name: str) -> dict[str, Any]:
         "version": DOCUMENT_VERSION,
         "name": name,
         "saved_at": utc_timestamp(),
+        "app_version": APP_VERSION,
         "experiment": elementary_controller.experiment_snapshot(),
     }
 
@@ -2219,6 +2249,14 @@ def _snapshot_2d() -> dict[str, Any]:
                 "threshold": cyclic_threshold,
             },
         },
+        "rng": {
+            "life": encode_random_state(life_rng),
+            "immigration": encode_random_state(immigration_rng),
+            "brians_brain": encode_random_state(brain_rng),
+            "langtons_ant": encode_random_state(ant_rng),
+            "wireworld": encode_random_state(wireworld_rng),
+            "cyclic_automaton": encode_random_state(cyclic_rng),
+        },
     }
 
 
@@ -2231,6 +2269,7 @@ def _restore_2d(snapshot: Mapping[str, Any]) -> None:
     global ant_grid, ant_state, ant_generation, ant_last_report
     global wireworld_grid, wireworld_generation, wireworld_brush
     global cyclic_grid, cyclic_generation, cyclic_brush, cyclic_threshold
+    global life_rng, immigration_rng, brain_rng, ant_rng, wireworld_rng, cyclic_rng
     global recognized_pattern_cache, pattern_scan_generation
     global pattern_scan_revision, grid_revision, stats_dirty
 
@@ -2283,6 +2322,14 @@ def _restore_2d(snapshot: Mapping[str, Any]) -> None:
     cyclic_generation = int(cyclic_state["generation"])
     cyclic_brush = int(cyclic_state["brush"])
     cyclic_threshold = int(cyclic_state["threshold"])
+
+    random_states = snapshot["rng"]
+    restore_random_state(life_rng, random_states["life"])
+    restore_random_state(immigration_rng, random_states["immigration"])
+    restore_random_state(brain_rng, random_states["brians_brain"])
+    restore_random_state(ant_rng, random_states["langtons_ant"])
+    restore_random_state(wireworld_rng, random_states["wireworld"])
+    restore_random_state(cyclic_rng, random_states["cyclic_automaton"])
 
     cell_transition.transitions.clear()
     recognized_pattern_cache = {}
@@ -4737,7 +4784,9 @@ two_d_timelines = {
     for mode in SIMULATION_MODES
 }
 
-elementary_state = ElementaryWorkspaceState()
+elementary_state = ElementaryWorkspaceState(
+    rng=seeded_random(experiment_seed, "1d"),
+)
 elementary_services = ElementaryWorkspaceServices(
     viewport=grid_viewport,
     screen=lambda: screen,
@@ -4782,7 +4831,9 @@ elementary_renderer = ElementaryWorkspaceRenderer(
     elementary_services,
 )
 
-three_dimensional_state = ThreeDimensionalWorkspaceState()
+three_dimensional_state = ThreeDimensionalWorkspaceState(
+    rng=seeded_random(experiment_seed, "3d"),
+)
 three_dimensional_services = ThreeDimensionalWorkspaceServices(
     viewport=grid_viewport,
     screen=lambda: screen,

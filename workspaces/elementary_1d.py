@@ -44,6 +44,7 @@ from one_dimensional_ca import (
     single_state_seed,
     step_one_dimensional,
 )
+from rng_state import encode_random_state, restore_random_state
 from scientific_analysis import StateObservation
 from surface_rasterizer import StateGridRasterizer
 from themes import THEMES, Menu, one_d_state_color
@@ -707,6 +708,7 @@ class ElementaryWorkspaceController(WorkspaceController):
                     self.state.view_offset_y,
                 ],
             },
+            "rng": encode_random_state(self.state.rng),
         }
 
     def _timeline_snapshot(self) -> dict[str, Any]:
@@ -873,6 +875,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         offset_x, offset_y = camera["offset"]
 
         self._restore_simulation_snapshot(snapshot)
+        restore_random_state(self.state.rng, snapshot["rng"])
         if len(self.state.previous_row) != len(self.state.rows[-1]):
             raise ValueError("Previous 1D row must match the latest row width.")
         if not self.state.comparison_rows:
@@ -909,6 +912,7 @@ class ElementaryWorkspaceController(WorkspaceController):
                 "enabled": self.state.comparison_enabled,
                 "rule": self.state.comparison_rule,
             },
+            "rng": encode_random_state(self.state.rng),
         }
 
     def restore_experiment(self, experiment: Mapping[str, Any]) -> None:
@@ -939,6 +943,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             0,
             min(spec.max_code, int(comparison_mapping.get("rule", 0))),
         )
+        restore_random_state(self.state.rng, experiment["rng"])
 
         self.save_history()
         self.state.family = spec.family

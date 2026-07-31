@@ -7,6 +7,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Sequence
 
+from app_paths import APPLICATION_PATHS
 from mode_patterns import MODE_PATTERNS
 from mode_registry import MODE_KEYS, get_mode_definition
 
@@ -314,7 +315,7 @@ PATTERN_CATEGORY_LABELS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 
-PATTERN_DIRECTORY = Path(__file__).resolve().with_name("patterns")
+PATTERN_DIRECTORY = APPLICATION_PATHS.patterns
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|]+')
 _WHITESPACE = re.compile(r"\s+")
 _WINDOWS_RESERVED_NAMES = {
