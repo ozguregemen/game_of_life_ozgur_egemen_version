@@ -18,8 +18,6 @@ from analysis_ui import AnalysisPanelServices, ScientificAnalysisPanel
 from brians_brain import (
     DYING,
     FIRING,
-    BrainGrid,
-    apply_brain_rules,
     brain_stats,
     make_brain_grid,
     randomize_brain_grid,
@@ -28,8 +26,6 @@ from cyclic_automaton import (
     DEFAULT_STATE_COUNT as CYCLIC_STATE_COUNT,
     DEFAULT_THRESHOLD as CYCLIC_DEFAULT_THRESHOLD,
     MOORE_NEIGHBOR_COUNT as CYCLIC_MAX_THRESHOLD,
-    CyclicGrid,
-    apply_cyclic_rules,
     cyclic_stats,
     make_cyclic_grid,
     randomize_cyclic_grid,
@@ -63,8 +59,6 @@ from exporting import (
 from immigration import (
     SPECIES_A,
     SPECIES_B,
-    ImmigrationGrid,
-    apply_immigration_rules,
     cell_age,
     immigration_stats,
     make_immigration_grid,
@@ -74,7 +68,6 @@ from immigration import (
 from langtons_ant import (
     BLACK as ANT_BLACK,
     DIRECTION_NAMES,
-    AntGrid,
     AntState,
     AntStepReport,
     ant_stats,
@@ -82,7 +75,6 @@ from langtons_ant import (
     make_ant_grid,
     randomize_ant_grid,
     rotate_ant_clockwise,
-    step_ant,
 )
 from mode_registry import (
     MODE_BY_KEY,
@@ -102,12 +94,10 @@ from patterns import (
 )
 from rng_state import (
     MAX_SEED,
-    encode_random_state,
     new_experiment_seed,
-    restore_random_state,
     seeded_random,
 )
-from rules import RULES, apply_rules_2d, find_patterns
+from rules import RULES, find_patterns
 from session_storage import (
     DOCUMENT_VERSION,
     PROFILE_SCHEMA,
@@ -146,7 +136,7 @@ from themes import (
     THEMES,
     Menu,
 )
-from timeline_history import TimelineBinding, TimelineStatus
+from timeline_history import TimelineStatus
 from timeline_ui import TimelinePanel, TimelinePanelServices
 from three_dimensional_display import (
     HybridDisplayBackend,
@@ -170,8 +160,6 @@ from wireworld import (
     ELECTRON_TAIL,
     EMPTY as WIRE_EMPTY,
     STATE_NAMES as WIRE_STATE_NAMES,
-    WireworldGrid,
-    apply_wireworld_rules,
     make_wireworld_grid,
     randomize_wireworld_grid,
     wireworld_stats,
@@ -192,10 +180,11 @@ from workspaces.three_dimensional import (
     ThreeDimensionalWorkspaceState,
 )
 from workspaces.two_dimensional import (
-    TwoDimensionalControllerCallbacks,
     TwoDimensionalRendererCallbacks,
     TwoDimensionalWorkspaceController,
     TwoDimensionalWorkspaceRenderer,
+    TwoDimensionalWorkspaceServices,
+    TwoDimensionalWorkspaceState,
 )
 
 # ---------------------------------------------------------------------------
@@ -250,10 +239,6 @@ def make_float_grid() -> list[list[float]]:
     return [[0.0 for _ in range(COLS)] for _ in range(ROWS)]
 
 
-grid = make_grid()
-trail_grid = make_grid()
-activity_grid = make_float_grid()
-
 requested_experiment_seed = os.environ.get("LIFE_RANDOM_SEED")
 try:
     experiment_seed = (
@@ -264,34 +249,95 @@ try:
 except ValueError:
     experiment_seed = new_experiment_seed()
 experiment_seed = max(0, min(MAX_SEED, experiment_seed))
-life_rng = seeded_random(experiment_seed, "2d:life")
-
-immigration_grid: ImmigrationGrid = make_immigration_grid(ROWS, COLS)
-immigration_generation = 0
-active_species = SPECIES_A
-immigration_rng = seeded_random(experiment_seed, "2d:immigration")
-
-brain_grid: BrainGrid = make_brain_grid(ROWS, COLS)
-brain_generation = 0
-brain_rng = seeded_random(experiment_seed, "2d:brians_brain")
-
-ant_grid: AntGrid = make_ant_grid(ROWS, COLS)
-ant_state = centered_ant(ROWS, COLS)
-ant_generation = 0
-ant_last_report = AntStepReport()
-ant_rng = seeded_random(experiment_seed, "2d:langtons_ant")
-
-wireworld_grid: WireworldGrid = make_wireworld_grid(ROWS, COLS)
-wireworld_generation = 0
-wireworld_brush = CONDUCTOR
-wireworld_rng = seeded_random(experiment_seed, "2d:wireworld")
 WIRE_BRUSH_STATES = (CONDUCTOR, ELECTRON_HEAD, ELECTRON_TAIL)
+two_dimensional_state = TwoDimensionalWorkspaceState.create(
+    ROWS,
+    COLS,
+    CELL_SIZE,
+    experiment_seed,
+    cyclic_threshold=CYCLIC_DEFAULT_THRESHOLD,
+)
 
-cyclic_grid: CyclicGrid = make_cyclic_grid(ROWS, COLS)
-cyclic_generation = 0
-cyclic_brush = 1
-cyclic_threshold = CYCLIC_DEFAULT_THRESHOLD
-cyclic_rng = seeded_random(experiment_seed, "2d:cyclic_automaton")
+# Transitional read aliases for the Pygame presentation functions below. The
+# simulation lifecycle and persistence owner is ``two_dimensional_state``.
+grid = two_dimensional_state.life.grid
+trail_grid = two_dimensional_state.life.trail
+activity_grid = two_dimensional_state.life.activity
+life_rng = two_dimensional_state.life.rng
+current_rule = two_dimensional_state.life.rule
+generation = two_dimensional_state.life.generation
+immigration_grid = two_dimensional_state.immigration.grid
+immigration_generation = two_dimensional_state.immigration.generation
+active_species = two_dimensional_state.immigration.active_species
+immigration_rng = two_dimensional_state.immigration.rng
+brain_grid = two_dimensional_state.brain.grid
+brain_generation = two_dimensional_state.brain.generation
+brain_rng = two_dimensional_state.brain.rng
+ant_grid = two_dimensional_state.ant.grid
+ant_state = two_dimensional_state.ant.ant
+ant_generation = two_dimensional_state.ant.generation
+ant_last_report = two_dimensional_state.ant.last_report
+ant_rng = two_dimensional_state.ant.rng
+wireworld_grid = two_dimensional_state.wireworld.grid
+wireworld_generation = two_dimensional_state.wireworld.generation
+wireworld_brush = two_dimensional_state.wireworld.brush
+wireworld_rng = two_dimensional_state.wireworld.rng
+cyclic_grid = two_dimensional_state.cyclic.grid
+cyclic_generation = two_dimensional_state.cyclic.generation
+cyclic_brush = two_dimensional_state.cyclic.brush
+cyclic_threshold = two_dimensional_state.cyclic.threshold
+cyclic_rng = two_dimensional_state.cyclic.rng
+view_offset_x = two_dimensional_state.view_offset_x
+view_offset_y = two_dimensional_state.view_offset_y
+
+
+def _publish_legacy_2d_view() -> None:
+    """Expose controller-owned state to legacy render code and extensions."""
+    global grid, trail_grid, activity_grid, life_rng, current_rule, generation
+    global immigration_grid, immigration_generation, active_species, immigration_rng
+    global brain_grid, brain_generation, brain_rng
+    global ant_grid, ant_state, ant_generation, ant_last_report, ant_rng
+    global wireworld_grid, wireworld_generation, wireworld_brush, wireworld_rng
+    global cyclic_grid, cyclic_generation, cyclic_brush, cyclic_threshold, cyclic_rng
+    global CELL_SIZE, view_offset_x, view_offset_y
+    state = two_dimensional_state
+    grid, trail_grid, activity_grid = state.life.grid, state.life.trail, state.life.activity
+    life_rng, current_rule, generation = state.life.rng, state.life.rule, state.life.generation
+    immigration_grid = state.immigration.grid
+    immigration_generation = state.immigration.generation
+    active_species, immigration_rng = state.immigration.active_species, state.immigration.rng
+    brain_grid, brain_generation, brain_rng = state.brain.grid, state.brain.generation, state.brain.rng
+    ant_grid, ant_state = state.ant.grid, state.ant.ant
+    ant_generation, ant_last_report, ant_rng = state.ant.generation, state.ant.last_report, state.ant.rng
+    wireworld_grid = state.wireworld.grid
+    wireworld_generation, wireworld_brush = state.wireworld.generation, state.wireworld.brush
+    wireworld_rng = state.wireworld.rng
+    cyclic_grid = state.cyclic.grid
+    cyclic_generation, cyclic_brush = state.cyclic.generation, state.cyclic.brush
+    cyclic_threshold, cyclic_rng = state.cyclic.threshold, state.cyclic.rng
+    CELL_SIZE = state.cell_size
+    view_offset_x, view_offset_y = state.view_offset_x, state.view_offset_y
+
+
+def _adopt_legacy_2d_view() -> None:
+    """Compatibility boundary for callers written before the owned state model."""
+    state = two_dimensional_state
+    state.life.grid, state.life.trail, state.life.activity = grid, trail_grid, activity_grid
+    state.life.rng, state.life.rule, state.life.generation = life_rng, current_rule, generation
+    state.immigration.grid = immigration_grid
+    state.immigration.generation = immigration_generation
+    state.immigration.active_species, state.immigration.rng = active_species, immigration_rng
+    state.brain.grid, state.brain.generation, state.brain.rng = brain_grid, brain_generation, brain_rng
+    state.ant.grid, state.ant.ant = ant_grid, ant_state
+    state.ant.generation, state.ant.last_report, state.ant.rng = ant_generation, ant_last_report, ant_rng
+    state.wireworld.grid = wireworld_grid
+    state.wireworld.generation, state.wireworld.brush = wireworld_generation, wireworld_brush
+    state.wireworld.rng = wireworld_rng
+    state.cyclic.grid = cyclic_grid
+    state.cyclic.generation, state.cyclic.brush = cyclic_generation, cyclic_brush
+    state.cyclic.threshold, state.cyclic.rng = cyclic_threshold, cyclic_rng
+    state.cell_size = CELL_SIZE
+    state.view_offset_x, state.view_offset_y = view_offset_x, view_offset_y
 
 SIMULATION_MODES = MODE_KEYS
 requested_start_mode = os.environ.get("LIFE_START_MODE", "life")
@@ -305,13 +351,10 @@ active_dimension = (
     and DIMENSION_BY_KEY[requested_start_dimension].available
     else "2d"
 )
-current_rule = "conway"
 current_theme = "classic"
 simulation_active = False
 single_step_requested = False
 speed = 10
-generation = 0
-two_d_timelines: dict[str, TimelineBinding] = {}
 analysis_registry = ScientificAnalysisRegistry(max_samples=TIMELINE_MAX_FRAMES)
 comparison_runner = ElementaryComparisonRunner()
 export_runner = ExportRunner()
@@ -338,9 +381,6 @@ dimension_menu_active = False
 drawing = False
 drawing_value = 1
 drawing_history_pending = False
-
-view_offset_x = 0
-view_offset_y = 0
 
 show_rule_overlay_until = 0.0
 status_message = ""
@@ -419,12 +459,15 @@ def follow_eca_latest() -> None:
 
 
 def _center_2d_view() -> None:
-    global view_offset_x, view_offset_y
     viewport = grid_viewport()
-    grid_width = COLS * CELL_SIZE
-    grid_height = ROWS * CELL_SIZE
-    view_offset_x = (viewport.width - grid_width) // 2
-    view_offset_y = (viewport.height - GRID_TOP_MARGIN - grid_height) // 2
+    state = two_dimensional_state
+    grid_width = COLS * state.cell_size
+    grid_height = ROWS * state.cell_size
+    state.view_offset_x = (viewport.width - grid_width) // 2
+    state.view_offset_y = (
+        viewport.height - GRID_TOP_MARGIN - grid_height
+    ) // 2
+    _publish_legacy_2d_view()
 
 
 def fitted_2d_cell_size() -> int:
@@ -437,11 +480,11 @@ def fitted_2d_cell_size() -> int:
 
 def fit_2d_view() -> None:
     """Fit the fixed logical 2D board into the current application viewport."""
-    global CELL_SIZE
-    CELL_SIZE = fitted_2d_cell_size()
+    two_dimensional_state.cell_size = fitted_2d_cell_size()
     _center_2d_view()
     set_status(
-        f"2D board {COLS}x{ROWS} fitted at {CELL_SIZE}px per cell.",
+        f"2D board {COLS}x{ROWS} fitted at "
+        f"{two_dimensional_state.cell_size}px per cell.",
         3.0,
     )
 
@@ -504,7 +547,7 @@ def mark_stats_dirty() -> None:
 
 
 def _save_2d_history() -> None:
-    two_d_timelines[simulation_mode].prepare_change()
+    two_dimensional_controller.save_history()
 
 
 def save_history() -> None:
@@ -513,54 +556,38 @@ def save_history() -> None:
 
 
 def _step_back_2d() -> None:
-    _step_2d_history(-1)
+    two_dimensional_controller.step_back()
 
 
 def _step_forward_2d() -> None:
-    _step_2d_history(1)
+    two_dimensional_controller.step_forward()
 
 
 def _step_2d_history(amount: int) -> None:
-    global simulation_active
-    if not two_d_timelines[simulation_mode].step(amount):
-        direction = "earlier" if amount < 0 else "later"
-        mode_name = MODE_BY_KEY[simulation_mode].name
-        set_status(f"No {direction} {mode_name} state is available.")
-        return
-    simulation_active = False
-    set_status(f"Timeline generation: {_two_d_generation()}.")
+    if amount < 0:
+        two_dimensional_controller.step_back()
+    else:
+        two_dimensional_controller.step_forward()
 
 
 def _seek_2d_history(index: int) -> bool:
-    global simulation_active
-    moved = two_d_timelines[simulation_mode].seek(index)
-    if moved:
-        simulation_active = False
-    return moved
+    return two_dimensional_controller.seek_history(index)
 
 
 def _seek_2d_generation(target_generation: int) -> bool:
-    global simulation_active
-    moved = two_d_timelines[simulation_mode].seek_generation(target_generation)
-    if moved:
-        simulation_active = False
-    return moved
+    return two_dimensional_controller.seek_generation(target_generation)
 
 
 def _sync_2d_history() -> bool:
-    recorded = two_d_timelines[simulation_mode].sync()
-    if recorded:
-        analysis_registry.observe(_analysis_observation_2d(simulation_mode))
-    return recorded
+    return two_dimensional_controller.sync_history()
 
 
 def _two_d_history_status() -> TimelineStatus:
-    return two_d_timelines[simulation_mode].status()
+    return two_dimensional_controller.history_status()
 
 
 def _reset_2d_history() -> None:
-    two_d_timelines[simulation_mode].reset()
-    analysis_registry.reset(_analysis_observation_2d(simulation_mode))
+    two_dimensional_controller.reset_history()
 
 
 def step_back() -> None:
@@ -709,82 +736,24 @@ def draw_eca_cell(column: int) -> None:
 
 
 def set_cell(row: int, col: int, value: int) -> bool:
-    """Set a cell and return whether the grid changed."""
-    old_value = grid[row][col]
-    if old_value == value:
-        return False
-
-    grid[row][col] = value
-    if (old_value > 0) != (value > 0):
-        cell_transition.start_transition(row, col, old_value, value)
-    mark_stats_dirty()
-    return True
+    """Set one Life cell through the controller-owned model."""
+    _adopt_legacy_2d_view()
+    changed = two_dimensional_controller.set_life_cell(row, col, value)
+    _publish_legacy_2d_view()
+    return changed
 
 
 def draw_cell(row: int, col: int) -> None:
-    """Apply the active brush and save one history entry per changed stroke."""
+    """Apply the active controller brush, saving once per drawing stroke."""
     global drawing_history_pending
-    if simulation_mode == "cyclic_automaton":
-        target_value = cyclic_brush if drawing_value else 0
-        if cyclic_grid[row][col] == target_value:
-            return
-        if drawing_history_pending:
-            save_history()
-            drawing_history_pending = False
-        cyclic_grid[row][col] = target_value
-        invalidate_render_cache("cyclic_automaton")
-        return
-
-    if simulation_mode == "wireworld":
-        target_value = wireworld_brush if drawing_value else WIRE_EMPTY
-        if wireworld_grid[row][col] == target_value:
-            return
-        if drawing_history_pending:
-            save_history()
-            drawing_history_pending = False
-        wireworld_grid[row][col] = target_value
-        invalidate_render_cache("wireworld")
-        return
-
-    if simulation_mode == "langtons_ant":
-        target_value = ANT_BLACK if drawing_value else 0
-        if ant_grid[row][col] == target_value:
-            return
-        if drawing_history_pending:
-            save_history()
-            drawing_history_pending = False
-        ant_grid[row][col] = target_value
-        invalidate_render_cache("langtons_ant")
-        return
-
-    if simulation_mode == "brians_brain":
-        target_value = FIRING if drawing_value else 0
-        if brain_grid[row][col] == target_value:
-            return
-        if drawing_history_pending:
-            save_history()
-            drawing_history_pending = False
-        brain_grid[row][col] = target_value
-        invalidate_render_cache("brians_brain")
-        return
-
-    if simulation_mode == "immigration":
-        target_value = active_species if drawing_value else 0
-        if species_of(immigration_grid[row][col]) == target_value:
-            return
-        if drawing_history_pending:
-            save_history()
-            drawing_history_pending = False
-        immigration_grid[row][col] = target_value
-        invalidate_render_cache("immigration")
-        return
-
-    if grid[row][col] == drawing_value:
-        return
-    if drawing_history_pending:
-        save_history()
+    changed = two_dimensional_controller.draw_cell(
+        row,
+        col,
+        drawing_value,
+        begin_history=drawing_history_pending,
+    )
+    if changed and drawing_history_pending:
         drawing_history_pending = False
-    set_cell(row, col, drawing_value)
 
 
 def pattern_fits(data: list[list[int]], row: int, col: int) -> bool:
@@ -815,34 +784,13 @@ def pattern_target_value(value: int, pattern_mode: str | None) -> int:
 
 
 def current_pattern_cell(row: int, col: int) -> int:
-    """Return the current cell state normalized for pattern comparison."""
-    if simulation_mode == "cyclic_automaton":
-        return cyclic_grid[row][col]
-    if simulation_mode == "immigration":
-        return species_of(immigration_grid[row][col])
-    if simulation_mode == "brians_brain":
-        return brain_grid[row][col]
-    if simulation_mode == "langtons_ant":
-        return ant_grid[row][col]
-    if simulation_mode == "wireworld":
-        return wireworld_grid[row][col]
-    return 1 if grid[row][col] > 0 else 0
+    """Return the active controller cell normalized for pattern comparison."""
+    return two_dimensional_controller.current_pattern_cell(row, col)
 
 
 def set_pattern_cell(row: int, col: int, value: int) -> None:
-    """Write one already-validated state to the selected mode grid."""
-    if simulation_mode == "cyclic_automaton":
-        cyclic_grid[row][col] = value
-    elif simulation_mode == "immigration":
-        immigration_grid[row][col] = value
-    elif simulation_mode == "brians_brain":
-        brain_grid[row][col] = value
-    elif simulation_mode == "langtons_ant":
-        ant_grid[row][col] = value
-    elif simulation_mode == "wireworld":
-        wireworld_grid[row][col] = value
-    else:
-        set_cell(row, col, value)
+    """Write an already-validated pattern cell through the controller."""
+    two_dimensional_controller.set_pattern_cell(row, col, value)
 
 
 def place_selected_pattern(row: int, col: int) -> None:
@@ -904,68 +852,8 @@ def place_selected_pattern(row: int, col: int) -> None:
 
 
 def _clear_2d_grid() -> None:
-    global grid, trail_grid, activity_grid, generation, simulation_active
-    global immigration_grid, immigration_generation
-    global brain_grid, brain_generation
-    global ant_grid, ant_state, ant_generation, ant_last_report
-    global wireworld_grid, wireworld_generation
-    global cyclic_grid, cyclic_generation
-    if simulation_mode == "cyclic_automaton":
-        save_history()
-        cyclic_grid = make_cyclic_grid(ROWS, COLS)
-        cyclic_generation = 0
-        simulation_active = False
-        invalidate_render_cache("cyclic_automaton")
-        set_status("Cyclic Automaton reset to color 0.")
-        return
-
-    if simulation_mode == "wireworld":
-        save_history()
-        wireworld_grid = make_wireworld_grid(ROWS, COLS)
-        wireworld_generation = 0
-        simulation_active = False
-        invalidate_render_cache("wireworld")
-        set_status("Wireworld grid cleared.")
-        return
-
-    if simulation_mode == "langtons_ant":
-        save_history()
-        ant_grid = make_ant_grid(ROWS, COLS)
-        ant_state = centered_ant(ROWS, COLS)
-        ant_generation = 0
-        ant_last_report = AntStepReport()
-        simulation_active = False
-        invalidate_render_cache("langtons_ant")
-        set_status("Langton's Ant board reset.")
-        return
-
-    if simulation_mode == "brians_brain":
-        save_history()
-        brain_grid = make_brain_grid(ROWS, COLS)
-        brain_generation = 0
-        simulation_active = False
-        invalidate_render_cache("brians_brain")
-        set_status("Brian's Brain grid cleared.")
-        return
-
-    if simulation_mode == "immigration":
-        save_history()
-        immigration_grid = make_immigration_grid(ROWS, COLS)
-        immigration_generation = 0
-        simulation_active = False
-        invalidate_render_cache("immigration")
-        set_status("Immigration grid cleared.")
-        return
-
-    save_history()
-    grid = make_grid()
-    trail_grid = make_grid()
-    activity_grid = make_float_grid()
-    generation = 0
-    simulation_active = False
-    cell_transition.transitions.clear()
-    mark_stats_dirty()
-    set_status("Grid cleared.")
+    """Compatibility wrapper for the controller-owned 2D lifecycle."""
+    two_dimensional_controller.clear()
 
 
 def clear_grid() -> None:
@@ -974,97 +862,8 @@ def clear_grid() -> None:
 
 
 def _randomize_2d_grid(density: float = 0.20) -> None:
-    global grid, trail_grid, activity_grid, generation, simulation_active
-    global immigration_grid, immigration_generation
-    global brain_grid, brain_generation
-    global ant_grid, ant_state, ant_generation, ant_last_report
-    global wireworld_grid, wireworld_generation
-    global cyclic_grid, cyclic_generation
-    if simulation_mode == "cyclic_automaton":
-        save_history()
-        cyclic_grid = randomize_cyclic_grid(
-            ROWS,
-            COLS,
-            state_count=CYCLIC_STATE_COUNT,
-            rng=cyclic_rng,
-        )
-        cyclic_generation = 0
-        simulation_active = False
-        invalidate_render_cache("cyclic_automaton")
-        set_status("Random eight-color Cyclic Automaton state created.")
-        return
-
-    if simulation_mode == "wireworld":
-        save_history()
-        wireworld_grid = randomize_wireworld_grid(
-            ROWS,
-            COLS,
-            conductor_density=density,
-            signal_fraction=0.08,
-            rng=wireworld_rng,
-        )
-        wireworld_generation = 0
-        simulation_active = False
-        invalidate_render_cache("wireworld")
-        set_status("Random Wireworld conductors and signals created.")
-        return
-
-    if simulation_mode == "langtons_ant":
-        save_history()
-        ant_grid = randomize_ant_grid(
-            ROWS,
-            COLS,
-            density=0.15,
-            rng=ant_rng,
-        )
-        ant_state = centered_ant(ROWS, COLS)
-        ant_generation = 0
-        ant_last_report = AntStepReport()
-        simulation_active = False
-        invalidate_render_cache("langtons_ant")
-        set_status("Random Langton board created; ant reset to center.")
-        return
-
-    if simulation_mode == "brians_brain":
-        save_history()
-        brain_grid = randomize_brain_grid(
-            ROWS,
-            COLS,
-            density=0.18,
-            rng=brain_rng,
-        )
-        brain_generation = 0
-        simulation_active = False
-        invalidate_render_cache("brians_brain")
-        set_status("Random Brian's Brain state created.")
-        return
-
-    if simulation_mode == "immigration":
-        save_history()
-        immigration_grid = randomize_immigration_grid(
-            ROWS,
-            COLS,
-            density=density,
-            rng=immigration_rng,
-        )
-        immigration_generation = 0
-        simulation_active = False
-        invalidate_render_cache("immigration")
-        set_status("Random two-species Immigration population created.")
-        return
-
-    save_history()
-    grid = [
-        [1 if life_rng.random() < density else 0 for _ in range(COLS)]
-        for _ in range(ROWS)
-    ]
-    trail_grid = make_grid()
-    activity_grid = make_float_grid()
-    generation = 0
-    simulation_active = False
-    cell_transition.transitions.clear()
-    mark_stats_dirty()
-    set_status(f"Random grid created at {density:.0%} density.")
+    """Compatibility wrapper for the controller-owned 2D lifecycle."""
+    two_dimensional_controller.randomize(density)
 
 
 def randomize_grid(density: float = 0.20) -> None:
@@ -1082,7 +881,7 @@ def cycle_theme() -> None:
 
 
 def cycle_rule() -> None:
-    global current_rule, show_rule_overlay_until
+    global show_rule_overlay_until
     if simulation_mode != "life":
         if simulation_mode == "immigration":
             message = "Immigration Game uses Conway B3/S23 for both species."
@@ -1100,7 +899,9 @@ def cycle_rule() -> None:
         return
     save_history()
     rules = list(RULES)
-    current_rule = rules[(rules.index(current_rule) + 1) % len(rules)]
+    state = two_dimensional_state.life
+    state.rule = rules[(rules.index(state.rule) + 1) % len(rules)]
+    _publish_legacy_2d_view()
     show_rule_overlay_until = time.time() + 2.5
     mark_stats_dirty()
     rebuild_context_menu()
@@ -1130,6 +931,8 @@ def set_active_dimension(dimension: str) -> bool:
     global selected_pattern, pattern_menu_active, mode_menu_active
     global dimension_menu_active, drawing
     definition = get_dimension_definition(dimension)
+    if dimension == "2d":
+        _adopt_legacy_2d_view()
     if not definition.available:
         dimension_menu_active = False
         set_status(f"{definition.name}: {definition.status_hint}", 4.0)
@@ -1257,45 +1060,48 @@ def activate_mode_menu() -> None:
 
 def toggle_active_species() -> None:
     """Change the mode-specific drawing state or rotate the Langton ant."""
-    global active_species, ant_state, wireworld_brush, cyclic_brush
     if simulation_mode == "cyclic_automaton":
-        cyclic_brush = (cyclic_brush + 1) % CYCLIC_STATE_COUNT
+        two_dimensional_controller.set_cyclic_brush(
+            (two_dimensional_state.cyclic.brush + 1) % CYCLIC_STATE_COUNT
+        )
         if "main_menu" in globals():
             rebuild_context_menu()
-        set_status(f"Cyclic brush: color {cyclic_brush}.")
+        set_status(f"Cyclic brush: color {two_dimensional_state.cyclic.brush}.")
         return
 
     if simulation_mode == "wireworld":
-        index = WIRE_BRUSH_STATES.index(wireworld_brush)
-        wireworld_brush = WIRE_BRUSH_STATES[(index + 1) % len(WIRE_BRUSH_STATES)]
+        index = WIRE_BRUSH_STATES.index(two_dimensional_state.wireworld.brush)
+        brush = WIRE_BRUSH_STATES[(index + 1) % len(WIRE_BRUSH_STATES)]
+        two_dimensional_controller.set_wireworld_brush(brush)
         if "main_menu" in globals():
             rebuild_context_menu()
-        set_status(f"Wireworld brush: {WIRE_STATE_NAMES[wireworld_brush]}")
+        set_status(f"Wireworld brush: {WIRE_STATE_NAMES[brush]}")
         return
     if simulation_mode == "langtons_ant":
-        save_history()
-        ant_state = rotate_ant_clockwise(ant_state)
-        invalidate_render_cache("langtons_ant")
-        _sync_2d_history()
-        direction = DIRECTION_NAMES[ant_state.direction]
+        ant = two_dimensional_controller.rotate_ant(rotate_ant_clockwise)
+        direction = DIRECTION_NAMES[ant.direction]
         set_status(f"Ant direction: {direction}")
         return
     if simulation_mode != "immigration":
         set_status("This mode has no alternate drawing state.")
         return
-    active_species = SPECIES_B if active_species == SPECIES_A else SPECIES_A
+    species = (
+        SPECIES_B
+        if two_dimensional_state.immigration.active_species == SPECIES_A
+        else SPECIES_A
+    )
+    two_dimensional_controller.set_active_species(species)
     if "main_menu" in globals():
         rebuild_context_menu()
-    label = immigration_species_label(active_species)
+    label = immigration_species_label(species)
     set_status(f"Active species: {label}")
 
 
 def set_active_species(species: int) -> None:
     """Select an Immigration brush directly from the contextual menu."""
-    global active_species
     if simulation_mode != "immigration" or species not in (SPECIES_A, SPECIES_B):
         return
-    active_species = species
+    two_dimensional_controller.set_active_species(species)
     rebuild_context_menu()
     label = immigration_species_label(species)
     set_status(f"Active species: {label}")
@@ -1303,62 +1109,51 @@ def set_active_species(species: int) -> None:
 
 def set_wireworld_brush(value: int) -> None:
     """Select a Wireworld drawing state directly from the contextual menu."""
-    global wireworld_brush
     if simulation_mode != "wireworld" or value not in WIRE_BRUSH_STATES:
         return
-    wireworld_brush = value
+    two_dimensional_controller.set_wireworld_brush(value)
     rebuild_context_menu()
     set_status(f"Wireworld brush: {WIRE_STATE_NAMES[value]}")
 
 
 def set_cyclic_brush(value: int) -> None:
     """Select one of the cyclic mode's color states."""
-    global cyclic_brush
     if simulation_mode != "cyclic_automaton":
         return
     if not 0 <= value < CYCLIC_STATE_COUNT:
         raise ValueError(f"Cyclic brush must be between 0 and {CYCLIC_STATE_COUNT - 1}.")
-    cyclic_brush = value
+    two_dimensional_controller.set_cyclic_brush(value)
     rebuild_context_menu()
-    set_status(f"Cyclic brush: color {cyclic_brush}.")
+    set_status(f"Cyclic brush: color {two_dimensional_state.cyclic.brush}.")
 
 
 def cycle_cyclic_threshold() -> None:
     """Cycle the contact threshold through the Moore-neighborhood range."""
-    global cyclic_threshold
     if simulation_mode != "cyclic_automaton":
         return
-    save_history()
-    cyclic_threshold = cyclic_threshold % CYCLIC_MAX_THRESHOLD + 1
+    threshold = two_dimensional_controller.cycle_cyclic_threshold(
+        CYCLIC_MAX_THRESHOLD
+    )
     rebuild_context_menu()
-    _sync_2d_history()
-    set_status(f"Cyclic contact threshold: {cyclic_threshold}.")
+    set_status(f"Cyclic contact threshold: {threshold}.")
 
 
 def place_ant(row: int, col: int) -> None:
     """Move and reactivate Langton's ant without changing its heading."""
-    global ant_state, simulation_active
     if simulation_mode != "langtons_ant":
         return
-    if ant_state.row == row and ant_state.col == col and ant_state.active:
-        return
-    save_history()
-    ant_state = AntState(row, col, ant_state.direction)
-    simulation_active = False
-    invalidate_render_cache("langtons_ant")
-    _sync_2d_history()
-    set_status(f"Ant moved to ({row}, {col}).")
+    if two_dimensional_controller.place_ant(row, col):
+        set_status(f"Ant moved to ({row}, {col}).")
 
 
 def _zoom_2d(factor: float) -> None:
-    global CELL_SIZE
-    new_size = int(round(CELL_SIZE * factor))
+    new_size = int(round(two_dimensional_state.cell_size * factor))
     new_size = max(MIN_CELL_SIZE, min(MAX_CELL_SIZE, new_size))
-    if new_size == CELL_SIZE:
+    if new_size == two_dimensional_state.cell_size:
         return
-    CELL_SIZE = new_size
+    two_dimensional_state.cell_size = new_size
     _center_2d_view()
-    set_status(f"Cell size: {CELL_SIZE}px")
+    set_status(f"Cell size: {two_dimensional_state.cell_size}px")
 
 
 def zoom(factor: float) -> None:
@@ -1777,128 +1572,35 @@ def handle_session_menu_event(event: pygame.event.Event) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def apply_life_generation() -> bool:
-    global grid, trail_grid, activity_grid, generation, simulation_active
-
-    if not any(cell > 0 for row in grid for cell in row):
-        simulation_active = False
-        set_status("Simulation stopped: no live cells.")
+def _advance_legacy_2d_mode(mode: str) -> bool:
+    """Retain old mode-specific entry points while delegating to the controller."""
+    if simulation_mode != mode:
         return False
+    return two_dimensional_controller.advance()
 
-    save_history()
-    new_grid = apply_rules_2d(grid, current_rule)
 
-    for row in range(ROWS):
-        for col in range(COLS):
-            activity_grid[row][col] = max(0.0, activity_grid[row][col] - 0.10)
-            trail_grid[row][col] = max(0, trail_grid[row][col] - 1)
-
-            old_alive = grid[row][col] > 0
-            new_alive = new_grid[row][col] > 0
-            if old_alive != new_alive:
-                cell_transition.start_transition(
-                    row,
-                    col,
-                    grid[row][col],
-                    new_grid[row][col],
-                )
-                activity_grid[row][col] += 1.0
-                if old_alive and not new_alive:
-                    trail_grid[row][col] = TRAIL_MAX
-
-    grid = new_grid
-    generation += 1
-    mark_stats_dirty()
-    return True
+def apply_life_generation() -> bool:
+    return _advance_legacy_2d_mode("life")
 
 
 def apply_immigration_generation() -> bool:
-    """Advance the two-species Immigration Game by one generation."""
-    global immigration_grid, immigration_generation, simulation_active
-    if not any(cell for row in immigration_grid for cell in row):
-        simulation_active = False
-        set_status("Immigration stopped: no live cells.")
-        return False
-
-    save_history()
-    immigration_grid = apply_immigration_rules(immigration_grid)
-    immigration_generation += 1
-    invalidate_render_cache("immigration")
-    return True
+    return _advance_legacy_2d_mode("immigration")
 
 
 def apply_brain_generation() -> bool:
-    """Advance Brian's Brain by one generation."""
-    global brain_grid, brain_generation, simulation_active
-    if not any(cell for row in brain_grid for cell in row):
-        simulation_active = False
-        set_status("Brian's Brain stopped: no active cells.")
-        return False
-
-    save_history()
-    brain_grid = apply_brain_rules(brain_grid)
-    brain_generation += 1
-    invalidate_render_cache("brians_brain")
-    return True
+    return _advance_legacy_2d_mode("brians_brain")
 
 
 def apply_ant_generation() -> bool:
-    """Advance Langton's Ant by one turn, flip, and movement step."""
-    global ant_grid, ant_state, ant_generation, ant_last_report
-    global simulation_active
-    if not ant_state.active:
-        simulation_active = False
-        set_status("Langton's Ant stopped at the board boundary.")
-        return False
-
-    save_history()
-    ant_grid, ant_state, ant_last_report = step_ant(ant_grid, ant_state)
-    ant_generation += 1
-    invalidate_render_cache("langtons_ant")
-    if ant_last_report.exited:
-        simulation_active = False
-        set_status("Langton's Ant reached the finite board boundary.", 4.0)
-    return True
+    return _advance_legacy_2d_mode("langtons_ant")
 
 
 def apply_wireworld_generation() -> bool:
-    """Advance Wireworld by one synchronous signal propagation step."""
-    global wireworld_grid, wireworld_generation, simulation_active
-    has_signal = any(
-        cell in (ELECTRON_HEAD, ELECTRON_TAIL)
-        for row in wireworld_grid
-        for cell in row
-    )
-    if not has_signal:
-        simulation_active = False
-        set_status("Wireworld stopped: no electron signal remains.")
-        return False
-
-    save_history()
-    wireworld_grid = apply_wireworld_rules(wireworld_grid)
-    wireworld_generation += 1
-    invalidate_render_cache("wireworld")
-    return True
+    return _advance_legacy_2d_mode("wireworld")
 
 
 def apply_cyclic_generation() -> bool:
-    """Advance the cyclic color field by one synchronous generation."""
-    global cyclic_grid, cyclic_generation, simulation_active
-    next_grid = apply_cyclic_rules(
-        cyclic_grid,
-        state_count=CYCLIC_STATE_COUNT,
-        threshold=cyclic_threshold,
-    )
-    if next_grid == cyclic_grid:
-        simulation_active = False
-        set_status("Cyclic Automaton stopped: no color can advance.")
-        return False
-
-    save_history()
-    cyclic_grid = next_grid
-    cyclic_generation += 1
-    invalidate_render_cache("cyclic_automaton")
-    return True
+    return _advance_legacy_2d_mode("cyclic_automaton")
 
 
 GENERATION_HANDLERS = {
@@ -1912,110 +1614,18 @@ GENERATION_HANDLERS = {
 
 
 def _two_d_generation() -> int:
-    """Return the counter belonging to the selected 2D mode."""
-    return _generation_for_2d_mode(simulation_mode)
+    _adopt_legacy_2d_view()
+    return two_dimensional_controller.generation_for(simulation_mode)
 
 
 def _generation_for_2d_mode(mode: str) -> int:
-    """Return a generation counter without changing the selected mode."""
-    return {
-        "life": generation,
-        "immigration": immigration_generation,
-        "brians_brain": brain_generation,
-        "langtons_ant": ant_generation,
-        "wireworld": wireworld_generation,
-        "cyclic_automaton": cyclic_generation,
-    }[mode]
+    _adopt_legacy_2d_view()
+    return two_dimensional_controller.generation_for(mode)
 
 
 def _analysis_observation_2d(mode: str) -> StateObservation:
-    """Normalize one 2D mode without treating ages as distinct cell states."""
-    title = MODE_BY_KEY[mode].name
-    if mode == "life":
-        values = tuple(1 if cell > 0 else 0 for row in grid for cell in row)
-        return StateObservation(
-            key="2d:life",
-            title=title,
-            generation=generation,
-            values=values,
-            state_count=2,
-            active_states=(1,),
-            population_label="Live cells",
-            lattice_shape=(len(grid), len(grid[0])),
-            experiment_context=current_rule,
-        )
-    if mode == "immigration":
-        values = tuple(
-            1 if cell > 0 else 2 if cell < 0 else 0
-            for row in immigration_grid
-            for cell in row
-        )
-        return StateObservation(
-            key="2d:immigration",
-            title=title,
-            generation=immigration_generation,
-            values=values,
-            state_count=3,
-            active_states=(1, 2),
-            population_label="Population",
-            lattice_shape=(len(immigration_grid), len(immigration_grid[0])),
-            experiment_context="B3/S23",
-        )
-    if mode == "brians_brain":
-        return StateObservation(
-            key="2d:brians_brain",
-            title=title,
-            generation=brain_generation,
-            values=tuple(cell for row in brain_grid for cell in row),
-            state_count=3,
-            active_states=(FIRING, DYING),
-            population_label="Active cells",
-            lattice_shape=(len(brain_grid), len(brain_grid[0])),
-            experiment_context="Brian's Brain",
-        )
-    if mode == "langtons_ant":
-        return StateObservation(
-            key="2d:langtons_ant",
-            title=title,
-            generation=ant_generation,
-            values=tuple(cell for row in ant_grid for cell in row),
-            state_count=2,
-            active_states=(ANT_BLACK,),
-            population_label="Black cells",
-            lattice_shape=(len(ant_grid), len(ant_grid[0])),
-            experiment_context="RL finite",
-            signature_context=(
-                ant_state.row,
-                ant_state.col,
-                ant_state.direction,
-                ant_state.active,
-            ),
-        )
-    if mode == "wireworld":
-        return StateObservation(
-            key="2d:wireworld",
-            title=title,
-            generation=wireworld_generation,
-            values=tuple(cell for row in wireworld_grid for cell in row),
-            state_count=4,
-            active_states=(ELECTRON_HEAD, ELECTRON_TAIL, CONDUCTOR),
-            population_label="Occupied cells",
-            lattice_shape=(len(wireworld_grid), len(wireworld_grid[0])),
-            experiment_context="Wireworld",
-        )
-    if mode == "cyclic_automaton":
-        return StateObservation(
-            key="2d:cyclic_automaton",
-            title=title,
-            generation=cyclic_generation,
-            values=tuple(cell for row in cyclic_grid for cell in row),
-            state_count=CYCLIC_STATE_COUNT,
-            active_states=tuple(range(1, CYCLIC_STATE_COUNT)),
-            population_label="Non-zero phase",
-            lattice_shape=(len(cyclic_grid), len(cyclic_grid[0])),
-            experiment_context=(CYCLIC_STATE_COUNT, cyclic_threshold),
-        )
-    raise ValueError(f"Unknown 2D analysis mode: {mode}")
+    _adopt_legacy_2d_view()
+    return two_dimensional_controller.analysis_observation(mode)
 
 
 def active_analysis_series() -> AnalysisSeries:
@@ -2102,254 +1712,24 @@ def toggle_export_menu() -> None:
 
 
 def _snapshot_2d_mode(mode: str) -> dict[str, Any]:
-    """Capture one mode's simulation state for its independent timeline."""
-    if mode == "life":
-        return {
-            "rule": current_rule,
-            "grid": deepcopy(grid),
-            "trail": deepcopy(trail_grid),
-            "activity": deepcopy(activity_grid),
-            "generation": generation,
-        }
-    if mode == "immigration":
-        return {
-            "grid": deepcopy(immigration_grid),
-            "generation": immigration_generation,
-        }
-    if mode == "brians_brain":
-        return {"grid": deepcopy(brain_grid), "generation": brain_generation}
-    if mode == "langtons_ant":
-        return {
-            "grid": deepcopy(ant_grid),
-            "generation": ant_generation,
-            "ant": {
-                "row": ant_state.row,
-                "col": ant_state.col,
-                "direction": ant_state.direction,
-                "active": ant_state.active,
-            },
-            "report": {
-                "turned": ant_last_report.turned,
-                "painted_black": ant_last_report.painted_black,
-                "exited": ant_last_report.exited,
-            },
-        }
-    if mode == "wireworld":
-        return {"grid": deepcopy(wireworld_grid), "generation": wireworld_generation}
-    if mode == "cyclic_automaton":
-        return {
-            "grid": deepcopy(cyclic_grid),
-            "generation": cyclic_generation,
-            "threshold": cyclic_threshold,
-        }
-    raise ValueError(f"Unknown 2D mode: {mode}")
+    _adopt_legacy_2d_view()
+    return two_dimensional_controller._snapshot_mode(mode)
 
 
 def _restore_2d_mode(mode: str, snapshot: Mapping[str, Any]) -> None:
-    """Restore one trusted internal timeline frame and preserve its camera."""
-    global grid, trail_grid, activity_grid, generation, current_rule
-    global immigration_grid, immigration_generation
-    global brain_grid, brain_generation
-    global ant_grid, ant_state, ant_generation, ant_last_report
-    global wireworld_grid, wireworld_generation
-    global cyclic_grid, cyclic_generation, cyclic_threshold
-
-    if mode == "life":
-        current_rule = str(snapshot["rule"])
-        grid = deepcopy(snapshot["grid"])
-        trail_grid = deepcopy(snapshot["trail"])
-        activity_grid = deepcopy(snapshot["activity"])
-        generation = int(snapshot["generation"])
-        cell_transition.transitions.clear()
-        mark_stats_dirty()
-    elif mode == "immigration":
-        immigration_grid = deepcopy(snapshot["grid"])
-        immigration_generation = int(snapshot["generation"])
-        invalidate_render_cache(mode)
-    elif mode == "brians_brain":
-        brain_grid = deepcopy(snapshot["grid"])
-        brain_generation = int(snapshot["generation"])
-        invalidate_render_cache(mode)
-    elif mode == "langtons_ant":
-        ant_grid = deepcopy(snapshot["grid"])
-        ant_generation = int(snapshot["generation"])
-        saved_ant = snapshot["ant"]
-        ant_state = AntState(
-            int(saved_ant["row"]),
-            int(saved_ant["col"]),
-            int(saved_ant["direction"]),
-            bool(saved_ant["active"]),
-        )
-        report = snapshot["report"]
-        ant_last_report = AntStepReport(
-            str(report["turned"]),
-            bool(report["painted_black"]),
-            bool(report["exited"]),
-        )
-        invalidate_render_cache(mode)
-    elif mode == "wireworld":
-        wireworld_grid = deepcopy(snapshot["grid"])
-        wireworld_generation = int(snapshot["generation"])
-        invalidate_render_cache(mode)
-    elif mode == "cyclic_automaton":
-        cyclic_grid = deepcopy(snapshot["grid"])
-        cyclic_generation = int(snapshot["generation"])
-        cyclic_threshold = int(snapshot["threshold"])
-        invalidate_render_cache(mode)
-    else:
-        raise ValueError(f"Unknown 2D mode: {mode}")
-    if "main_menu" in globals():
-        rebuild_context_menu()
+    two_dimensional_controller._restore_mode(mode, snapshot)
 
 
 def _snapshot_2d() -> dict[str, Any]:
-    """Return all six 2D mode states and the shared 2D camera."""
-    return {
-        "shape": [ROWS, COLS],
-        "camera": {
-            "cell_size": CELL_SIZE,
-            "offset": [view_offset_x, view_offset_y],
-        },
-        "states": {
-            "life": {
-                "rule": current_rule,
-                "grid": deepcopy(grid),
-                "trail": deepcopy(trail_grid),
-                "activity": deepcopy(activity_grid),
-                "generation": generation,
-            },
-            "immigration": {
-                "grid": deepcopy(immigration_grid),
-                "generation": immigration_generation,
-                "active_species": active_species,
-            },
-            "brians_brain": {
-                "grid": deepcopy(brain_grid),
-                "generation": brain_generation,
-            },
-            "langtons_ant": {
-                "grid": deepcopy(ant_grid),
-                "generation": ant_generation,
-                "ant": {
-                    "row": ant_state.row,
-                    "col": ant_state.col,
-                    "direction": ant_state.direction,
-                    "active": ant_state.active,
-                },
-            },
-            "wireworld": {
-                "grid": deepcopy(wireworld_grid),
-                "generation": wireworld_generation,
-                "brush": wireworld_brush,
-            },
-            "cyclic_automaton": {
-                "grid": deepcopy(cyclic_grid),
-                "generation": cyclic_generation,
-                "brush": cyclic_brush,
-                "threshold": cyclic_threshold,
-            },
-        },
-        "rng": {
-            "life": encode_random_state(life_rng),
-            "immigration": encode_random_state(immigration_rng),
-            "brians_brain": encode_random_state(brain_rng),
-            "langtons_ant": encode_random_state(ant_rng),
-            "wireworld": encode_random_state(wireworld_rng),
-            "cyclic_automaton": encode_random_state(cyclic_rng),
-        },
-    }
+    return two_dimensional_controller.snapshot()
 
 
 def _restore_2d(snapshot: Mapping[str, Any]) -> None:
-    """Replace every 2D mode state from a validated session snapshot."""
-    global CELL_SIZE, view_offset_x, view_offset_y
-    global grid, trail_grid, activity_grid, generation, current_rule
-    global immigration_grid, immigration_generation, active_species
-    global brain_grid, brain_generation
-    global ant_grid, ant_state, ant_generation, ant_last_report
-    global wireworld_grid, wireworld_generation, wireworld_brush
-    global cyclic_grid, cyclic_generation, cyclic_brush, cyclic_threshold
-    global life_rng, immigration_rng, brain_rng, ant_rng, wireworld_rng, cyclic_rng
-    global recognized_pattern_cache, pattern_scan_generation
-    global pattern_scan_revision, grid_revision, stats_dirty
-
-    if list(snapshot["shape"]) != [ROWS, COLS]:
-        raise ValueError(
-            f"Session grid is {snapshot['shape']}; this build requires "
-            f"[{ROWS}, {COLS}]."
-        )
-    camera = snapshot["camera"]
-    states = snapshot["states"]
-    life_state = states["life"]
-    immigration_state = states["immigration"]
-    brain_state = states["brians_brain"]
-    ant_mode_state = states["langtons_ant"]
-    wire_state = states["wireworld"]
-    cyclic_state = states["cyclic_automaton"]
-
-    CELL_SIZE = int(camera["cell_size"])
-    view_offset_x, view_offset_y = map(int, camera["offset"])
-
-    current_rule = str(life_state["rule"])
-    grid = deepcopy(life_state["grid"])
-    trail_grid = deepcopy(life_state["trail"])
-    activity_grid = deepcopy(life_state["activity"])
-    generation = int(life_state["generation"])
-
-    immigration_grid = deepcopy(immigration_state["grid"])
-    immigration_generation = int(immigration_state["generation"])
-    active_species = int(immigration_state["active_species"])
-
-    brain_grid = deepcopy(brain_state["grid"])
-    brain_generation = int(brain_state["generation"])
-
-    ant_grid = deepcopy(ant_mode_state["grid"])
-    ant_generation = int(ant_mode_state["generation"])
-    saved_ant = ant_mode_state["ant"]
-    ant_state = AntState(
-        int(saved_ant["row"]),
-        int(saved_ant["col"]),
-        int(saved_ant["direction"]),
-        bool(saved_ant["active"]),
-    )
-    ant_last_report = AntStepReport()
-
-    wireworld_grid = deepcopy(wire_state["grid"])
-    wireworld_generation = int(wire_state["generation"])
-    wireworld_brush = int(wire_state["brush"])
-
-    cyclic_grid = deepcopy(cyclic_state["grid"])
-    cyclic_generation = int(cyclic_state["generation"])
-    cyclic_brush = int(cyclic_state["brush"])
-    cyclic_threshold = int(cyclic_state["threshold"])
-
-    random_states = snapshot["rng"]
-    restore_random_state(life_rng, random_states["life"])
-    restore_random_state(immigration_rng, random_states["immigration"])
-    restore_random_state(brain_rng, random_states["brians_brain"])
-    restore_random_state(ant_rng, random_states["langtons_ant"])
-    restore_random_state(wireworld_rng, random_states["wireworld"])
-    restore_random_state(cyclic_rng, random_states["cyclic_automaton"])
-
-    cell_transition.transitions.clear()
-    recognized_pattern_cache = {}
-    pattern_scan_generation = -1
-    pattern_scan_revision = -1
-    grid_revision += 1
-    stats_dirty = True
-    for mode in SIMULATION_MODES:
-        invalidate_render_cache(mode)
-    for binding in two_d_timelines.values():
-        binding.reset()
-    for mode in SIMULATION_MODES:
-        analysis_registry.reset(_analysis_observation_2d(mode))
+    two_dimensional_controller.restore(snapshot)
 
 
 def _apply_2d_generation() -> bool:
-    advanced = GENERATION_HANDLERS[simulation_mode]()
-    if advanced:
-        _sync_2d_history()
-    return advanced
+    return two_dimensional_controller.advance()
 
 
 def apply_generation() -> bool:
@@ -4413,6 +3793,8 @@ def update_window_size(new_width: int, new_height: int) -> None:
     main_menu.rect.height = WINDOW_HEIGHT - INFO_BAR_HEIGHT
     main_menu.relayout()
 
+    if active_dimension == "2d":
+        _adopt_legacy_2d_view()
     center_view()
     rebuild_context_menu()
     if active_dimension == "2d" and CELL_SIZE > fitted_2d_cell_size():
@@ -4600,7 +3982,6 @@ def handle_keydown(event: pygame.event.Event) -> None:
 def _handle_2d_pointer_event(event: pygame.event.Event) -> bool:
     """Handle drawing and panning inside the established 2D workspace."""
     global drawing, drawing_value, drawing_history_pending
-    global view_offset_x, view_offset_y
 
     if event.type == pygame.MOUSEBUTTONDOWN:
         if event.button == 1:
@@ -4642,8 +4023,9 @@ def _handle_2d_pointer_event(event: pygame.event.Event) -> bool:
             if position is not None:
                 draw_cell(*position)
         elif event.buttons[1]:
-            view_offset_x += event.rel[0]
-            view_offset_y += event.rel[1]
+            two_dimensional_state.view_offset_x += event.rel[0]
+            two_dimensional_state.view_offset_y += event.rel[1]
+            _publish_legacy_2d_view()
         return True
     return False
 
@@ -4774,15 +4156,36 @@ session_manager = SessionMenu(
     )
 )
 
-two_d_timelines = {
-    mode: TimelineBinding(
-        lambda mode=mode: _snapshot_2d_mode(mode),
-        lambda snapshot, mode=mode: _restore_2d_mode(mode, snapshot),
-        lambda mode=mode: _generation_for_2d_mode(mode),
-        max_frames=TIMELINE_MAX_FRAMES,
-    )
-    for mode in SIMULATION_MODES
-}
+two_dimensional_services = TwoDimensionalWorkspaceServices(
+    active_mode=lambda: simulation_mode,
+    is_running=lambda: simulation_active,
+    set_running=_set_simulation_running,
+    set_status=set_status,
+    invalidate=lambda mode: invalidate_render_cache(mode),
+    mark_life_dirty=mark_stats_dirty,
+    start_transition=cell_transition.start_transition,
+    clear_transitions=cell_transition.transitions.clear,
+    before_operation=_adopt_legacy_2d_view,
+    state_changed=_publish_legacy_2d_view,
+    rebuild_sidebar=lambda: rebuild_context_menu(),
+    build_sidebar=_build_2d_sidebar,
+    overlay_active=_two_d_overlay_active,
+    close_overlays=_close_2d_overlays,
+    handle_overlay_event=_handle_2d_overlay_event,
+    handle_keydown=_handle_2d_keydown,
+    handle_pointer_event=_handle_2d_pointer_event,
+    center_view=_center_2d_view,
+    zoom=_zoom_2d,
+    record_analysis=analysis_registry.observe,
+    reset_analysis=analysis_registry.reset,
+    timeline_max_frames=TIMELINE_MAX_FRAMES,
+    trail_max=TRAIL_MAX,
+)
+two_dimensional_controller = TwoDimensionalWorkspaceController(
+    two_dimensional_services,
+    two_dimensional_state,
+)
+two_d_timelines = two_dimensional_controller.timelines
 
 elementary_state = ElementaryWorkspaceState(
     rng=seeded_random(experiment_seed, "1d"),
@@ -4887,33 +4290,6 @@ three_dimensional_renderer = ThreeDimensionalWorkspaceRenderer(
     three_dimensional_services,
 )
 
-two_dimensional_controller = TwoDimensionalWorkspaceController(
-    TwoDimensionalControllerCallbacks(
-        generation=_two_d_generation,
-        advance=_apply_2d_generation,
-        save_history=_save_2d_history,
-        step_back=_step_back_2d,
-        step_forward=_step_forward_2d,
-        seek_history=_seek_2d_history,
-        seek_generation=_seek_2d_generation,
-        sync_history=_sync_2d_history,
-        history_status=_two_d_history_status,
-        reset_history=_reset_2d_history,
-        analysis_observation=lambda: _analysis_observation_2d(simulation_mode),
-        clear=_clear_2d_grid,
-        randomize=_randomize_2d_grid,
-        snapshot=_snapshot_2d,
-        restore=_restore_2d,
-        build_sidebar=_build_2d_sidebar,
-        overlay_active=_two_d_overlay_active,
-        close_overlays=_close_2d_overlays,
-        handle_overlay_event=_handle_2d_overlay_event,
-        handle_keydown=_handle_2d_keydown,
-        handle_pointer_event=_handle_2d_pointer_event,
-        center_view=_center_2d_view,
-        zoom=_zoom_2d,
-    )
-)
 two_dimensional_renderer = TwoDimensionalWorkspaceRenderer(
     TwoDimensionalRendererCallbacks(
         render_key=lambda: simulation_mode,
