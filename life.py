@@ -31,15 +31,21 @@ from cyclic_automaton import (
     randomize_cyclic_grid,
 )
 from custom_rules import (
+    CUSTOM_RULE_PACKAGE_DIRECTORY,
     KIND_GENERATIONS,
     NEIGHBORHOOD_FACE,
     NEIGHBORHOOD_MOORE,
     CustomRuleDefinition,
+    CustomRulePackage,
     custom_rule_from_1d,
     custom_rule_from_2d,
     custom_rule_from_3d_generations,
     custom_rule_from_3d_life,
     delete_custom_rule,
+    export_custom_rule_package,
+    get_custom_rule_packages,
+    import_custom_rule_package,
+    refresh_custom_rule_package_cache,
     save_custom_rule,
 )
 from dimension_registry import (
@@ -3754,6 +3760,35 @@ def delete_contextual_custom_rule(rule: CustomRuleDefinition) -> bool:
     return removed
 
 
+def export_contextual_custom_rule(rule: CustomRuleDefinition) -> bool:
+    """Export one saved rule as a versioned standalone sharing package."""
+
+    try:
+        path = export_custom_rule_package(rule)
+    except (OSError, TypeError, ValueError) as exc:
+        set_status(f"Could not export custom rule: {exc}", 6.0)
+        return False
+    set_status(f"Rule package exported: {path.name}", 6.0)
+    return True
+
+
+def import_contextual_custom_rule(
+    package: CustomRulePackage,
+) -> CustomRuleDefinition | None:
+    """Import one validated package for the active dimension."""
+
+    if package.rule.dimension != active_dimension:
+        set_status("That rule package belongs to another dimension.", 5.0)
+        return None
+    try:
+        saved = import_custom_rule_package(package)
+    except (FileExistsError, OSError, KeyError, TypeError, ValueError) as exc:
+        set_status(f"Could not import custom rule: {exc}", 6.0)
+        return None
+    set_status(f"Custom rule '{saved.name}' imported.", 5.0)
+    return saved
+
+
 def activate_custom_rule_studio() -> None:
     """Open the dimension-aware custom-rule catalog and editor."""
 
@@ -4845,8 +4880,13 @@ rule_studio = CustomRuleStudio(
         context_label=custom_rule_context_label,
         current_rule_key=active_custom_rule_key,
         templates=custom_rule_studio_templates,
+        refresh_packages=refresh_custom_rule_package_cache,
+        packages=lambda: get_custom_rule_packages(active_dimension),
+        package_directory=lambda: str(CUSTOM_RULE_PACKAGE_DIRECTORY),
         create_rule=create_contextual_custom_rule,
         apply_rule=apply_contextual_custom_rule,
+        export_rule=export_contextual_custom_rule,
+        import_rule=import_contextual_custom_rule,
         delete_rule=delete_contextual_custom_rule,
         pause=lambda: _set_simulation_running(False),
         feedback_text=lambda: (

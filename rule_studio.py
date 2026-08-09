@@ -8,7 +8,11 @@ from typing import Any, Callable
 
 import pygame
 
-from custom_rules import CustomRuleDefinition, get_custom_rules
+from custom_rules import (
+    CustomRuleDefinition,
+    CustomRulePackage,
+    get_custom_rules,
+)
 
 
 @dataclass(frozen=True)
@@ -28,10 +32,14 @@ class RuleStudioLayout:
     close: pygame.Rect
     learn_tab: pygame.Rect
     library_tab: pygame.Rect
+    import_tab: pygame.Rect
     content: pygame.Rect
     create: pygame.Rect
     templates: tuple[tuple[RuleStudioTemplate, pygame.Rect], ...]
-    rows: tuple[tuple[CustomRuleDefinition, pygame.Rect, pygame.Rect], ...]
+    rows: tuple[
+        tuple[CustomRuleDefinition, pygame.Rect, pygame.Rect, pygame.Rect], ...
+    ]
+    package_rows: tuple[tuple[CustomRulePackage, pygame.Rect, pygame.Rect], ...]
     capacity: int
 
 
@@ -57,8 +65,13 @@ class RuleStudioServices:
     context_label: Callable[[], str]
     current_rule_key: Callable[[], str | None]
     templates: Callable[[], tuple[RuleStudioTemplate, ...]]
+    refresh_packages: Callable[[], None]
+    packages: Callable[[], tuple[CustomRulePackage, ...]]
+    package_directory: Callable[[], str]
     create_rule: Callable[[str | None], CustomRuleDefinition | None]
     apply_rule: Callable[[CustomRuleDefinition], bool]
+    export_rule: Callable[[CustomRuleDefinition], bool]
+    import_rule: Callable[[CustomRulePackage], CustomRuleDefinition | None]
     delete_rule: Callable[[CustomRuleDefinition], bool]
     pause: Callable[[], None]
     feedback_text: Callable[[], str]
@@ -70,6 +83,7 @@ class CustomRuleStudio:
     ROW_HEIGHT = 70
     LEARN_VIEW = "learn"
     LIBRARY_VIEW = "library"
+    IMPORT_VIEW = "import"
 
     def __init__(self, services: RuleStudioServices) -> None:
         self.services = services
@@ -94,8 +108,12 @@ class CustomRuleStudio:
     def rules(self) -> tuple[CustomRuleDefinition, ...]:
         return get_custom_rules(self.dimension)
 
+    def packages(self) -> tuple[CustomRulePackage, ...]:
+        return self.services.packages()
+
     def open(self) -> None:
         self.services.pause()
+        self.services.refresh_packages()
         self.active = True
         self.scroll = 0
         self.view = self.LEARN_VIEW
@@ -111,10 +129,11 @@ class CustomRuleStudio:
         modal = pygame.Rect(18, 38, max(520, width - 36), max(440, height - 76))
         close = pygame.Rect(modal.right - 48, modal.y + 16, 32, 32)
         tab_y = modal.y + 82
-        tab_gap = 10
-        tab_width = (modal.width - 48 - tab_gap) // 2
+        tab_gap = 8
+        tab_width = (modal.width - 48 - tab_gap * 2) // 3
         learn_tab = pygame.Rect(modal.x + 24, tab_y, tab_width, 40)
         library_tab = pygame.Rect(learn_tab.right + tab_gap, tab_y, tab_width, 40)
+        import_tab = pygame.Rect(library_tab.right + tab_gap, tab_y, tab_width, 40)
         create = pygame.Rect(
             modal.x + 24,
             modal.bottom - 92,
@@ -152,10 +171,15 @@ class CustomRuleStudio:
                 template_layout.append((template, rect))
 
         rules = self.rules()
-        rows: list[tuple[CustomRuleDefinition, pygame.Rect, pygame.Rect]] = []
-        capacity = max(1, (content.height - 42) // self.ROW_HEIGHT)
-        maximum = max(0, len(rules) - capacity)
+        packages = self.packages()
+        heading_space = 50 if self.view == self.IMPORT_VIEW else 42
+        capacity = max(1, (content.height - heading_space) // self.ROW_HEIGHT)
+        item_count = len(packages) if self.view == self.IMPORT_VIEW else len(rules)
+        maximum = max(0, item_count - capacity)
         self.scroll = max(0, min(maximum, self.scroll))
+        rows: list[
+            tuple[CustomRuleDefinition, pygame.Rect, pygame.Rect, pygame.Rect]
+        ] = []
         if self.view == self.LIBRARY_VIEW:
             for index, rule in enumerate(rules[self.scroll : self.scroll + capacity]):
                 row = pygame.Rect(
@@ -165,16 +189,37 @@ class CustomRuleStudio:
                     self.ROW_HEIGHT - 8,
                 )
                 delete = pygame.Rect(row.right - 78, row.y + 11, 62, row.height - 22)
-                rows.append((rule, row, delete))
+                share = pygame.Rect(delete.x - 78, delete.y, 70, delete.height)
+                rows.append((rule, row, share, delete))
+        package_rows: list[tuple[CustomRulePackage, pygame.Rect, pygame.Rect]] = []
+        if self.view == self.IMPORT_VIEW:
+            for index, package in enumerate(
+                packages[self.scroll : self.scroll + capacity]
+            ):
+                row = pygame.Rect(
+                    content.x,
+                    content.y + heading_space + index * self.ROW_HEIGHT,
+                    content.width,
+                    self.ROW_HEIGHT - 8,
+                )
+                import_button = pygame.Rect(
+                    row.right - 96,
+                    row.y + 11,
+                    80,
+                    row.height - 22,
+                )
+                package_rows.append((package, row, import_button))
         return RuleStudioLayout(
             modal,
             close,
             learn_tab,
             library_tab,
+            import_tab,
             content,
             create,
             tuple(template_layout),
             tuple(rows),
+            tuple(package_rows),
             capacity,
         )
 
@@ -271,6 +316,48 @@ class CustomRuleStudio:
                 or "Rule was not created. Check the notation and try again."
             )
 
+    def _set_view(self, view: str) -> None:
+        """Switch tabs with independent, predictable list positioning."""
+
+        self.view = view
+        self.scroll = 0
+        self.message = ""
+        if view == self.IMPORT_VIEW:
+            self.services.refresh_packages()
+
+    def _export_rule(self, rule: CustomRuleDefinition) -> None:
+        """Export one catalog rule while keeping Studio open for feedback."""
+
+        if self.services.export_rule(rule):
+            self.message = (
+                self.services.feedback_text()
+                or f"Exported a shareable package for '{rule.name}'."
+            )
+        else:
+            self.message = (
+                self.services.feedback_text()
+                or f"Could not export '{rule.name}'."
+            )
+
+    def _import_package(self, package: CustomRulePackage) -> None:
+        """Import one validated package without silently replacing a rule."""
+
+        if any(rule.key == package.rule.key for rule in self.rules()):
+            self.message = (
+                f"'{package.rule.name}' is already in My Rules. "
+                "Delete or rename it before importing another copy."
+            )
+            return
+        imported = self.services.import_rule(package)
+        if imported is None:
+            self.message = (
+                self.services.feedback_text()
+                or f"Could not import '{package.rule.name}'."
+            )
+            return
+        self._set_view(self.LIBRARY_VIEW)
+        self.message = f"Imported '{imported.name}'. Click its row to apply it."
+
     def _request_delete(self, rule: CustomRuleDefinition) -> None:
         """Open a standard confirmation dialog for an inactive rule."""
 
@@ -331,13 +418,12 @@ class CustomRuleStudio:
             if event.key == pygame.K_ESCAPE:
                 self.close()
             elif event.key in (pygame.K_TAB, pygame.K_l):
-                self.view = (
-                    self.LIBRARY_VIEW
-                    if self.view == self.LEARN_VIEW
-                    else self.LEARN_VIEW
-                )
+                order = (self.LEARN_VIEW, self.LIBRARY_VIEW, self.IMPORT_VIEW)
+                self._set_view(order[(order.index(self.view) + 1) % len(order)])
             elif event.key == pygame.K_r:
-                self.view = self.LIBRARY_VIEW
+                self._set_view(self.LIBRARY_VIEW)
+            elif event.key == pygame.K_i:
+                self._set_view(self.IMPORT_VIEW)
             elif event.key in (pygame.K_UP, pygame.K_PAGEUP):
                 self.scroll = max(0, self.scroll - 1)
             elif event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
@@ -351,7 +437,7 @@ class CustomRuleStudio:
                     self._create_and_apply(templates[index].expression)
             return True
         if event.type == pygame.MOUSEWHEEL:
-            if self.view == self.LIBRARY_VIEW:
+            if self.view in (self.LIBRARY_VIEW, self.IMPORT_VIEW):
                 self.scroll = max(0, self.scroll - event.y)
             return True
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -361,10 +447,13 @@ class CustomRuleStudio:
                 self.close()
                 return True
             if layout.learn_tab.collidepoint(event.pos):
-                self.view = self.LEARN_VIEW
+                self._set_view(self.LEARN_VIEW)
                 return True
             if layout.library_tab.collidepoint(event.pos):
-                self.view = self.LIBRARY_VIEW
+                self._set_view(self.LIBRARY_VIEW)
+                return True
+            if layout.import_tab.collidepoint(event.pos):
+                self._set_view(self.IMPORT_VIEW)
                 return True
             if layout.create.collidepoint(event.pos):
                 self._create_and_apply(None)
@@ -373,7 +462,10 @@ class CustomRuleStudio:
                 if rect.collidepoint(event.pos):
                     self._create_and_apply(template.expression)
                     return True
-            for rule, row, delete in layout.rows:
+            for rule, row, share, delete in layout.rows:
+                if share.collidepoint(event.pos):
+                    self._export_rule(rule)
+                    return True
                 if delete.collidepoint(event.pos):
                     self._request_delete(rule)
                     return True
@@ -385,6 +477,10 @@ class CustomRuleStudio:
                             self.services.feedback_text()
                             or f"Could not apply '{rule.name}'."
                         )
+                    return True
+            for package, row, import_button in layout.package_rows:
+                if row.collidepoint(event.pos) or import_button.collidepoint(event.pos):
+                    self._import_package(package)
                     return True
             return True
         return True
@@ -692,7 +788,7 @@ class CustomRuleStudio:
         screen.blit(small.render(heading, True, theme["button_text"]), layout.content.topleft)
         mouse = pygame.mouse.get_pos()
         current = self.services.current_rule_key()
-        for rule, row, delete in layout.rows:
+        for rule, row, share, delete in layout.rows:
             hovered = row.collidepoint(mouse)
             selected = rule.key == current
             pygame.draw.rect(
@@ -708,9 +804,14 @@ class CustomRuleStudio:
                 3 if selected else 1,
                 border_radius=7,
             )
-            screen.blit(small.render(self._fit_text(small, rule.name, row.width - 118), True, theme["button_text"]), (row.x + 12, row.y + 7))
-            summary = tiny.render(self._fit_text(tiny, rule.summary, row.width - 118), True, theme["menu_text"])
+            text_width = row.width - 196
+            screen.blit(small.render(self._fit_text(small, rule.name, text_width), True, theme["button_text"]), (row.x + 12, row.y + 7))
+            summary = tiny.render(self._fit_text(tiny, rule.summary, text_width), True, theme["menu_text"])
             screen.blit(summary, (row.x + 12, row.bottom - summary.get_height() - 8))
+            pygame.draw.rect(screen, theme["info_bar"], share, border_radius=5)
+            pygame.draw.rect(screen, self.accent, share, 1, border_radius=5)
+            share_text = tiny.render("Share", True, theme["button_text"])
+            screen.blit(share_text, share_text.get_rect(center=share.center))
             delete_enabled = not selected
             pygame.draw.rect(
                 screen,
@@ -738,6 +839,99 @@ class CustomRuleStudio:
                 theme["menu_text"],
             )
             screen.blit(message, message.get_rect(center=layout.content.center))
+
+    def _draw_import_view(
+        self,
+        screen: pygame.Surface,
+        theme: Mapping[str, Any],
+        layout: RuleStudioLayout,
+    ) -> None:
+        """Draw validated standalone packages available for the active dimension."""
+
+        small = self.services.small_font()
+        tiny = self.services.tiny_font()
+        packages = self.packages()
+        rules_by_key = {rule.key for rule in self.rules()}
+        screen.blit(
+            small.render("IMPORT SHARED RULE PACKAGES", True, theme["button_text"]),
+            layout.content.topleft,
+        )
+        folder = self._fit_text(
+            tiny,
+            f"Copy .rule.json files here: {self.services.package_directory()}",
+            layout.content.width,
+        )
+        screen.blit(
+            tiny.render(folder, True, theme["menu_text"]),
+            (layout.content.x, layout.content.y + 23),
+        )
+        mouse = pygame.mouse.get_pos()
+        for package, row, import_button in layout.package_rows:
+            hovered = row.collidepoint(mouse)
+            already_imported = package.rule.key in rules_by_key
+            pygame.draw.rect(
+                screen,
+                theme["button_hover"] if hovered else theme["button"],
+                row,
+                border_radius=7,
+            )
+            pygame.draw.rect(
+                screen,
+                self.accent if hovered else theme["grid"],
+                row,
+                2 if hovered else 1,
+                border_radius=7,
+            )
+            text_width = row.width - 126
+            screen.blit(
+                small.render(
+                    self._fit_text(small, package.rule.name, text_width),
+                    True,
+                    theme["button_text"],
+                ),
+                (row.x + 12, row.y + 6),
+            )
+            detail = f"{package.rule.summary} · {package.source_name}"
+            summary = tiny.render(
+                self._fit_text(tiny, detail, text_width),
+                True,
+                theme["menu_text"],
+            )
+            screen.blit(summary, (row.x + 12, row.bottom - summary.get_height() - 8))
+            pygame.draw.rect(
+                screen,
+                theme["info_bar"] if already_imported else theme["button_hover"],
+                import_button,
+                border_radius=5,
+            )
+            pygame.draw.rect(
+                screen,
+                theme["grid"] if already_imported else self.accent,
+                import_button,
+                1,
+                border_radius=5,
+            )
+            label = "In Library" if already_imported else "Import"
+            rendered = tiny.render(label, True, theme["button_text"])
+            screen.blit(rendered, rendered.get_rect(center=import_button.center))
+        if not packages:
+            message = (
+                "No compatible packages found. Export a rule or copy a shared "
+                ".rule.json file into the folder above."
+            )
+            self._draw_wrapped(
+                screen,
+                small,
+                message,
+                theme["menu_text"],
+                pygame.Rect(
+                    layout.content.x + 24,
+                    layout.content.centery - 25,
+                    layout.content.width - 48,
+                    60,
+                ),
+                maximum_lines=2,
+            )
 
     def _draw_delete_confirmation(
         self,
@@ -866,9 +1060,11 @@ class CustomRuleStudio:
         screen.blit(close_text, close_text.get_rect(center=layout.close.center))
 
         rules = self.rules()
+        packages = self.packages()
         for key, rect, label in (
             (self.LEARN_VIEW, layout.learn_tab, "LEARN & TEMPLATES"),
             (self.LIBRARY_VIEW, layout.library_tab, f"MY RULES ({len(rules)})"),
+            (self.IMPORT_VIEW, layout.import_tab, f"IMPORT ({len(packages)})"),
         ):
             active = self.view == key
             pygame.draw.rect(screen, theme["button_hover"] if active else theme["button"], rect, border_radius=6)
@@ -878,8 +1074,10 @@ class CustomRuleStudio:
 
         if self.view == self.LEARN_VIEW:
             self._draw_learn_view(screen, theme, layout)
-        else:
+        elif self.view == self.LIBRARY_VIEW:
             self._draw_library_view(screen, theme, layout)
+        else:
+            self._draw_import_view(screen, theme, layout)
 
         pygame.draw.rect(screen, theme["button_hover"], layout.create, border_radius=7)
         pygame.draw.rect(screen, self.accent, layout.create, 2, border_radius=7)
@@ -894,11 +1092,15 @@ class CustomRuleStudio:
             start = min(len(rules), self.scroll + 1) if rules else 0
             end = min(len(rules), self.scroll + layout.capacity)
             count = f"{start}-{end} / {len(rules)} · "
+        elif self.view == self.IMPORT_VIEW:
+            start = min(len(packages), self.scroll + 1) if packages else 0
+            end = min(len(packages), self.scroll + layout.capacity)
+            count = f"{start}-{end} / {len(packages)} · "
         else:
             count = "1-4: use template · "
         footer_text = (
             self.message
-            or f"{count}Tab: switch guide/library · C: custom builder · Esc: close"
+            or f"{count}Tab: switch view · R: rules · I: import · C: build · Esc: close"
         )
         footer = tiny.render(
             self._fit_text(tiny, footer_text, layout.modal.width - 52),

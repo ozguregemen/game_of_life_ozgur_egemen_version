@@ -219,6 +219,14 @@ Generations rehberi `S/B/C/M-or-N` içindeki refractory state zincirini açıkla
 kartlar 1D'de 30/90/110/184, 2D'de Conway/HighLife/Seeds/Day & Night ve 3D'de aktif
 moda uygun Bays ya da Generations örneklerini içerir.
 
+`My Rules` satırlarındaki `Share` düğmesi kuralı sürümlü, bağımsız bir
+`*.rule.json` paketine aktarır. `Import` sekmesi yalnız aktif boyutla uyumlu ve aynı
+doğrulama katmanından geçmiş paketleri listeler. Paylaşılan dosyalar işletim sistemine
+uygun kullanıcı veri dizinindeki `rule_packages/` klasörüne kopyalanır; sekmeye her
+geçişte katalog kontrollü biçimde yenilenir. İçe aktarma mevcut aynı adlı kuralın
+üzerine sessizce yazmaz ve bozuk, aşırı büyük veya desteklenmeyen paketler uygulamayı
+çökertmeden atlanır.
+
 Kural adları taşınabilir dosya adına dönüştürülür; traversal ve Windows için sakıncalı
 adlar engellenir. Aynı adlı dosyanın üstüne sessizce yazılmaz ve aktif kural silinemez.
 Etkin kuralın silme düğmesi devre dışı görünür. Diğer kurallar, adlarını yeniden

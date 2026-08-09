@@ -38,6 +38,12 @@ class ApplicationPaths:
         return self.data / "rules"
 
     @property
+    def rule_packages(self) -> Path:
+        """User-visible exchange folder for standalone custom-rule files."""
+
+        return self.data / "rule_packages"
+
+    @property
     def exports(self) -> Path:
         return self.data / "exports"
 

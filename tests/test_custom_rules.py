@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,12 +13,16 @@ from custom_rules import (
     custom_rule_from_3d_generations,
     custom_rule_from_3d_life,
     delete_custom_rule,
+    export_custom_rule_package,
     get_custom_rule,
+    get_custom_rule_packages,
     get_custom_rules,
+    import_custom_rule_package,
     parse_generations_notation,
     parse_life_like_notation,
     parse_neighbor_counts,
     refresh_custom_rule_cache,
+    refresh_custom_rule_package_cache,
     safe_custom_rule_filename,
     save_custom_rule,
 )
@@ -29,6 +34,7 @@ from three_dimensional_rules import LifeLikeRule3D
 class CustomRuleTests(unittest.TestCase):
     def tearDown(self) -> None:
         refresh_custom_rule_cache()
+        refresh_custom_rule_package_cache()
 
     def test_safe_filename_blocks_traversal_empty_and_reserved_names(self) -> None:
         self.assertEqual(safe_custom_rule_filename("../A:B"), "a_b")
@@ -107,8 +113,6 @@ class CustomRuleTests(unittest.TestCase):
             (target / "broken.json").write_text("{bad", encoding="utf-8")
             (target / "oversized.json").write_bytes(b" " * (64 * 1024 + 1))
             wrong = custom_rule_from_3d_life("Wrong Folder", "B6/S567")
-            import json
-
             (target / "wrong.json").write_text(
                 json.dumps(wrong.as_document()),
                 encoding="utf-8",
@@ -117,6 +121,61 @@ class CustomRuleTests(unittest.TestCase):
                 with self.assertWarns(UserWarning):
                     refresh_custom_rule_cache()
                 self.assertFalse(get_custom_rules())
+
+    def test_rule_package_export_import_is_versioned_and_collision_safe(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            rules = root / "rules"
+            packages = root / "packages"
+            with (
+                patch("custom_rules.CUSTOM_RULE_DIRECTORY", rules),
+                patch("custom_rules.CUSTOM_RULE_PACKAGE_DIRECTORY", packages),
+            ):
+                refresh_custom_rule_cache()
+                refresh_custom_rule_package_cache()
+                original = custom_rule_from_2d("Özel Paylaşım", "B36/S23")
+
+                first_path = export_custom_rule_package(original)
+                second_path = export_custom_rule_package(original)
+                self.assertNotEqual(first_path, second_path)
+                self.assertTrue(first_path.name.endswith(".rule.json"))
+                packages_found = get_custom_rule_packages("2d")
+                self.assertEqual(len(packages_found), 2)
+                self.assertEqual(packages_found[0].rule, original)
+
+                imported = import_custom_rule_package(packages_found[0])
+                self.assertEqual(imported, original)
+                self.assertEqual(get_custom_rules("2d"), (original,))
+                with self.assertRaises(FileExistsError):
+                    import_custom_rule_package(packages_found[1])
+
+    def test_corrupt_rule_packages_are_skipped_without_hiding_valid_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("custom_rules.CUSTOM_RULE_PACKAGE_DIRECTORY", root):
+                valid_rule = custom_rule_from_3d_life("Shared Bays", "B6/S567")
+                valid_document = {
+                    "schema": "cellular-automata-lab-rule-package",
+                    "version": 1,
+                    "exported_at": "2026-08-09T00:00:00+00:00",
+                    "application_version": "0.9.0",
+                    "rule": valid_rule.as_document(),
+                }
+                (root / "valid.rule.json").write_text(
+                    json.dumps(valid_document),
+                    encoding="utf-8",
+                )
+                (root / "broken.rule.json").write_text("{bad", encoding="utf-8")
+                (root / "oversized.rule.json").write_bytes(
+                    b" " * (64 * 1024 + 1)
+                )
+
+                with self.assertWarns(UserWarning):
+                    refresh_custom_rule_package_cache()
+
+                packages_found = get_custom_rule_packages("3d")
+                self.assertEqual(len(packages_found), 1)
+                self.assertEqual(packages_found[0].rule, valid_rule)
 
     def test_invalid_definition_rejects_cross_dimension_kind(self) -> None:
         with self.assertRaisesRegex(ValueError, "currently support"):

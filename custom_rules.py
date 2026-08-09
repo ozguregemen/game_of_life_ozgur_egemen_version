@@ -12,6 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from app_metadata import APP_VERSION
 from app_paths import APPLICATION_PATHS
 from one_dimensional_ca import RuleSpec
 from three_dimensional_ca import MOORE_NEIGHBORHOOD, VON_NEUMANN_NEIGHBORHOOD
@@ -21,6 +22,9 @@ from three_dimensional_rules import LifeLikeRule3D
 CUSTOM_RULE_SCHEMA = "cellular-automata-lab-custom-rule"
 CUSTOM_RULE_VERSION = 1
 CUSTOM_RULE_DIRECTORY = APPLICATION_PATHS.rules
+CUSTOM_RULE_PACKAGE_SCHEMA = "cellular-automata-lab-rule-package"
+CUSTOM_RULE_PACKAGE_VERSION = 1
+CUSTOM_RULE_PACKAGE_DIRECTORY = APPLICATION_PATHS.rule_packages
 CUSTOM_RULE_DIMENSIONS = ("1d", "2d", "3d")
 
 KIND_ONE_DIMENSIONAL = "one_dimensional"
@@ -45,6 +49,7 @@ MAX_CUSTOM_RULE_NAME = 80
 MAX_CUSTOM_RULE_DESCRIPTION = 500
 MAX_CUSTOM_RULE_FILES = 500
 MAX_CUSTOM_RULE_BYTES = 64 * 1024
+MAX_CUSTOM_RULE_PACKAGES = 500
 
 _INVALID_FILENAME_CHARACTERS = re.compile(r'[\\/:*?"<>|]+')
 _WHITESPACE = re.compile(r"\s+")
@@ -328,6 +333,20 @@ class CustomRuleDefinition:
         }
 
 
+@dataclass(frozen=True)
+class CustomRulePackage:
+    """One validated, shareable custom-rule document on disk."""
+
+    path: Path
+    rule: CustomRuleDefinition
+    exported_at: str
+    application_version: str
+
+    @property
+    def source_name(self) -> str:
+        return self.path.name
+
+
 def _validated_counts(value: Any, maximum: int, label: str) -> tuple[int, ...]:
     if not isinstance(value, (list, tuple)):
         raise TypeError(f"Custom rule {label} counts must be a list.")
@@ -440,7 +459,59 @@ def custom_rule_from_document(value: Any) -> CustomRuleDefinition:
     )
 
 
+def _read_json_document(path: Path) -> Any:
+    """Read one size-limited UTF-8 JSON document."""
+
+    if path.stat().st_size > MAX_CUSTOM_RULE_BYTES:
+        raise ValueError("Custom rule file is too large.")
+    with path.open("r", encoding="utf-8") as rule_file:
+        return json.load(rule_file)
+
+
+def custom_rule_package_from_document(
+    value: Any,
+    *,
+    path: Path,
+) -> CustomRulePackage:
+    """Validate a standalone package envelope and its embedded rule."""
+
+    if not isinstance(value, Mapping):
+        raise TypeError("Custom rule package JSON must contain an object.")
+    version = value["version"]
+    if (
+        value["schema"] != CUSTOM_RULE_PACKAGE_SCHEMA
+        or isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != CUSTOM_RULE_PACKAGE_VERSION
+    ):
+        raise ValueError("Unsupported custom rule package schema or version.")
+    exported_at = value["exported_at"]
+    application_version = value["application_version"]
+    if not isinstance(exported_at, str) or not exported_at.strip():
+        raise TypeError("Custom rule package exported_at must be text.")
+    if not isinstance(application_version, str) or not application_version.strip():
+        raise TypeError("Custom rule package application_version must be text.")
+    rule = custom_rule_from_document(value["rule"])
+    return CustomRulePackage(
+        path=Path(path),
+        rule=rule,
+        exported_at=exported_at.strip(),
+        application_version=application_version.strip(),
+    )
+
+
+def read_custom_rule_package(path: Path) -> CustomRulePackage:
+    """Read and validate one standalone rule package without mutating the catalog."""
+
+    source = Path(path)
+    return custom_rule_package_from_document(
+        _read_json_document(source),
+        path=source,
+    )
+
+
 _CUSTOM_RULE_CACHE: dict[str, CustomRuleDefinition] = {}
+_CUSTOM_RULE_PACKAGE_CACHE: tuple[CustomRulePackage, ...] = ()
 
 
 def refresh_custom_rule_cache() -> None:
@@ -458,10 +529,7 @@ def refresh_custom_rule_cache() -> None:
                 )
                 break
             try:
-                if path.stat().st_size > MAX_CUSTOM_RULE_BYTES:
-                    raise ValueError("Custom rule file is too large.")
-                with path.open("r", encoding="utf-8") as rule_file:
-                    rule = custom_rule_from_document(json.load(rule_file))
+                rule = custom_rule_from_document(_read_json_document(path))
                 if rule.dimension != dimension:
                     raise ValueError("Custom rule directory does not match its dimension.")
                 if rule.key in refreshed:
@@ -471,6 +539,94 @@ def refresh_custom_rule_cache() -> None:
                 warnings.warn(f"Skipping invalid custom rule file '{path.name}': {exc}")
     _CUSTOM_RULE_CACHE.clear()
     _CUSTOM_RULE_CACHE.update(refreshed)
+
+
+def refresh_custom_rule_package_cache() -> None:
+    """Refresh shareable packages when Studio opens or a package changes."""
+
+    global _CUSTOM_RULE_PACKAGE_CACHE
+    refreshed: list[CustomRulePackage] = []
+    directory = CUSTOM_RULE_PACKAGE_DIRECTORY
+    if directory.is_dir():
+        for index, path in enumerate(sorted(directory.glob("*.rule.json"))):
+            if index >= MAX_CUSTOM_RULE_PACKAGES:
+                warnings.warn("Skipping excess custom rule packages.")
+                break
+            try:
+                refreshed.append(read_custom_rule_package(path))
+            except (json.JSONDecodeError, OSError, KeyError, TypeError, ValueError) as exc:
+                warnings.warn(f"Skipping invalid custom rule package '{path.name}': {exc}")
+    _CUSTOM_RULE_PACKAGE_CACHE = tuple(
+        sorted(
+            refreshed,
+            key=lambda package: (
+                package.rule.name.casefold(),
+                package.source_name.casefold(),
+            ),
+        )
+    )
+
+
+def get_custom_rule_packages(
+    dimension: str | None = None,
+) -> tuple[CustomRulePackage, ...]:
+    """Return cached shareable packages, optionally filtered by dimension."""
+
+    if dimension is not None and dimension not in CUSTOM_RULE_DIMENSIONS:
+        raise ValueError(f"Unknown custom-rule dimension: {dimension!r}.")
+    return tuple(
+        package
+        for package in _CUSTOM_RULE_PACKAGE_CACHE
+        if dimension is None or package.rule.dimension == dimension
+    )
+
+
+def _unique_package_path(rule: CustomRuleDefinition) -> Path:
+    stem = f"{safe_custom_rule_filename(rule.name)}-{rule.dimension}"
+    candidate = CUSTOM_RULE_PACKAGE_DIRECTORY / f"{stem}.rule.json"
+    counter = 2
+    while candidate.exists():
+        candidate = CUSTOM_RULE_PACKAGE_DIRECTORY / f"{stem}-{counter}.rule.json"
+        counter += 1
+    return candidate
+
+
+def export_custom_rule_package(rule: CustomRuleDefinition) -> Path:
+    """Atomically export a validated rule to a versioned standalone package."""
+
+    validated = custom_rule_from_document(rule.as_document())
+    CUSTOM_RULE_PACKAGE_DIRECTORY.mkdir(parents=True, exist_ok=True)
+    path = _unique_package_path(validated)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    document = {
+        "schema": CUSTOM_RULE_PACKAGE_SCHEMA,
+        "version": CUSTOM_RULE_PACKAGE_VERSION,
+        "exported_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "application_version": APP_VERSION,
+        "rule": validated.as_document(),
+    }
+    try:
+        with temporary.open("x", encoding="utf-8") as package_file:
+            json.dump(document, package_file, ensure_ascii=False, indent=2)
+            package_file.flush()
+        temporary.replace(path)
+    except OSError:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    refresh_custom_rule_package_cache()
+    return path
+
+
+def import_custom_rule_package(package: CustomRulePackage) -> CustomRuleDefinition:
+    """Revalidate a package from disk and add it without silent overwrite."""
+
+    current = read_custom_rule_package(package.path)
+    saved = save_custom_rule(current.rule)
+    refresh_custom_rule_package_cache()
+    return saved
 
 
 def get_custom_rules(
@@ -550,3 +706,4 @@ def delete_custom_rule(key: str) -> bool:
 
 
 refresh_custom_rule_cache()
+refresh_custom_rule_package_cache()

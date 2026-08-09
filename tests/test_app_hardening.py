@@ -22,6 +22,7 @@ class ApplicationPathTests(unittest.TestCase):
         self.assertEqual(paths.data, Path("~/portable-ca").expanduser())
         self.assertEqual(paths.preferences, paths.data / "config/ui_preferences.json")
         self.assertEqual(paths.profiles, paths.data / "sessions/eca_profiles")
+        self.assertEqual(paths.rule_packages, paths.data / "rule_packages")
 
     def test_windows_paths_use_local_data_and_roaming_config(self) -> None:
         paths = resolve_application_paths(
