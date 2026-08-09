@@ -5,6 +5,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 from scientific_analysis import StateObservation
+from custom_rules import custom_rule_from_2d
 from workspaces.two_dimensional import (
     TwoDimensionalWorkspaceController,
     TwoDimensionalWorkspaceServices,
@@ -93,6 +94,31 @@ class TwoDimensionalWorkspaceArchitectureTests(unittest.TestCase):
         )
         self.assertEqual(self.controller.history_status().frame_count, 2)
         self.assertTrue(self.observations)
+
+    def test_custom_life_rule_drives_birth_and_survives_snapshot_round_trip(self) -> None:
+        highlife = custom_rule_from_2d("HighLife Test", "B36/S23")
+        self.controller.apply_custom_life_rule(highlife)
+        center = (6, 8)
+        for row, column in (
+            (5, 7),
+            (5, 8),
+            (5, 9),
+            (6, 7),
+            (6, 9),
+            (7, 8),
+        ):
+            self.state.life.grid[row][column] = 1
+        self.controller.timelines["life"].reset()
+
+        self.assertTrue(self.controller.advance())
+        self.assertGreater(self.state.life.grid[center[0]][center[1]], 0)
+
+        snapshot = self.controller.snapshot()
+        self.controller.set_builtin_life_rule("conway")
+        self.controller.restore(snapshot)
+
+        self.assertEqual(self.state.life.rule, highlife.key)
+        self.assertEqual(self.state.life.custom_rule, highlife)
 
     def test_modes_keep_independent_state_and_history(self) -> None:
         self.state.life.grid[1][1] = 1

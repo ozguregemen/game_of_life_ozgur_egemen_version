@@ -9,6 +9,12 @@ from typing import Any, Callable, Mapping
 import numpy as np
 import pygame
 
+from custom_rules import (
+    KIND_GENERATIONS,
+    CustomRuleDefinition,
+    custom_rule_from_document,
+    get_custom_rule,
+)
 from dimension_registry import DIMENSION_BY_KEY
 from rng_state import encode_random_state, restore_random_state
 from scientific_analysis import StateObservation
@@ -172,6 +178,7 @@ class ThreeDimensionalWorkspaceState:
     selected_pattern: Pattern3D | None = None
     pattern_transform: PatternTransform3D = field(default_factory=PatternTransform3D)
     pattern_anchor: tuple[int, int, int] | None = None
+    custom_rule: CustomRuleDefinition | None = None
     brush_state: int = 1
     drawing: bool = False
     drawing_value: int = 1
@@ -226,6 +233,43 @@ class ThreeDimensionalWorkspaceServices:
         bool,
     ] = lambda _volume, _camera, _viewport, _revision, _settings, _selected, _preview: False
     request_text: Callable[[str], str | None] = lambda _prompt: None
+    activate_custom_rule_studio: Callable[[], None] = lambda: None
+
+
+def _snapshot_rule_3d(
+    snapshot: Mapping[str, Any],
+) -> tuple[Rule3D, str, CustomRuleDefinition | None]:
+    """Resolve a built-in or embedded custom 3D rule from one snapshot."""
+
+    rule_key = str(snapshot["rule"])
+    custom_document = snapshot.get("custom_rule")
+    custom_rule: CustomRuleDefinition | None = None
+    if rule_key in ALL_RULES_3D:
+        rule = ALL_RULES_3D[rule_key]
+        inferred_mode = mode_for_rule(rule_key)
+        if custom_document is not None:
+            raise ValueError("Built-in 3D rule cannot carry custom rule metadata.")
+    else:
+        if isinstance(custom_document, Mapping):
+            custom_rule = custom_rule_from_document(custom_document)
+        else:
+            custom_rule = get_custom_rule(rule_key)
+        if (
+            custom_rule is None
+            or custom_rule.dimension != "3d"
+            or custom_rule.key != rule_key
+        ):
+            raise ValueError(f"Unknown custom 3D rule: {rule_key}")
+        rule = custom_rule.three_dimensional_rule()
+        inferred_mode = (
+            MODE_GENERATIONS
+            if custom_rule.kind == KIND_GENERATIONS
+            else MODE_SPATIAL_LIFE
+        )
+    mode_key = str(snapshot.get("mode", inferred_mode))
+    if mode_key != inferred_mode:
+        raise ValueError("3D rule does not belong to its saved mode.")
+    return rule, mode_key, custom_rule
 
 
 class ThreeDimensionalWorkspaceController(WorkspaceController):
@@ -254,7 +298,13 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     @property
     def rule(self) -> Rule3D:
-        return ALL_RULES_3D[self.state.rule_key]
+        builtin = ALL_RULES_3D.get(self.state.rule_key)
+        if builtin is not None:
+            return builtin
+        custom = self.state.custom_rule or get_custom_rule(self.state.rule_key)
+        if custom is None or custom.dimension != "3d":
+            raise KeyError(f"Unknown 3D rule: {self.state.rule_key}")
+        return custom.three_dimensional_rule()
 
     @property
     def mode_label(self) -> str:
@@ -277,6 +327,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         return get_patterns_3d(
             mode_key=self.state.mode_key,
             rule_key=self.state.rule_key,
+            rule=self.rule,
             category=None if category == "all" else category,
         )
 
@@ -286,6 +337,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         patterns = get_patterns_3d(
             mode_key=self.state.mode_key,
             rule_key=self.state.rule_key,
+            rule=self.rule,
         )
         counts: dict[str, int] = {}
         for pattern in patterns:
@@ -386,7 +438,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
     def select_pattern(self, pattern: Pattern3D) -> None:
         """Start a non-destructive centered ghost preview."""
 
-        if not pattern.compatible_with(self.state.mode_key, self.state.rule_key):
+        if not pattern.compatible_with(
+            self.state.mode_key,
+            self.state.rule_key,
+            self.rule,
+        ):
             self._status(
                 f"{pattern.name} is not compatible with {self.rule.name}.",
                 4.0,
@@ -459,7 +515,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         anchor = self.state.pattern_anchor
         if pattern is None or anchor is None:
             return False
-        if not pattern.compatible_with(self.state.mode_key, self.state.rule_key):
+        if not pattern.compatible_with(
+            self.state.mode_key,
+            self.state.rule_key,
+            self.rule,
+        ):
             self.cancel_pattern_selection()
             self._status("The selected pattern no longer matches the active rule.", 4.0)
             return False
@@ -510,6 +570,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 name,
                 mode_key=self.state.mode_key,
                 rule_key=self.state.rule_key,
+                rule=self.rule,
                 description=f"Saved from {self.rule.name} at generation {self.generation}.",
             )
             saved = save_custom_pattern_3d(pattern)
@@ -873,6 +934,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         rule = RULES_BY_MODE_3D[MODE_SPATIAL_LIFE][pattern.rule_key]
         self.state.mode_key = MODE_SPATIAL_LIFE
         self.state.rule_key = rule.key
+        self.state.custom_rule = None
         self.state.volume = Volume3D(
             cells,
             state_count=2,
@@ -905,6 +967,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             cells = np.zeros(self.state.volume.shape, dtype=np.uint8)
         self.state.mode_key = mode_key
         self.state.rule_key = rule.key
+        self.state.custom_rule = None
         self.state.volume = Volume3D(
             cells,
             state_count=rule_state_count(rule),
@@ -936,6 +999,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self._discard_pattern_state()
         self.save_history()
         self.state.rule_key = rule.key
+        self.state.custom_rule = None
         if isinstance(rule, GenerationsRule3D):
             cells = self._generations_core_cells(rule)
             self.state.volume = Volume3D(
@@ -956,8 +1020,72 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def cycle_rule(self) -> None:
         keys = tuple(RULES_BY_MODE_3D[self.state.mode_key])
+        if self.state.rule_key not in keys:
+            self.set_rule(keys[0])
+            return
         index = keys.index(self.state.rule_key)
         self.set_rule(keys[(index + 1) % len(keys)])
+
+    def apply_custom_rule(self, custom_rule: CustomRuleDefinition) -> None:
+        """Load a validated custom 3D rule with a suitable central seed."""
+
+        if custom_rule.dimension != "3d":
+            raise ValueError("Custom rule does not belong to the 3D workspace.")
+        rule = custom_rule.three_dimensional_rule()
+        mode_key = (
+            MODE_GENERATIONS
+            if custom_rule.kind == KIND_GENERATIONS
+            else MODE_SPATIAL_LIFE
+        )
+        if (
+            self.state.custom_rule is not None
+            and self.state.custom_rule.key == custom_rule.key
+        ):
+            self._status(f"Custom rule '{custom_rule.name}' is already active.")
+            return
+        self._discard_pattern_state()
+        self.save_history()
+        if isinstance(rule, GenerationsRule3D):
+            cells = self._generations_core_cells(rule)
+        else:
+            cells = np.zeros(self.state.volume.shape, dtype=np.uint8)
+            center = tuple(length // 2 for length in self.state.volume.shape)
+            for dz, dy, dx in (
+                (0, 0, 0),
+                (-1, 0, 0),
+                (1, 0, 0),
+                (0, -1, 0),
+                (0, 1, 0),
+                (0, 0, -1),
+                (0, 0, 1),
+            ):
+                position = (center[0] + dz, center[1] + dy, center[2] + dx)
+                if all(
+                    0 <= position[axis] < self.state.volume.shape[axis]
+                    for axis in range(3)
+                ):
+                    cells[position] = 1
+        self.state.mode_key = mode_key
+        self.state.rule_key = rule.key
+        self.state.custom_rule = custom_rule
+        self.state.volume = Volume3D(
+            cells,
+            state_count=rule_state_count(rule),
+            boundary=self.state.volume.boundary,
+            neighborhood=rule.neighborhood,
+        )
+        self.state.generation = 0
+        self.state.slice_index = self.slice_count() // 2
+        self.state.selected_voxel = None
+        self.services.set_running(False)
+        self._invalidate()
+        self.sync_history()
+        self.center_view()
+        self.services.rebuild_sidebar()
+        self._status(
+            f"Custom 3D rule: {custom_rule.name} · {custom_rule.notation}.",
+            5.0,
+        )
 
     def cycle_neighborhood(self) -> None:
         """Switch between 26-neighbor and six-face rule families safely."""
@@ -1095,6 +1223,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         return {
             "mode": self.state.mode_key,
             "rule": self.state.rule_key,
+            "custom_rule": (
+                self.state.custom_rule.as_document()
+                if self.state.custom_rule is not None
+                else None
+            ),
             "state_count": self.state.volume.state_count,
             "boundary": self.state.volume.boundary,
             "shape": self.state.volume.shape,
@@ -1126,11 +1259,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             cells = np.asarray(raw_cells, dtype=np.uint8)
             if cells.shape != shape:
                 raise ValueError("3D export cells do not match the volume shape.")
-        rule_key = str(snapshot["rule"])
-        rule = ALL_RULES_3D[rule_key]
-        mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
-        if mode_for_rule(rule_key) != mode_key:
-            raise ValueError("3D export rule does not belong to its saved mode.")
+        rule, _mode_key, _custom_rule = _snapshot_rule_3d(snapshot)
         state_count = int(snapshot.get("state_count", rule_state_count(rule)))
         if state_count != rule_state_count(rule):
             raise ValueError("3D export state count does not match its rule.")
@@ -1146,16 +1275,13 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         previous_shape = self.state.volume.shape
         shape = tuple(int(value) for value in snapshot["shape"])
         cells = np.frombuffer(snapshot["cells"], dtype=np.uint8).reshape(shape)
-        rule_key = str(snapshot["rule"])
-        rule = ALL_RULES_3D[rule_key]
-        mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
-        if mode_for_rule(rule_key) != mode_key:
-            raise ValueError("3D timeline rule does not belong to its saved mode.")
+        rule, mode_key, custom_rule = _snapshot_rule_3d(snapshot)
         state_count = int(snapshot.get("state_count", rule_state_count(rule)))
         if state_count != rule_state_count(rule):
             raise ValueError("3D timeline state count does not match its rule.")
         self.state.mode_key = mode_key
         self.state.rule_key = rule.key
+        self.state.custom_rule = custom_rule
         self.state.volume = Volume3D(
             cells,
             state_count=state_count,
@@ -1186,6 +1312,11 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             "cells": self.state.volume.cells.tolist(),
             "mode": self.state.mode_key,
             "rule": self.state.rule_key,
+            "custom_rule": (
+                self.state.custom_rule.as_document()
+                if self.state.custom_rule is not None
+                else None
+            ),
             "state_count": self.state.volume.state_count,
             "boundary": self.state.volume.boundary,
             "generation": self.state.generation,
@@ -1210,11 +1341,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
     def restore(self, snapshot: Mapping[str, Any]) -> None:
         """Restore a validated complete 3D workspace snapshot."""
         self._discard_pattern_state()
-        rule_key = str(snapshot["rule"])
-        rule = ALL_RULES_3D[rule_key]
-        mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
-        if mode_for_rule(rule_key) != mode_key:
-            raise ValueError("3D session rule does not belong to its saved mode.")
+        rule, mode_key, custom_rule = _snapshot_rule_3d(snapshot)
         state_count = int(snapshot.get("state_count", rule_state_count(rule)))
         if state_count != rule_state_count(rule):
             raise ValueError("3D session state count does not match its rule.")
@@ -1252,6 +1379,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.state.volume = volume
         self.state.mode_key = mode_key
         self.state.rule_key = rule.key
+        self.state.custom_rule = custom_rule
         self.state.generation = int(snapshot["generation"])
         self.state.slice_axis = axis
         self.state.slice_index = index
@@ -1683,6 +1811,16 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.toggle_running,
             accent=accent,
             active=self.services.is_running(),
+        )
+        menu.add_button(
+            "Custom Rule Studio",
+            self.services.activate_custom_rule_studio,
+            accent=(245, 185, 70),
+            active=self.state.custom_rule is not None,
+            tooltip=(
+                "Create and apply binary Spatial Life or multi-state "
+                "3D Generations rules."
+            ),
         )
         menu.add_button(
             f"Mode: {self.mode_label} (M)",

@@ -76,7 +76,24 @@ PATTERN_TYPES = {
 }
 
 
-def _validate_rule(rule_name: str) -> dict[str, Any]:
+def _validate_rule(rule_name: str | Mapping[str, Any]) -> Mapping[str, Any]:
+    if isinstance(rule_name, Mapping):
+        birth = rule_name.get("birth")
+        survival = rule_name.get("survival")
+        if not isinstance(birth, (list, tuple)) or not isinstance(
+            survival,
+            (list, tuple),
+        ):
+            raise ValueError("Life-like rule must define birth and survival counts.")
+        for label, values in (("birth", birth), ("survival", survival)):
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or not 0 <= value <= 8
+                for value in values
+            ):
+                raise ValueError(f"Life-like {label} counts must be integers from 0 to 8.")
+        return rule_name
     try:
         return RULES[rule_name]
     except KeyError as exc:
@@ -98,7 +115,7 @@ def count_neighbors(grid: Mapping[tuple[int, int], int], x: int, y: int) -> int:
 
 def apply_rules(
     grid: Mapping[tuple[int, int], int],
-    rule_name: str = "conway",
+    rule_name: str | Mapping[str, Any] = "conway",
 ) -> dict[tuple[int, int], int]:
     """Apply a rule to a sparse dictionary grid."""
     rule = _validate_rule(rule_name)
@@ -123,7 +140,7 @@ def apply_rules(
 
 def apply_rules_2d(
     grid: Sequence[Sequence[int]],
-    rule_name: str = "conway",
+    rule_name: str | Mapping[str, Any] = "conway",
 ) -> list[list[int]]:
     """Apply a rule to a finite 2D grid.
 

@@ -9,6 +9,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
+from custom_rules import custom_rule_from_3d_generations
 from themes import Menu
 from three_dimensional_patterns import (
     ASYMMETRIC_HOOK_6,
@@ -103,6 +104,25 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertTrue((self.controller.state.volume.cells == seeded).all())
         self.controller.step_forward()
         self.assertEqual(self.controller.generation, 1)
+
+    def test_custom_generations_rule_updates_volume_and_round_trips(self) -> None:
+        rule = custom_rule_from_3d_generations(
+            "Cooling Test",
+            "4/4/5/M",
+        )
+        self.controller.apply_custom_rule(rule)
+
+        self.assertEqual(self.controller.state.mode_key, MODE_GENERATIONS)
+        self.assertEqual(self.controller.state.rule_key, rule.key)
+        self.assertEqual(self.controller.state.volume.state_count, 5)
+        self.assertGreater(np.count_nonzero(self.controller.state.volume.cells), 0)
+
+        snapshot = self.controller.snapshot()
+        self.controller.set_mode(MODE_SPATIAL_LIFE)
+        self.controller.restore(snapshot)
+
+        self.assertEqual(self.controller.state.custom_rule, rule)
+        self.assertEqual(self.controller.rule.key, rule.key)
 
     def test_slice_axis_navigation_and_pointer_editing_map_to_volume(self) -> None:
         self.controller.state.slice_axis = "z"

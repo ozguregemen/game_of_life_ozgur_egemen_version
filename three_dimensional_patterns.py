@@ -17,10 +17,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from app_paths import APPLICATION_PATHS
+from custom_rules import KIND_GENERATIONS, get_custom_rule
 from three_dimensional_ca import BOUNDARY_MODES, BOUNDARY_WRAP, Volume3D, VolumeShape
 from three_dimensional_modes import (
     ALL_RULES_3D,
     MODE_KEYS_3D,
+    Rule3D,
     mode_for_rule,
     rule_state_count,
 )
@@ -139,9 +141,16 @@ class Pattern3D:
         if self.mode_key not in (*MODE_KEYS_3D, GENERIC_MODE_3D):
             raise ValueError(f"Unknown 3D pattern mode: {self.mode_key!r}.")
         if self.rule_key != GENERIC_RULE_3D:
-            if self.rule_key not in ALL_RULES_3D:
+            rule = ALL_RULES_3D.get(self.rule_key)
+            custom = None if rule is not None else get_custom_rule(self.rule_key)
+            if custom is not None and custom.dimension == "3d":
+                rule = custom.three_dimensional_rule()
+                owning_mode = "generations" if custom.kind == KIND_GENERATIONS else "spatial_life"
+            elif rule is not None:
+                owning_mode = mode_for_rule(self.rule_key)
+            else:
                 raise ValueError(f"Unknown 3D pattern rule: {self.rule_key!r}.")
-            if self.mode_key != GENERIC_MODE_3D and mode_for_rule(self.rule_key) != self.mode_key:
+            if self.mode_key != GENERIC_MODE_3D and owning_mode != self.mode_key:
                 raise ValueError("3D pattern rule does not belong to its mode.")
         if not self.offsets or len(set(self.offsets)) != len(self.offsets):
             raise ValueError("3D pattern offsets must be non-empty and unique.")
@@ -165,7 +174,7 @@ class Pattern3D:
         if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in states):
             raise TypeError("3D pattern voxel states must be positive integers.")
         if self.rule_key != GENERIC_RULE_3D:
-            maximum_state = rule_state_count(ALL_RULES_3D[self.rule_key]) - 1
+            maximum_state = rule_state_count(rule) - 1
             if any(value > maximum_state for value in states):
                 raise ValueError("3D pattern state exceeds its rule's state count.")
         if self.boundary not in BOUNDARY_MODES:
@@ -178,16 +187,29 @@ class Pattern3D:
     def voxel_count(self) -> int:
         return len(self.offsets)
 
-    def compatible_with(self, mode_key: str, rule_key: str) -> bool:
+    def compatible_with(
+        self,
+        mode_key: str,
+        rule_key: str,
+        rule: Rule3D | None = None,
+    ) -> bool:
         """Return whether this pattern can be placed under the selected rule."""
 
-        if mode_key not in MODE_KEYS_3D or rule_key not in ALL_RULES_3D:
+        if mode_key not in MODE_KEYS_3D:
             return False
         if self.mode_key not in (GENERIC_MODE_3D, mode_key):
             return False
         if self.rule_key not in (GENERIC_RULE_3D, rule_key):
             return False
-        maximum_state = rule_state_count(ALL_RULES_3D[rule_key]) - 1
+        selected_rule = rule
+        if selected_rule is None:
+            selected_rule = ALL_RULES_3D.get(rule_key)
+            custom = None if selected_rule is not None else get_custom_rule(rule_key)
+            if custom is not None and custom.dimension == "3d":
+                selected_rule = custom.three_dimensional_rule()
+        if selected_rule is None or selected_rule.key != rule_key:
+            return False
+        maximum_state = rule_state_count(selected_rule) - 1
         return max(self.states) <= maximum_state
 
     def transformed_voxels(
@@ -364,14 +386,24 @@ def pattern_from_volume(
     *,
     mode_key: str,
     rule_key: str,
+    rule: Rule3D | None = None,
     description: str = "",
 ) -> Pattern3D:
     """Crop occupied voxels from a volume into a centered custom pattern."""
 
     safe_pattern_3d_filename(name)
-    if mode_key not in MODE_KEYS_3D or rule_key not in ALL_RULES_3D:
+    selected_rule = rule if rule is not None else ALL_RULES_3D.get(rule_key)
+    custom = None if selected_rule is not None else get_custom_rule(rule_key)
+    if custom is not None and custom.dimension == "3d":
+        selected_rule = custom.three_dimensional_rule()
+    if mode_key not in MODE_KEYS_3D or selected_rule is None:
         raise ValueError("Custom 3D pattern mode or rule is unknown.")
-    if mode_for_rule(rule_key) != mode_key:
+    owning_mode = (
+        mode_for_rule(rule_key)
+        if rule_key in ALL_RULES_3D
+        else ("generations" if custom is not None and custom.kind == KIND_GENERATIONS else "spatial_life")
+    )
+    if selected_rule.key != rule_key or owning_mode != mode_key:
         raise ValueError("Custom 3D pattern rule does not belong to its mode.")
     occupied = np.argwhere(volume.cells != 0)
     if not len(occupied):
@@ -437,9 +469,20 @@ def _validate_pattern_document(value: Any) -> Pattern3D:
     safe_pattern_3d_filename(name)
     if not isinstance(mode_key, str) or mode_key not in MODE_KEYS_3D:
         raise TypeError("3D pattern mode is invalid.")
-    if not isinstance(rule_key, str) or rule_key not in ALL_RULES_3D:
+    if not isinstance(rule_key, str):
         raise TypeError("3D pattern rule is invalid.")
-    if mode_for_rule(rule_key) != mode_key:
+    if rule_key in ALL_RULES_3D:
+        owning_mode = mode_for_rule(rule_key)
+    else:
+        custom_rule = get_custom_rule(rule_key)
+        if custom_rule is None or custom_rule.dimension != "3d":
+            raise TypeError("3D pattern rule is invalid.")
+        owning_mode = (
+            "generations"
+            if custom_rule.kind == KIND_GENERATIONS
+            else "spatial_life"
+        )
+    if owning_mode != mode_key:
         raise ValueError("3D pattern rule does not belong to its saved mode.")
     if not isinstance(voxels, list) or not voxels:
         raise TypeError("3D pattern voxels must be a non-empty list.")
@@ -501,6 +544,7 @@ def get_patterns_3d(
     *,
     mode_key: str | None = None,
     rule_key: str | None = None,
+    rule: Rule3D | None = None,
     category: str | None = None,
 ) -> tuple[Pattern3D, ...]:
     """Return the in-memory catalog filtered for one workspace context."""
@@ -518,7 +562,9 @@ def get_patterns_3d(
         if mode_key is None:
             raise ValueError("Filtering 3D patterns by rule also requires a mode.")
         patterns = tuple(
-            pattern for pattern in patterns if pattern.compatible_with(mode_key, rule_key)
+            pattern
+            for pattern in patterns
+            if pattern.compatible_with(mode_key, rule_key, rule)
         )
     if category is not None and category != "all":
         patterns = tuple(pattern for pattern in patterns if pattern.category == category)

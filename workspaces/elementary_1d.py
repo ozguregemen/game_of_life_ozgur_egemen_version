@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 import numpy as np
 import pygame
 
+from custom_rules import CustomRuleDefinition, custom_rule_from_document
 from dimension_registry import DIMENSION_BY_KEY
 from elementary_ca import (
     BOUNDARY_FIXED,
@@ -109,6 +110,7 @@ class ElementaryWorkspaceState:
     drawing_value: int = 1
     brush_state: int = 1
     stroke_history_pending: bool = False
+    custom_rule: CustomRuleDefinition | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +150,7 @@ class ElementaryWorkspaceServices:
     reset_analysis: Callable[[StateObservation], None]
     favorite_rules: Callable[[], frozenset[int]]
     toggle_favorite_rule: Callable[[int], bool]
+    activate_custom_rule_studio: Callable[[], None] = lambda: None
 
 
 class ElementaryWorkspaceController(WorkspaceController):
@@ -685,6 +688,11 @@ class ElementaryWorkspaceController(WorkspaceController):
         return {
             "rule": self.state.rule,
             "rule_spec": self.rule_spec.as_dict(),
+            "custom_rule": (
+                self.state.custom_rule.as_document()
+                if self.state.custom_rule is not None
+                else None
+            ),
             "boundary": self.state.boundary,
             "background": self.state.background,
             "previous_background": self.state.previous_background,
@@ -721,6 +729,11 @@ class ElementaryWorkspaceController(WorkspaceController):
         return {
             "rule": self.state.rule,
             "rule_spec": self.rule_spec.as_dict(),
+            "custom_rule": (
+                self.state.custom_rule.as_document()
+                if self.state.custom_rule is not None
+                else None
+            ),
             "boundary": self.state.boundary,
             "background": self.state.background,
             "previous_background": self.state.previous_background,
@@ -804,6 +817,18 @@ class ElementaryWorkspaceController(WorkspaceController):
         self.state.rule = spec.code
         self.state.states = spec.states
         self.state.radius = spec.radius
+        self.state.custom_rule = None
+        custom_document = snapshot.get("custom_rule")
+        if isinstance(custom_document, Mapping):
+            custom_rule = custom_rule_from_document(custom_document)
+            if (
+                custom_rule.dimension != "1d"
+                or custom_rule.one_dimensional_spec() != spec
+            ):
+                raise ValueError(
+                    "Embedded 1D custom rule does not match its rule spec."
+                )
+            self.state.custom_rule = custom_rule
         self.state.boundary = str(snapshot["boundary"])
         self.state.background = int(snapshot["background"])
         self.state.previous_background = int(snapshot.get("previous_background", 0))
@@ -903,6 +928,11 @@ class ElementaryWorkspaceController(WorkspaceController):
         return {
             "rule": self.state.rule,
             "rule_spec": self.rule_spec.as_dict(),
+            "custom_rule": (
+                self.state.custom_rule.as_document()
+                if self.state.custom_rule is not None
+                else None
+            ),
             "boundary": self.state.boundary,
             "background": self.state.background,
             "rule_change_reset": self.state.rule_change_reset,
@@ -946,6 +976,18 @@ class ElementaryWorkspaceController(WorkspaceController):
         restore_random_state(self.state.rng, experiment["rng"])
 
         self.save_history()
+        custom_document = experiment.get("custom_rule")
+        self.state.custom_rule = None
+        if isinstance(custom_document, Mapping):
+            custom_rule = custom_rule_from_document(custom_document)
+            if (
+                custom_rule.dimension != "1d"
+                or custom_rule.one_dimensional_spec() != spec
+            ):
+                raise ValueError(
+                    "Embedded 1D custom rule does not match its rule spec."
+                )
+            self.state.custom_rule = custom_rule
         self.state.family = spec.family
         self.state.rule = spec.code
         self.state.states = spec.states
@@ -990,6 +1032,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             self._status(f"Rule code {self.state.rule} is already selected.")
             return
         self.save_history()
+        self.state.custom_rule = None
         self.state.rule = validated_rule
         if self.state.rule_change_reset:
             seed = single_state_seed(
@@ -1023,6 +1066,7 @@ class ElementaryWorkspaceController(WorkspaceController):
         """Load one tutorial rule under reproducible canonical conditions."""
         validated_rule = validate_rule(rule)
         self.save_history()
+        self.state.custom_rule = None
         self.state.family = FAMILY_ELEMENTARY
         self.state.rule = validated_rule
         self.state.states = 2
@@ -1099,6 +1143,7 @@ class ElementaryWorkspaceController(WorkspaceController):
     def cycle_rule_family(self) -> None:
         """Select the next generalized rule family and its canonical preset."""
         self.save_history()
+        self.state.custom_rule = None
         current_index = RULE_FAMILIES.index(self.state.family)
         family = RULE_FAMILIES[(current_index + 1) % len(RULE_FAMILIES)]
         spec = default_rule_spec(family)
@@ -1135,6 +1180,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             radius=self.state.radius,
         )
         self.save_history()
+        self.state.custom_rule = None
         self.state.rule = spec.code
         self.state.states = spec.states
         self.state.comparison_rule = min(spec.max_code, spec.code + 1)
@@ -1159,6 +1205,7 @@ class ElementaryWorkspaceController(WorkspaceController):
             radius=next_radius,
         )
         self.save_history()
+        self.state.custom_rule = None
         self.state.rule = spec.code
         self.state.radius = spec.radius
         self.state.comparison_rule = min(spec.max_code, spec.code + 1)
@@ -1169,6 +1216,33 @@ class ElementaryWorkspaceController(WorkspaceController):
             )
         )
         self._status(f"Neighborhood radius changed to {spec.radius}.")
+
+    def apply_custom_rule(self, rule: CustomRuleDefinition) -> None:
+        """Load a named 1D recipe under reproducible seed conditions."""
+
+        if rule.dimension != "1d":
+            raise ValueError("Custom rule does not belong to the 1D workspace.")
+        spec = rule.one_dimensional_spec()
+        if self.state.custom_rule is not None and self.state.custom_rule.key == rule.key:
+            self._status(f"Custom rule '{rule.name}' is already active.")
+            return
+        self.save_history()
+        self.state.family = spec.family
+        self.state.rule = spec.code
+        self.state.states = spec.states
+        self.state.radius = spec.radius
+        self.state.custom_rule = rule
+        self.state.brush_state = min(max(1, self.state.brush_state), spec.states - 1)
+        self.state.comparison_rule = min(spec.max_code, spec.code + 1)
+        self.state.comparison_enabled = False
+        self.state.boundary = BOUNDARY_INFINITE
+        self._restart_diagrams(
+            single_state_seed(self.preferred_seed_width(), states=spec.states)
+        )
+        self._status(
+            f"Custom 1D rule: {rule.name} · {rule.notation}. Canonical seed loaded.",
+            5.0,
+        )
 
     def toggle_comparison(self) -> None:
         self.save_history()
@@ -1450,7 +1524,12 @@ class ElementaryWorkspaceController(WorkspaceController):
     def build_sidebar(self, menu: Menu) -> None:
         accent = DIMENSION_BY_KEY["1d"].accent
         menu.clear_buttons()
-        menu.set_header(f"1D · {self.family_name}")
+        rule_heading = (
+            self.state.custom_rule.name
+            if self.state.custom_rule is not None
+            else self.family_name
+        )
+        menu.set_header(f"1D · {rule_heading}")
         menu.begin_section(
             "1d_workspace",
             "Workspace",
@@ -1496,6 +1575,13 @@ class ElementaryWorkspaceController(WorkspaceController):
             "1d_rules",
             "Rule & Comparison",
             tooltip="Choose a rule family and compare two rules under equal conditions.",
+        )
+        menu.add_button(
+            "Custom Rule Studio",
+            self.services.activate_custom_rule_studio,
+            accent=(245, 185, 70),
+            active=self.state.custom_rule is not None,
+            tooltip="Create, browse, apply, or delete named 1D rule recipes.",
         )
         menu.add_button(
             f"Family: {self.family_name}",
@@ -2064,9 +2150,15 @@ class ElementaryWorkspaceRenderer(WorkspaceRenderer):
             theme["info_bar"],
             (0, 0, width, self.services.info_bar_height),
         )
+        rule_identity = (
+            f"{self.state.custom_rule.name} ({self.controller.family_name} "
+            f"{short_rule_code(self.state.rule)})"
+            if self.state.custom_rule is not None
+            else f"{self.controller.family_name}: {short_rule_code(self.state.rule)}"
+        )
         info = (
-            f"{state_label}   Dimension: 1D   {self.controller.family_name}: "
-            f"{short_rule_code(self.state.rule)}   States: {self.state.states}   "
+            f"{state_label}   Dimension: 1D   {rule_identity}   "
+            f"States: {self.state.states}   "
             f"Radius: {self.state.radius}   "
             f"Speed: {self.services.speed()} gen/s   "
             f"Generation: {self.state.generation}   Boundary: "

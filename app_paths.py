@@ -34,6 +34,10 @@ class ApplicationPaths:
         return self.data / "patterns"
 
     @property
+    def rules(self) -> Path:
+        return self.data / "rules"
+
+    @property
     def exports(self) -> Path:
         return self.data / "exports"
 
