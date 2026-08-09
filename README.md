@@ -221,6 +221,9 @@ moda uygun Bays ya da Generations örneklerini içerir.
 
 Kural adları taşınabilir dosya adına dönüştürülür; traversal ve Windows için sakıncalı
 adlar engellenir. Aynı adlı dosyanın üstüne sessizce yazılmaz ve aktif kural silinemez.
+Etkin kuralın silme düğmesi devre dışı görünür. Diğer kurallar, adlarını yeniden
+yazdırmak yerine geri alınamaz işlemi açıklayan `Cancel / Delete Rule` onay penceresiyle
+silinir; `Esc` iptal eder, `Y`, `D` veya `Delete` işlemi doğrular.
 Dosyalar işletim sistemine uygun kullanıcı veri dizinindeki `rules/<dimension>/`
 klasöründe UTF-8 JSON olarak tutulur. Tam session, 1D profil ve paylaşılabilir deney
 JSON'ları aktif özel kuralın tarifini ayrıca belge içine gömer; böylece deney, ayrı

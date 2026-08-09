@@ -3631,6 +3631,7 @@ def create_contextual_custom_rule(
 
     name = get_text_input("Custom rule name")
     if name is None:
+        set_status("Custom rule creation cancelled.", 3.0)
         return None
     try:
         if active_dimension == "1d":
@@ -3640,6 +3641,7 @@ def create_contextual_custom_rule(
                 template_expression or str(current.code),
             )
             if code_text is None:
+                set_status("Custom rule creation cancelled.", 3.0)
                 return None
             code = int(code_text)
             rule = custom_rule_from_1d(
@@ -3668,6 +3670,7 @@ def create_contextual_custom_rule(
                 template_expression or default_notation,
             )
             if notation is None:
+                set_status("Custom rule creation cancelled.", 3.0)
                 return None
             rule = custom_rule_from_2d(name, notation)
         else:
@@ -3678,6 +3681,7 @@ def create_contextual_custom_rule(
                     template_expression or current.notation,
                 )
                 if notation is None:
+                    set_status("Custom rule creation cancelled.", 3.0)
                     return None
                 rule = custom_rule_from_3d_generations(
                     name,
@@ -3689,6 +3693,7 @@ def create_contextual_custom_rule(
                     template_expression or current.notation,
                 )
                 if notation is None:
+                    set_status("Custom rule creation cancelled.", 3.0)
                     return None
                 neighborhood = (
                     NEIGHBORHOOD_MOORE
@@ -3708,12 +3713,12 @@ def create_contextual_custom_rule(
     return saved
 
 
-def apply_contextual_custom_rule(rule: CustomRuleDefinition) -> None:
-    """Apply a catalog rule to the matching active workspace."""
+def apply_contextual_custom_rule(rule: CustomRuleDefinition) -> bool:
+    """Apply a catalog rule and report whether the workspace accepted it."""
 
     if rule.dimension != active_dimension:
         set_status("That custom rule belongs to another dimension.", 4.0)
-        return
+        return False
     try:
         if active_dimension == "1d":
             elementary_controller.apply_custom_rule(rule)
@@ -3726,17 +3731,16 @@ def apply_contextual_custom_rule(rule: CustomRuleDefinition) -> None:
             three_dimensional_controller.apply_custom_rule(rule)
     except (KeyError, TypeError, ValueError) as exc:
         set_status(f"Could not apply custom rule: {exc}", 6.0)
+        return False
+    set_status(f"Custom rule '{rule.name}' applied.", 4.0)
+    return True
 
 
 def delete_contextual_custom_rule(rule: CustomRuleDefinition) -> bool:
-    """Delete an inactive rule after an explicit typed confirmation."""
+    """Delete an inactive rule after Rule Studio confirms the action."""
 
     if active_custom_rule_key() == rule.key:
         set_status("Switch to another rule before deleting the active rule.", 5.0)
-        return False
-    confirmation = get_text_input(f"Type '{rule.name}' to delete")
-    if confirmation != rule.name:
-        set_status("Custom rule deletion cancelled.", 3.0)
         return False
     try:
         removed = delete_custom_rule(rule.key)
@@ -4845,7 +4849,6 @@ rule_studio = CustomRuleStudio(
         apply_rule=apply_contextual_custom_rule,
         delete_rule=delete_contextual_custom_rule,
         pause=lambda: _set_simulation_running(False),
-        set_status=set_status,
         feedback_text=lambda: (
             status_message if time.time() < status_message_until else ""
         ),

@@ -36,6 +36,15 @@ class RuleStudioLayout:
 
 
 @dataclass(frozen=True)
+class DeleteConfirmationLayout:
+    """Geometry for the non-textual destructive-action confirmation."""
+
+    panel: pygame.Rect
+    cancel: pygame.Rect
+    confirm: pygame.Rect
+
+
+@dataclass(frozen=True)
 class RuleStudioServices:
     screen: Callable[[], pygame.Surface]
     window_size: Callable[[], tuple[int, int]]
@@ -49,10 +58,9 @@ class RuleStudioServices:
     current_rule_key: Callable[[], str | None]
     templates: Callable[[], tuple[RuleStudioTemplate, ...]]
     create_rule: Callable[[str | None], CustomRuleDefinition | None]
-    apply_rule: Callable[[CustomRuleDefinition], None]
+    apply_rule: Callable[[CustomRuleDefinition], bool]
     delete_rule: Callable[[CustomRuleDefinition], bool]
     pause: Callable[[], None]
-    set_status: Callable[[str, float], None]
     feedback_text: Callable[[], str]
 
 
@@ -69,6 +77,7 @@ class CustomRuleStudio:
         self.scroll = 0
         self.view = self.LEARN_VIEW
         self.message = ""
+        self.pending_delete: CustomRuleDefinition | None = None
 
     @property
     def dimension(self) -> str:
@@ -91,9 +100,11 @@ class CustomRuleStudio:
         self.scroll = 0
         self.view = self.LEARN_VIEW
         self.message = ""
+        self.pending_delete = None
 
     def close(self) -> None:
         self.active = False
+        self.pending_delete = None
 
     def geometry(self) -> RuleStudioLayout:
         width, height = self.services.window_size()
@@ -168,6 +179,34 @@ class CustomRuleStudio:
         )
 
     @staticmethod
+    def delete_confirmation_geometry(
+        layout: RuleStudioLayout,
+    ) -> DeleteConfirmationLayout:
+        """Return centered confirmation geometry with a safe cancel action."""
+
+        panel = pygame.Rect(
+            0,
+            0,
+            min(560, layout.modal.width - 72),
+            min(240, layout.modal.height - 72),
+        )
+        panel.center = layout.modal.center
+        button_width = min(190, (panel.width - 54) // 2)
+        cancel = pygame.Rect(
+            panel.centerx - button_width - 6,
+            panel.bottom - 62,
+            button_width,
+            40,
+        )
+        confirm = pygame.Rect(
+            panel.centerx + 6,
+            panel.bottom - 62,
+            button_width,
+            40,
+        )
+        return DeleteConfirmationLayout(panel, cancel, confirm)
+
+    @staticmethod
     def _fit_text(font: pygame.font.Font, text: str, width: int) -> str:
         if font.size(text)[0] <= width:
             return text
@@ -218,18 +257,76 @@ class CustomRuleStudio:
     def _create_and_apply(self, expression: str | None) -> None:
         created = self.services.create_rule(expression)
         if created is not None:
-            self.services.apply_rule(created)
-            self.close()
+            if self.services.apply_rule(created):
+                self.close()
+            else:
+                self.view = self.LIBRARY_VIEW
+                self.message = (
+                    self.services.feedback_text()
+                    or "The rule was saved but could not be applied."
+                )
         else:
             self.message = (
                 self.services.feedback_text()
                 or "Rule was not created. Check the notation and try again."
             )
 
+    def _request_delete(self, rule: CustomRuleDefinition) -> None:
+        """Open a standard confirmation dialog for an inactive rule."""
+
+        if rule.key == self.services.current_rule_key():
+            self.message = (
+                "This rule is active. Apply a different rule before deleting it."
+            )
+            return
+        self.pending_delete = rule
+        self.message = ""
+
+    def _confirm_delete(self) -> None:
+        """Delete the pending rule after the user confirms the modal action."""
+
+        rule = self.pending_delete
+        if rule is None:
+            return
+        if self.services.delete_rule(rule):
+            self.message = f"Deleted '{rule.name}'."
+        else:
+            self.message = (
+                self.services.feedback_text()
+                or f"Could not delete '{rule.name}'."
+            )
+        self.pending_delete = None
+
+    def _handle_delete_confirmation(
+        self,
+        event: pygame.event.Event,
+        layout: RuleStudioLayout,
+    ) -> bool:
+        """Handle a blocking confirmation without requiring typed rule names."""
+
+        confirmation = self.delete_confirmation_geometry(layout)
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.pending_delete = None
+                self.message = "Deletion cancelled."
+            elif event.key in (pygame.K_y, pygame.K_d, pygame.K_DELETE):
+                self._confirm_delete()
+            return True
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if confirmation.cancel.collidepoint(event.pos):
+                self.pending_delete = None
+                self.message = "Deletion cancelled."
+            elif confirmation.confirm.collidepoint(event.pos):
+                self._confirm_delete()
+            return True
+        return True
+
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not self.active:
             return False
         layout = self.geometry()
+        if self.pending_delete is not None:
+            return self._handle_delete_confirmation(event, layout)
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 self.close()
@@ -278,14 +375,16 @@ class CustomRuleStudio:
                     return True
             for rule, row, delete in layout.rows:
                 if delete.collidepoint(event.pos):
-                    if self.services.delete_rule(rule):
-                        self.message = f"Deleted '{rule.name}'."
-                    else:
-                        self.message = self.services.feedback_text()
+                    self._request_delete(rule)
                     return True
                 if row.collidepoint(event.pos):
-                    self.services.apply_rule(rule)
-                    self.close()
+                    if self.services.apply_rule(rule):
+                        self.close()
+                    else:
+                        self.message = (
+                            self.services.feedback_text()
+                            or f"Could not apply '{rule.name}'."
+                        )
                     return True
             return True
         return True
@@ -612,9 +711,25 @@ class CustomRuleStudio:
             screen.blit(small.render(self._fit_text(small, rule.name, row.width - 118), True, theme["button_text"]), (row.x + 12, row.y + 7))
             summary = tiny.render(self._fit_text(tiny, rule.summary, row.width - 118), True, theme["menu_text"])
             screen.blit(summary, (row.x + 12, row.bottom - summary.get_height() - 8))
-            pygame.draw.rect(screen, (105, 48, 55), delete, border_radius=5)
-            pygame.draw.rect(screen, (235, 105, 115), delete, 1, border_radius=5)
-            delete_text = tiny.render("Delete", True, (255, 235, 238))
+            delete_enabled = not selected
+            pygame.draw.rect(
+                screen,
+                (105, 48, 55) if delete_enabled else theme["info_bar"],
+                delete,
+                border_radius=5,
+            )
+            pygame.draw.rect(
+                screen,
+                (235, 105, 115) if delete_enabled else theme["grid"],
+                delete,
+                1,
+                border_radius=5,
+            )
+            delete_text = tiny.render(
+                "Delete" if delete_enabled else "Active",
+                True,
+                (255, 235, 238) if delete_enabled else theme["menu_text"],
+            )
             screen.blit(delete_text, delete_text.get_rect(center=delete.center))
         if not rules:
             message = small.render(
@@ -623,6 +738,106 @@ class CustomRuleStudio:
                 theme["menu_text"],
             )
             screen.blit(message, message.get_rect(center=layout.content.center))
+
+    def _draw_delete_confirmation(
+        self,
+        screen: pygame.Surface,
+        theme: Mapping[str, Any],
+        layout: RuleStudioLayout,
+    ) -> None:
+        """Draw a focused Cancel/Delete dialog above the rule catalog."""
+
+        rule = self.pending_delete
+        if rule is None:
+            return
+        confirmation = self.delete_confirmation_geometry(layout)
+        shade = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+        shade.fill((0, 0, 0, 165))
+        screen.blit(shade, (0, 0))
+        pygame.draw.rect(
+            screen,
+            theme["info_bar"],
+            confirmation.panel,
+            border_radius=12,
+        )
+        pygame.draw.rect(
+            screen,
+            theme["text"],
+            confirmation.panel,
+            2,
+            border_radius=12,
+        )
+        large = self.services.large_font()
+        small = self.services.small_font()
+        tiny = self.services.tiny_font()
+        title = large.render("Delete custom rule?", True, theme["text"])
+        screen.blit(title, (confirmation.panel.x + 24, confirmation.panel.y + 20))
+        body = (
+            f"'{rule.name}' will be permanently removed from My Rules. "
+            "This action cannot be undone."
+        )
+        self._draw_wrapped(
+            screen,
+            small,
+            body,
+            theme["menu_text"],
+            pygame.Rect(
+                confirmation.panel.x + 24,
+                confirmation.panel.y + 64,
+                confirmation.panel.width - 48,
+                58,
+            ),
+            maximum_lines=2,
+            line_gap=3,
+        )
+        summary = tiny.render(
+            self._fit_text(tiny, rule.summary, confirmation.panel.width - 48),
+            True,
+            self.accent,
+        )
+        screen.blit(summary, (confirmation.panel.x + 24, confirmation.panel.y + 124))
+
+        pygame.draw.rect(
+            screen,
+            theme["button_hover"],
+            confirmation.cancel,
+            border_radius=6,
+        )
+        pygame.draw.rect(
+            screen,
+            theme["text"],
+            confirmation.cancel,
+            2,
+            border_radius=6,
+        )
+        cancel_text = small.render("Cancel", True, theme["button_text"])
+        screen.blit(cancel_text, cancel_text.get_rect(center=confirmation.cancel.center))
+
+        pygame.draw.rect(screen, (120, 38, 48), confirmation.confirm, border_radius=6)
+        pygame.draw.rect(
+            screen,
+            (250, 115, 125),
+            confirmation.confirm,
+            2,
+            border_radius=6,
+        )
+        confirm_text = small.render("Delete Rule", True, (255, 245, 247))
+        screen.blit(
+            confirm_text,
+            confirm_text.get_rect(center=confirmation.confirm.center),
+        )
+        hint = tiny.render(
+            "Esc: cancel  ·  Y, D, or Delete: confirm",
+            True,
+            theme["menu_text"],
+        )
+        screen.blit(
+            hint,
+            hint.get_rect(
+                centerx=confirmation.panel.centerx,
+                bottom=confirmation.panel.bottom - 5,
+            ),
+        )
 
     def draw(self) -> None:
         if not self.active:
@@ -691,3 +906,4 @@ class CustomRuleStudio:
             (255, 155, 115) if self.message else theme["menu_text"],
         )
         screen.blit(footer, (layout.modal.x + 26, layout.modal.bottom - 31))
+        self._draw_delete_confirmation(screen, theme, layout)
