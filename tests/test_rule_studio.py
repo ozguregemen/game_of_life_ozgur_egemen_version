@@ -1,5 +1,6 @@
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -7,7 +8,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import pygame
 
-from custom_rules import custom_rule_from_2d
+from custom_rules import CustomRulePackage, custom_rule_from_2d
 from rule_studio import (
     CustomRuleStudio,
     RuleStudioServices,
@@ -29,6 +30,9 @@ class CustomRuleStudioTests(unittest.TestCase):
         self.deleted = []
         self.created = []
         self.expressions = []
+        self.exported = []
+        self.imported = []
+        self.package_refreshes = 0
         self.current_key = None
         self.apply_succeeds = True
         self.feedback = ""
@@ -36,6 +40,12 @@ class CustomRuleStudioTests(unittest.TestCase):
             "HighLife",
             "B36/S23",
             "Adds birth with six neighbors.",
+        )
+        self.package = CustomRulePackage(
+            Path("highlife-lab-2d.rule.json"),
+            self.rule,
+            "2026-08-09T00:00:00+00:00",
+            "0.9.0",
         )
         services = RuleStudioServices(
             screen=lambda: self.screen,
@@ -49,8 +59,13 @@ class CustomRuleStudioTests(unittest.TestCase):
             context_label=lambda: "Life-like B3/S23",
             current_rule_key=lambda: self.current_key,
             templates=lambda: (self.template,),
+            refresh_packages=self._refresh_packages,
+            packages=lambda: (self.package,),
+            package_directory=lambda: "C:/Rules",
             create_rule=self._create,
             apply_rule=self._apply,
+            export_rule=self._export,
+            import_rule=self._import,
             delete_rule=self._delete,
             pause=self._pause,
             feedback_text=lambda: self.feedback,
@@ -59,6 +74,9 @@ class CustomRuleStudioTests(unittest.TestCase):
 
     def _pause(self) -> None:
         self.pauses += 1
+
+    def _refresh_packages(self) -> None:
+        self.package_refreshes += 1
 
     def _create(self, expression):
         self.expressions.append(expression)
@@ -72,6 +90,14 @@ class CustomRuleStudioTests(unittest.TestCase):
     def _apply(self, rule) -> bool:
         self.applied.append(rule)
         return self.apply_succeeds
+
+    def _export(self, rule) -> bool:
+        self.exported.append(rule)
+        return True
+
+    def _import(self, package):
+        self.imported.append(package)
+        return package.rule
 
     def test_catalog_opens_paused_and_applies_selected_rule(self) -> None:
         with patch("rule_studio.get_custom_rules", return_value=(self.rule,)):
@@ -89,6 +115,7 @@ class CustomRuleStudioTests(unittest.TestCase):
 
         self.assertTrue(handled)
         self.assertEqual(self.pauses, 1)
+        self.assertEqual(self.package_refreshes, 1)
         self.assertEqual(self.applied, [self.rule])
         self.assertFalse(self.studio.active)
 
@@ -102,7 +129,7 @@ class CustomRuleStudioTests(unittest.TestCase):
             self.studio.open()
             self.studio.view = self.studio.LIBRARY_VIEW
             layout = self.studio.geometry()
-            delete_rect = layout.rows[0][2]
+            delete_rect = layout.rows[0][3]
             self.studio.handle_event(
                 pygame.event.Event(
                     pygame.MOUSEBUTTONDOWN,
@@ -138,7 +165,7 @@ class CustomRuleStudioTests(unittest.TestCase):
                 pygame.event.Event(
                     pygame.MOUSEBUTTONDOWN,
                     button=1,
-                    pos=layout.rows[0][2].center,
+                    pos=layout.rows[0][3].center,
                 )
             )
             confirmation = self.studio.delete_confirmation_geometry(layout)
@@ -164,7 +191,7 @@ class CustomRuleStudioTests(unittest.TestCase):
                 pygame.event.Event(
                     pygame.MOUSEBUTTONDOWN,
                     button=1,
-                    pos=layout.rows[0][2].center,
+                    pos=layout.rows[0][3].center,
                 )
             )
 
@@ -190,6 +217,59 @@ class CustomRuleStudioTests(unittest.TestCase):
         self.assertTrue(self.studio.active)
         self.assertEqual(self.studio.message, self.feedback)
 
+    def test_saved_rule_can_be_exported_without_applying_or_closing(self) -> None:
+        with patch("rule_studio.get_custom_rules", return_value=(self.rule,)):
+            self.studio.open()
+            self.studio.view = self.studio.LIBRARY_VIEW
+            layout = self.studio.geometry()
+            share = layout.rows[0][2]
+            self.studio.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=share.center,
+                )
+            )
+
+        self.assertEqual(self.exported, [self.rule])
+        self.assertEqual(self.applied, [])
+        self.assertTrue(self.studio.active)
+
+    def test_package_import_adds_rule_then_opens_library(self) -> None:
+        with patch("rule_studio.get_custom_rules", return_value=()):
+            self.studio.open()
+            self.studio.view = self.studio.IMPORT_VIEW
+            layout = self.studio.geometry()
+            import_button = layout.package_rows[0][2]
+            self.studio.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=import_button.center,
+                )
+            )
+
+        self.assertEqual(self.imported, [self.package])
+        self.assertEqual(self.studio.view, self.studio.LIBRARY_VIEW)
+        self.assertIn("Imported", self.studio.message)
+        self.assertTrue(self.studio.active)
+
+    def test_existing_package_is_not_imported_over_catalog_rule(self) -> None:
+        with patch("rule_studio.get_custom_rules", return_value=(self.rule,)):
+            self.studio.open()
+            self.studio.view = self.studio.IMPORT_VIEW
+            layout = self.studio.geometry()
+            self.studio.handle_event(
+                pygame.event.Event(
+                    pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=layout.package_rows[0][1].center,
+                )
+            )
+
+        self.assertEqual(self.imported, [])
+        self.assertIn("already", self.studio.message)
+
     def test_template_card_prefills_expression_and_applies_rule(self) -> None:
         with patch("rule_studio.get_custom_rules", return_value=()):
             self.studio.open()
@@ -212,6 +292,8 @@ class CustomRuleStudioTests(unittest.TestCase):
             self.studio.open()
             self.studio.draw()
             self.studio.view = self.studio.LIBRARY_VIEW
+            self.studio.draw()
+            self.studio.view = self.studio.IMPORT_VIEW
             self.studio.draw()
 
         self.assertTrue(self.studio.active)
