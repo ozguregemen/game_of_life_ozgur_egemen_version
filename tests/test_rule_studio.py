@@ -71,12 +71,14 @@ class CustomRuleStudioTests(unittest.TestCase):
         self.assertEqual(self.applied, [self.rule])
         self.assertFalse(self.studio.active)
 
-    def test_create_and_delete_actions_stay_in_contextual_catalog(self) -> None:
+    def test_create_auto_applies_then_delete_stays_in_catalog(self) -> None:
         with patch("rule_studio.get_custom_rules", return_value=(self.rule,)):
             self.studio.open()
             self.studio.handle_event(
                 pygame.event.Event(pygame.KEYDOWN, key=pygame.K_c)
             )
+            self.assertFalse(self.studio.active)
+            self.studio.open()
             _modal, _close, _create, rows, _capacity = self.studio.geometry()
             delete_rect = rows[0][2]
             self.studio.handle_event(
@@ -88,6 +90,7 @@ class CustomRuleStudioTests(unittest.TestCase):
             )
 
         self.assertEqual(self.created, [self.rule])
+        self.assertEqual(self.applied, [self.rule])
         self.assertEqual(self.deleted, [self.rule])
         self.assertTrue(self.studio.active)
 

@@ -109,7 +109,8 @@ class CustomRuleStudio:
             elif event.key == pygame.K_c:
                 created = self.services.create_rule()
                 if created is not None:
-                    self.scroll = max(0, len(self.rules()) - 1)
+                    self.services.apply_rule(created)
+                    self.close()
             return True
         if event.type == pygame.MOUSEWHEEL:
             self.scroll = max(0, self.scroll - event.y)
@@ -122,7 +123,8 @@ class CustomRuleStudio:
             if create.collidepoint(event.pos):
                 created = self.services.create_rule()
                 if created is not None:
-                    self.scroll = max(0, len(self.rules()) - 1)
+                    self.services.apply_rule(created)
+                    self.close()
                 return True
             for rule, row, delete in rows:
                 if delete.collidepoint(event.pos):
@@ -187,7 +189,7 @@ class CustomRuleStudio:
         pygame.draw.rect(screen, theme["button_hover"], create, border_radius=7)
         pygame.draw.rect(screen, accent, create, 2, border_radius=7)
         create_text = small.render(
-            "Create New Rule from Current Context (C)",
+            "Create & Apply Rule from Current Context (C)",
             True,
             theme["button_text"],
         )
@@ -229,6 +231,18 @@ class CustomRuleStudio:
             screen.blit(delete_text, delete_text.get_rect(center=delete.center))
 
         rules = self.rules()
+        if not rules:
+            empty_message = small.render(
+                "No saved rules yet. Use Create & Apply above to start one.",
+                True,
+                theme["menu_text"],
+            )
+            screen.blit(
+                empty_message,
+                empty_message.get_rect(
+                    center=(modal.centerx, create.bottom + 70),
+                ),
+            )
         start = min(len(rules), self.scroll + 1) if rules else 0
         end = min(len(rules), self.scroll + capacity)
         footer = tiny.render(

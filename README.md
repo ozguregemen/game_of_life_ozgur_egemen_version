@@ -200,7 +200,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 
 Her çalışma alanının `Rule & Comparison`, `Mode & Active Tool` veya `Rule & Volume`
 bölümündeki `Custom Rule Studio` düğmesi yalnız o boyuta ait kullanıcı kurallarını
-gösterir. `Create New Rule from Current Context`, mevcut çalışma alanının family,
+gösterir. `Create & Apply Rule from Current Context`, mevcut çalışma alanının family,
 state count, radius veya neighborhood ayarlarını başlangıç kabul eder:
 
 - 1D, mevcut rule family/state/radius bileşimini adlandırır ve geçerli aralıkta yeni

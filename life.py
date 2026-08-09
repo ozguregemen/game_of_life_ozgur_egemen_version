@@ -1235,15 +1235,19 @@ def toggle_grid_lines() -> None:
     set_status(f"Grid lines {'on' if show_grid else 'off'}.")
 
 
-def get_text_input(prompt_text: str) -> str | None:
-    """Collect a short name with an in-application modal text field."""
+def get_text_input(
+    prompt_text: str,
+    initial_text: str = "",
+) -> str | None:
+    """Collect short text in a modal field with an optional visible default."""
     input_box = pygame.Rect(
         max(20, (WINDOW_WIDTH - MENU_WIDTH) // 2 - 150),
         max(70, WINDOW_HEIGHT // 2 - 25),
         300,
         46,
     )
-    text = ""
+    text = initial_text[:80]
+    select_all = bool(text)
     active = True
 
     while active:
@@ -1255,9 +1259,19 @@ def get_text_input(prompt_text: str) -> str | None:
                     return None
                 if event.key == pygame.K_RETURN:
                     return text.strip()
+                if (
+                    event.key == pygame.K_a
+                    and getattr(event, "mod", 0) & pygame.KMOD_CTRL
+                ):
+                    select_all = True
+                    continue
                 if event.key == pygame.K_BACKSPACE:
-                    text = text[:-1]
+                    text = "" if select_all else text[:-1]
+                    select_all = False
                 elif event.unicode and event.unicode.isprintable() and len(text) < 80:
+                    if select_all:
+                        text = ""
+                        select_all = False
                     text += event.unicode
 
         draw_scene()
@@ -1267,11 +1281,21 @@ def get_text_input(prompt_text: str) -> str | None:
 
         prompt = font.render(prompt_text, True, (255, 255, 255))
         screen.blit(prompt, (input_box.x, input_box.y - 34))
-        pygame.draw.rect(screen, (20, 25, 35), input_box)
+        pygame.draw.rect(
+            screen,
+            (30, 75, 115) if select_all else (20, 25, 35),
+            input_box,
+        )
         pygame.draw.rect(screen, (70, 170, 255), input_box, 2)
 
         text_surface = font.render(text, True, (255, 255, 255))
         screen.blit(text_surface, (input_box.x + 8, input_box.y + 8))
+        hint = tiny_font.render(
+            "Enter: accept   Ctrl+A: replace   Esc: cancel",
+            True,
+            (215, 220, 230),
+        )
+        screen.blit(hint, (input_box.x, input_box.bottom + 8))
         display_backend.present()
         clock.tick(60)
 
@@ -3450,10 +3474,10 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
     try:
         if active_dimension == "1d":
             current = elementary_controller.rule_spec
-            code_text = get_text_input(f"Rule code (blank keeps {current.code})")
+            code_text = get_text_input("Rule code", str(current.code))
             if code_text is None:
                 return None
-            code = current.code if not code_text else int(code_text)
+            code = int(code_text)
             rule = custom_rule_from_1d(
                 name,
                 RuleSpec(
@@ -3475,28 +3499,25 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
                 + "/S"
                 + "".join(str(value) for value in current["survival"])
             )
-            notation = get_text_input(
-                f"B/S notation (blank keeps {default_notation})"
-            )
+            notation = get_text_input("B/S notation", default_notation)
             if notation is None:
                 return None
-            rule = custom_rule_from_2d(name, notation or default_notation)
+            rule = custom_rule_from_2d(name, notation)
         else:
             current = three_dimensional_controller.rule
             if three_dimensional_controller.state.mode_key == "generations":
                 notation = get_text_input(
-                    f"S/B/C/M-or-N (blank keeps {current.notation})"
+                    "S/B/C/M-or-N notation",
+                    current.notation,
                 )
                 if notation is None:
                     return None
                 rule = custom_rule_from_3d_generations(
                     name,
-                    notation or current.notation,
+                    notation,
                 )
             else:
-                notation = get_text_input(
-                    f"B/S notation (blank keeps {current.notation})"
-                )
+                notation = get_text_input("B/S notation", current.notation)
                 if notation is None:
                     return None
                 neighborhood = (
@@ -3506,7 +3527,7 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
                 )
                 rule = custom_rule_from_3d_life(
                     name,
-                    notation or current.notation,
+                    notation,
                     neighborhood=neighborhood,
                 )
         saved = save_custom_rule(rule)
