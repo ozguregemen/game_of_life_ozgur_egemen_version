@@ -13,6 +13,11 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
 import session_storage
+from custom_rules import (
+    custom_rule_from_1d,
+    custom_rule_from_2d,
+    custom_rule_from_3d_generations,
+)
 from one_dimensional_ca import (
     FAMILY_TOTALISTIC,
     SEED_WIDTH_COMPACT,
@@ -109,6 +114,64 @@ class SessionStorageTests(unittest.TestCase):
 
         self.assertEqual(loaded["name"], "Kural 110 Deneyi")
         self.assertEqual(loaded["experiment"], document["experiment"])
+
+    def test_embedded_custom_rules_make_sessions_and_profiles_portable(self) -> None:
+        document = self.valid_session("Portable Rules")
+
+        one_d_spec = life.elementary_controller.rule_spec
+        one_d = custom_rule_from_1d("Portable 1D", one_d_spec)
+        one_d_workspace = document["workspaces"]["1d"]
+        one_d_workspace["custom_rule"] = one_d.as_document()
+
+        two_d = custom_rule_from_2d("Portable HighLife", "B36/S23")
+        life_state = document["workspaces"]["2d"]["states"]["life"]
+        life_state["rule"] = two_d.key
+        life_state["custom_rule"] = two_d.as_document()
+
+        three_d = custom_rule_from_3d_generations(
+            "Portable Generations",
+            "4/4/5/M",
+        )
+        three_d_workspace = document["workspaces"]["3d"]
+        three_d_workspace["mode"] = "generations"
+        three_d_workspace["rule"] = three_d.key
+        three_d_workspace["custom_rule"] = three_d.as_document()
+        three_d_workspace["state_count"] = 5
+
+        normalized = session_storage.validate_session_document(document)
+
+        self.assertEqual(
+            normalized["workspaces"]["1d"]["custom_rule"]["name"],
+            "Portable 1D",
+        )
+        self.assertEqual(
+            normalized["workspaces"]["2d"]["states"]["life"]["rule"],
+            two_d.key,
+        )
+        self.assertEqual(
+            normalized["workspaces"]["3d"]["custom_rule"]["name"],
+            "Portable Generations",
+        )
+
+        profile = life.capture_experiment_profile("Portable Profile")
+        profile["experiment"]["custom_rule"] = one_d.as_document()
+        normalized_profile = session_storage.validate_profile_document(profile)
+        self.assertEqual(
+            normalized_profile["experiment"]["custom_rule"]["name"],
+            "Portable 1D",
+        )
+
+    def test_mismatched_embedded_custom_rule_is_rejected(self) -> None:
+        document = self.valid_session("Mismatched Rule")
+        custom = custom_rule_from_2d("HighLife", "B36/S23")
+        life_state = document["workspaces"]["2d"]["states"]["life"]
+        life_state["custom_rule"] = custom.as_document()
+
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "does not match rule",
+        ):
+            session_storage.validate_session_document(document)
 
     def test_legacy_documents_default_to_compact_1d_seed_width(self) -> None:
         session = self.valid_session("Legacy Width")

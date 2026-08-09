@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from app_paths import APPLICATION_PATHS
+from custom_rules import (
+    KIND_GENERATIONS,
+    CustomRuleDefinition,
+    custom_rule_from_document,
+)
 from elementary_ca import BOUNDARY_MODES
 from mode_registry import MODE_KEYS
 from one_dimensional_ca import (
@@ -34,6 +39,7 @@ from three_dimensional_modes import (
     ALL_RULE_KEYS_3D,
     ALL_RULES_3D,
     MODE_KEYS_3D,
+    MODE_GENERATIONS,
     MODE_SPATIAL_LIFE,
     mode_for_rule,
     rule_state_count,
@@ -274,6 +280,26 @@ def _rule_spec(value: Mapping[str, Any], label: str) -> RuleSpec:
         raise DocumentValidationError(f"{label}.rule_spec is invalid: {exc}") from exc
 
 
+def _embedded_custom_rule(
+    value: Any,
+    label: str,
+    dimension: str,
+) -> CustomRuleDefinition | None:
+    """Validate an optional self-contained custom-rule recipe."""
+
+    if value is None:
+        return None
+    try:
+        rule = custom_rule_from_document(value)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DocumentValidationError(f"{label} is invalid: {exc}") from exc
+    if rule.dimension != dimension:
+        raise DocumentValidationError(
+            f"{label} must belong to the {dimension.upper()} workspace."
+        )
+    return rule
+
+
 def _grid(
     value: Any,
     label: str,
@@ -322,6 +348,15 @@ def _validate_camera(
 def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
     workspace = _mapping(value, "workspaces.1d")
     spec = _rule_spec(workspace, "workspaces.1d")
+    custom_rule = _embedded_custom_rule(
+        workspace.get("custom_rule"),
+        "workspaces.1d.custom_rule",
+        "1d",
+    )
+    if custom_rule is not None and custom_rule.one_dimensional_spec() != spec:
+        raise DocumentValidationError(
+            "workspaces.1d.custom_rule does not match rule_spec."
+        )
     background = _integer(
         workspace.get("background"),
         "workspaces.1d.background",
@@ -432,6 +467,9 @@ def _validate_elementary_workspace(value: Any) -> dict[str, Any]:
     return {
         "rule": spec.code,
         "rule_spec": spec.as_dict(),
+        "custom_rule": (
+            custom_rule.as_document() if custom_rule is not None else None
+        ),
         "boundary": _choice(
             workspace.get("boundary"),
             "workspaces.1d.boundary",
@@ -571,6 +609,26 @@ def _validate_2d_workspace(value: Any) -> dict[str, Any]:
         minimum=0,
         maximum=cols - 1,
     )
+    custom_life_rule = _embedded_custom_rule(
+        life.get("custom_rule"),
+        "workspaces.2d.states.life.custom_rule",
+        "2d",
+    )
+    if custom_life_rule is None:
+        life_rule_key = _choice(
+            life.get("rule"),
+            "workspaces.2d.states.life.rule",
+            RULES,
+        )
+    else:
+        life_rule_key = _text(
+            life.get("rule"),
+            "workspaces.2d.states.life.rule",
+        )
+        if life_rule_key != custom_life_rule.key:
+            raise DocumentValidationError(
+                "workspaces.2d.states.life.custom_rule does not match rule."
+            )
 
     return {
         "shape": shape,
@@ -582,10 +640,11 @@ def _validate_2d_workspace(value: Any) -> dict[str, Any]:
         ),
         "states": {
             "life": {
-                "rule": _choice(
-                    life.get("rule"),
-                    "workspaces.2d.states.life.rule",
-                    RULES,
+                "rule": life_rule_key,
+                "custom_rule": (
+                    custom_life_rule.as_document()
+                    if custom_life_rule is not None
+                    else None
                 ),
                 "grid": _grid(
                     life.get("grid"),
@@ -849,12 +908,31 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
             "workspaces.3d volume exceeds the dense uint8 memory limit."
         )
 
-    rule_key = _choice(
-        workspace.get("rule"),
-        "workspaces.3d.rule",
-        ALL_RULE_KEYS_3D,
+    custom_rule = _embedded_custom_rule(
+        workspace.get("custom_rule"),
+        "workspaces.3d.custom_rule",
+        "3d",
     )
-    inferred_mode = mode_for_rule(rule_key)
+    if custom_rule is None:
+        rule_key = _choice(
+            workspace.get("rule"),
+            "workspaces.3d.rule",
+            ALL_RULE_KEYS_3D,
+        )
+        runtime_rule = ALL_RULES_3D[rule_key]
+        inferred_mode = mode_for_rule(rule_key)
+    else:
+        rule_key = _text(workspace.get("rule"), "workspaces.3d.rule")
+        if rule_key != custom_rule.key:
+            raise DocumentValidationError(
+                "workspaces.3d.custom_rule does not match workspaces.3d.rule."
+            )
+        runtime_rule = custom_rule.three_dimensional_rule()
+        inferred_mode = (
+            MODE_GENERATIONS
+            if custom_rule.kind == KIND_GENERATIONS
+            else MODE_SPATIAL_LIFE
+        )
     mode_key = _choice(
         workspace.get("mode", inferred_mode),
         "workspaces.3d.mode",
@@ -864,7 +942,7 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
         raise DocumentValidationError(
             "workspaces.3d.rule does not belong to workspaces.3d.mode."
         )
-    expected_state_count = rule_state_count(ALL_RULES_3D[rule_key])
+    expected_state_count = rule_state_count(runtime_rule)
     state_count = _integer(
         workspace.get("state_count", expected_state_count),
         "workspaces.3d.state_count",
@@ -963,6 +1041,9 @@ def _validate_3d_workspace(value: Any) -> dict[str, Any]:
         "cells": cells,
         "mode": mode_key,
         "rule": rule_key,
+        "custom_rule": (
+            custom_rule.as_document() if custom_rule is not None else None
+        ),
         "state_count": state_count,
         "boundary": _choice(
             workspace.get("boundary"),
@@ -1096,6 +1177,15 @@ def validate_profile_document(value: Any) -> dict[str, Any]:
     document = _upgrade_document(value, PROFILE_SCHEMA, "profile")
     experiment = _mapping(document.get("experiment"), "experiment")
     spec = _rule_spec(experiment, "experiment")
+    custom_rule = _embedded_custom_rule(
+        experiment.get("custom_rule"),
+        "experiment.custom_rule",
+        "1d",
+    )
+    if custom_rule is not None and custom_rule.one_dimensional_spec() != spec:
+        raise DocumentValidationError(
+            "experiment.custom_rule does not match experiment.rule_spec."
+        )
     comparison_source = experiment.get("comparison", {})
     comparison = _mapping(comparison_source, "experiment.comparison")
     return {
@@ -1110,6 +1200,9 @@ def validate_profile_document(value: Any) -> dict[str, Any]:
         "experiment": {
             "rule": spec.code,
             "rule_spec": spec.as_dict(),
+            "custom_rule": (
+                custom_rule.as_document() if custom_rule is not None else None
+            ),
             "boundary": _choice(
                 experiment.get("boundary"),
                 "experiment.boundary",

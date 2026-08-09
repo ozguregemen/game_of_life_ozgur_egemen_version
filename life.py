@@ -30,6 +30,18 @@ from cyclic_automaton import (
     make_cyclic_grid,
     randomize_cyclic_grid,
 )
+from custom_rules import (
+    KIND_GENERATIONS,
+    NEIGHBORHOOD_FACE,
+    NEIGHBORHOOD_MOORE,
+    CustomRuleDefinition,
+    custom_rule_from_1d,
+    custom_rule_from_2d,
+    custom_rule_from_3d_generations,
+    custom_rule_from_3d_life,
+    delete_custom_rule,
+    save_custom_rule,
+)
 from dimension_registry import (
     DIMENSION_BY_KEY,
     DIMENSION_DEFINITIONS,
@@ -83,7 +95,7 @@ from mode_registry import (
     MODE_KEYS,
     get_mode_definition,
 )
-from one_dimensional_ca import FAMILY_ELEMENTARY
+from one_dimensional_ca import FAMILY_ELEMENTARY, RuleSpec
 from patterns import (
     flip_pattern,
     get_pattern_categories_for_mode,
@@ -98,6 +110,7 @@ from rng_state import (
     new_experiment_seed,
     seeded_random,
 )
+from rule_studio import CustomRuleStudio, RuleStudioServices
 from rules import RULES, find_patterns
 from session_storage import (
     DOCUMENT_VERSION,
@@ -881,6 +894,15 @@ def cycle_theme() -> None:
     set_status(f"Theme: {current_theme.title()}")
 
 
+def active_life_rule_definition() -> Mapping[str, Any]:
+    """Return the active built-in or user-authored 2D Life-like rule."""
+
+    state = two_dimensional_state.life
+    if state.custom_rule is not None:
+        return state.custom_rule.life_like_2d()
+    return RULES[state.rule]
+
+
 def cycle_rule() -> None:
     global show_rule_overlay_until
     if simulation_mode != "life":
@@ -898,15 +920,15 @@ def cycle_rule() -> None:
             message = "Langton's Ant uses right-on-white and left-on-black."
         set_status(message)
         return
-    save_history()
     rules = list(RULES)
     state = two_dimensional_state.life
-    state.rule = rules[(rules.index(state.rule) + 1) % len(rules)]
-    _publish_legacy_2d_view()
+    next_rule = (
+        rules[0]
+        if state.rule not in rules
+        else rules[(rules.index(state.rule) + 1) % len(rules)]
+    )
+    two_dimensional_controller.set_builtin_life_rule(next_rule)
     show_rule_overlay_until = time.time() + 2.5
-    mark_stats_dirty()
-    rebuild_context_menu()
-    _sync_2d_history()
 
 
 def _switch_display_backend(dimension: str) -> bool:
@@ -2561,9 +2583,10 @@ def _draw_2d_info_bar() -> None:
             f"Generation: {immigration_generation}   Brush: {species_label}"
         )
     else:
+        life_rule = active_life_rule_definition()
         text = (
             f"{state}   Mode: Life-like   Speed: {speed} gen/s   "
-            f"Generation: {generation}   Rule: {RULES[current_rule]['name']}"
+            f"Generation: {generation}   Rule: {life_rule['name']}"
         )
     tool_width = min(220, max(150, width // 4))
     available_width = max(40, width - 120 - tool_width - 18)
@@ -3301,6 +3324,7 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
     if active_dimension == "1d":
         return (
             ("E", "Open the searchable Elementary rule catalogue"),
+            ("Custom Rule Studio", "Save and reuse the current 1D rule recipe"),
             ("Left / Right click", "Write the selected state / erase state"),
             ("Middle drag", "Pan the space-time diagram"),
             ("Seed Width", "Choose compact, viewport, or wide initial rows"),
@@ -3311,6 +3335,7 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
     if active_dimension == "3d":
         entries = [
             ("M", "Switch Spatial Life / 3D Generations mode"),
+            ("Custom Rule Studio", "Create reusable 3D Life or Generations rules"),
             ("V", "Cycle 32³, 48³, and 64³ experiment volumes"),
             ("Pattern Studio", "Browse structures compatible with the active rule"),
             ("U", "Cycle Softology-inspired voxel color schemes"),
@@ -3347,7 +3372,13 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
         ("1–9", "Select a visible mode-specific pattern"),
     ]
     if simulation_mode == "life":
-        entries.extend((("H", "Toggle heatmap"), ("A", "Toggle cell ages")))
+        entries.extend(
+            (
+                ("Custom Rule Studio", "Create reusable Life-like B/S rules"),
+                ("H", "Toggle heatmap"),
+                ("A", "Toggle cell ages"),
+            )
+        )
     if simulation_mode == "langtons_ant":
         entries.append(("Shift + click", "Place the ant at a grid cell"))
     if selected_pattern is not None:
@@ -3365,7 +3396,7 @@ def _open_tutorial_url(url: str) -> bool:
 
 def _life_tutorial_rule_label() -> str:
     """Return the active Life-like rule in readable B/S notation."""
-    rule = RULES[current_rule]
+    rule = active_life_rule_definition()
     births = "".join(str(value) for value in rule["birth"]) or "-"
     survivals = "".join(str(value) for value in rule["survival"]) or "-"
     return f"{rule['name']} · B{births}/S{survivals}"
@@ -3375,6 +3406,190 @@ def _three_d_tutorial_rule_label() -> str:
     """Return the active 3D preset in readable notation."""
     rule = three_dimensional_controller.rule
     return f"{rule.name} · {rule.notation} · {rule.neighborhood.size} neighbors"
+
+
+def active_custom_rule_key() -> str | None:
+    """Return the custom-rule identity used by the active workspace, if any."""
+
+    if active_dimension == "1d":
+        rule = elementary_controller.state.custom_rule
+    elif active_dimension == "2d":
+        rule = two_dimensional_state.life.custom_rule
+    else:
+        rule = three_dimensional_controller.state.custom_rule
+    return None if rule is None else rule.key
+
+
+def custom_rule_context_label() -> str:
+    """Describe the recipe from which the studio creates a new rule."""
+
+    if active_dimension == "1d":
+        spec = elementary_controller.rule_spec
+        return (
+            f"Current 1D context: {spec.definition.name}, code {spec.code}, "
+            f"{spec.states} states, radius {spec.radius}"
+        )
+    if active_dimension == "2d":
+        rule = active_life_rule_definition()
+        births = "".join(str(value) for value in rule["birth"])
+        survival = "".join(str(value) for value in rule["survival"])
+        return f"Current 2D context: Life-like B{births}/S{survival}"
+    rule = three_dimensional_controller.rule
+    return (
+        f"Current 3D context: {three_dimensional_controller.mode_label}, "
+        f"{rule.notation}, {rule.neighborhood.size} neighbors"
+    )
+
+
+def create_contextual_custom_rule() -> CustomRuleDefinition | None:
+    """Prompt for, validate, and persist one rule for the active dimension."""
+
+    name = get_text_input("Custom rule name")
+    if name is None:
+        return None
+    try:
+        if active_dimension == "1d":
+            current = elementary_controller.rule_spec
+            code_text = get_text_input(f"Rule code (blank keeps {current.code})")
+            if code_text is None:
+                return None
+            code = current.code if not code_text else int(code_text)
+            rule = custom_rule_from_1d(
+                name,
+                RuleSpec(
+                    family=current.family,
+                    code=code,
+                    states=current.states,
+                    radius=current.radius,
+                ),
+            )
+        elif active_dimension == "2d":
+            if simulation_mode != "life":
+                raise ValueError(
+                    "Custom 2D rules currently belong to the Life-like mode."
+                )
+            current = active_life_rule_definition()
+            default_notation = (
+                "B"
+                + "".join(str(value) for value in current["birth"])
+                + "/S"
+                + "".join(str(value) for value in current["survival"])
+            )
+            notation = get_text_input(
+                f"B/S notation (blank keeps {default_notation})"
+            )
+            if notation is None:
+                return None
+            rule = custom_rule_from_2d(name, notation or default_notation)
+        else:
+            current = three_dimensional_controller.rule
+            if three_dimensional_controller.state.mode_key == "generations":
+                notation = get_text_input(
+                    f"S/B/C/M-or-N (blank keeps {current.notation})"
+                )
+                if notation is None:
+                    return None
+                rule = custom_rule_from_3d_generations(
+                    name,
+                    notation or current.notation,
+                )
+            else:
+                notation = get_text_input(
+                    f"B/S notation (blank keeps {current.notation})"
+                )
+                if notation is None:
+                    return None
+                neighborhood = (
+                    NEIGHBORHOOD_MOORE
+                    if current.neighborhood.size == 26
+                    else NEIGHBORHOOD_FACE
+                )
+                rule = custom_rule_from_3d_life(
+                    name,
+                    notation or current.notation,
+                    neighborhood=neighborhood,
+                )
+        saved = save_custom_rule(rule)
+    except (FileExistsError, OSError, TypeError, ValueError) as exc:
+        set_status(f"Could not save custom rule: {exc}", 6.0)
+        return None
+    set_status(f"Custom rule '{saved.name}' saved.", 4.0)
+    return saved
+
+
+def apply_contextual_custom_rule(rule: CustomRuleDefinition) -> None:
+    """Apply a catalog rule to the matching active workspace."""
+
+    if rule.dimension != active_dimension:
+        set_status("That custom rule belongs to another dimension.", 4.0)
+        return
+    try:
+        if active_dimension == "1d":
+            elementary_controller.apply_custom_rule(rule)
+        elif active_dimension == "2d":
+            if simulation_mode != "life":
+                set_simulation_mode("life")
+            two_dimensional_controller.apply_custom_life_rule(rule)
+            _publish_legacy_2d_view()
+        else:
+            three_dimensional_controller.apply_custom_rule(rule)
+    except (KeyError, TypeError, ValueError) as exc:
+        set_status(f"Could not apply custom rule: {exc}", 6.0)
+
+
+def delete_contextual_custom_rule(rule: CustomRuleDefinition) -> bool:
+    """Delete an inactive rule after an explicit typed confirmation."""
+
+    if active_custom_rule_key() == rule.key:
+        set_status("Switch to another rule before deleting the active rule.", 5.0)
+        return False
+    confirmation = get_text_input(f"Type '{rule.name}' to delete")
+    if confirmation != rule.name:
+        set_status("Custom rule deletion cancelled.", 3.0)
+        return False
+    try:
+        removed = delete_custom_rule(rule.key)
+    except OSError as exc:
+        set_status(f"Could not delete custom rule: {exc}", 5.0)
+        return False
+    set_status(
+        f"Custom rule '{rule.name}' deleted." if removed else "Rule file not found.",
+        4.0,
+    )
+    return removed
+
+
+def activate_custom_rule_studio() -> None:
+    """Open the dimension-aware custom-rule catalog and editor."""
+
+    global dimension_menu_active, mode_menu_active, pattern_menu_active
+    global simulation_active
+    if active_dimension == "2d" and simulation_mode != "life":
+        set_status(
+            "The 2D Custom Rule Studio currently supports Life-like mode.",
+            5.0,
+        )
+        return
+    if "rule_studio" in globals() and rule_studio.active:
+        rule_studio.close()
+        return
+    simulation_active = False
+    dimension_menu_active = False
+    mode_menu_active = False
+    pattern_menu_active = False
+    active_workspace().controller.deactivate()
+    session_manager.close()
+    analysis_panel.close()
+    help_panel.close()
+    if "one_d_tutorial" in globals():
+        one_d_tutorial.close()
+    if "two_d_tutorial" in globals():
+        two_d_tutorial.close()
+    if "three_d_tutorial" in globals():
+        three_d_tutorial.close()
+    if "export_manager" in globals():
+        export_manager.close()
+    rule_studio.open()
 
 
 def activate_one_d_tutorial() -> None:
@@ -3596,6 +3811,7 @@ def draw_scene() -> None:
     draw_session_menu()
     export_manager.draw()
     help_panel.draw()
+    rule_studio.draw()
     one_d_tutorial.draw()
     two_d_tutorial.draw()
     three_d_tutorial.draw()
@@ -3609,8 +3825,9 @@ def draw_scene() -> None:
 def add_context_action(menu: Menu, action: str) -> None:
     """Add one mode-specific control described by the mode registry."""
     if action == "change_rule":
+        life_rule = active_life_rule_definition()
         menu.add_button(
-            f"Rule: {RULES[current_rule]['name']}",
+            f"Rule: {life_rule['name']}",
             cycle_rule,
             accent=MODE_BY_KEY["life"].accent,
         )
@@ -3749,6 +3966,14 @@ def _build_2d_sidebar(menu: Menu) -> None:
     )
     for action in definition.contextual_actions:
         add_context_action(menu, action)
+    if simulation_mode == "life":
+        menu.add_button(
+            "Custom Rule Studio",
+            activate_custom_rule_studio,
+            accent=definition.accent,
+            active=two_dimensional_state.life.custom_rule is not None,
+            tooltip="Create, apply, or delete saved Life-like B/S rules.",
+        )
 
     menu.begin_section(
         "2d_experiment",
@@ -4088,6 +4313,10 @@ def handle_event(event: pygame.event.Event) -> bool:
         update_window_size(event.w, event.h)
         return True
 
+    if rule_studio.active:
+        rule_studio.handle_event(event)
+        return True
+
     if two_d_tutorial.active:
         two_d_tutorial.handle_event(event)
         return True
@@ -4274,6 +4503,7 @@ elementary_services = ElementaryWorkspaceServices(
     reset_analysis=analysis_registry.reset,
     favorite_rules=lambda: frozenset(ui_preferences.favorite_rules),
     toggle_favorite_rule=ui_preferences.toggle_favorite_rule,
+    activate_custom_rule_studio=activate_custom_rule_studio,
 )
 elementary_controller = ElementaryWorkspaceController(
     elementary_services,
@@ -4332,6 +4562,7 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
         )
     ),
     request_text=get_text_input,
+    activate_custom_rule_studio=activate_custom_rule_studio,
 )
 three_dimensional_controller = ThreeDimensionalWorkspaceController(
     three_dimensional_services,
@@ -4402,6 +4633,26 @@ help_panel = ShortcutHelpPanel(
         context_title=help_context_title,
         context_entries=help_context_entries,
         pause=lambda: _set_simulation_running(False),
+    )
+)
+
+
+rule_studio = CustomRuleStudio(
+    RuleStudioServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        theme=lambda: THEMES[current_theme],
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+        active_dimension=lambda: active_dimension,
+        context_label=custom_rule_context_label,
+        current_rule_key=active_custom_rule_key,
+        create_rule=create_contextual_custom_rule,
+        apply_rule=apply_contextual_custom_rule,
+        delete_rule=delete_contextual_custom_rule,
+        pause=lambda: _set_simulation_running(False),
+        set_status=set_status,
     )
 )
 
@@ -4549,6 +4800,7 @@ def run() -> None:
                 not session_manager.active
                 and not export_manager.active
                 and not help_panel.active
+                and not rule_studio.active
                 and not two_d_tutorial.active
                 and not three_d_tutorial.active
                 and not one_d_tutorial.active

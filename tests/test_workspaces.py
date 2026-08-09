@@ -9,6 +9,7 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 import pygame
 
 import life
+from custom_rules import custom_rule_from_1d
 from elementary_ca import BOUNDARY_INFINITE
 from one_dimensional_ca import (
     FAMILY_ELEMENTARY,
@@ -258,6 +259,21 @@ class ApplicationWorkspaceTests(unittest.TestCase):
         self.assertFalse(self.eca.comparison_enabled)
         self.assertEqual(self.eca.generation, 0)
         self.assertEqual(sum(self.eca.rows[0]), 1)
+
+    def test_custom_1d_rule_restores_embedded_recipe_from_snapshot(self) -> None:
+        life.set_active_dimension("1d")
+        custom = custom_rule_from_1d(
+            "Named Rule 110",
+            life.elementary_controller.rule_spec.with_code(110),
+        )
+
+        life.elementary_controller.apply_custom_rule(custom)
+        snapshot = life.elementary_controller.snapshot()
+        life.elementary_controller.set_rule(30)
+        life.elementary_controller.restore(snapshot)
+
+        self.assertEqual(life.elementary_controller.state.custom_rule, custom)
+        self.assertEqual(life.elementary_controller.rule_spec.code, 110)
 
 
     def test_multistate_family_uses_selected_brush_and_valid_states(self) -> None:

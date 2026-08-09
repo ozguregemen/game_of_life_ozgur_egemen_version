@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping
 
 import pygame
 
+from custom_rules import CustomRuleDefinition, custom_rule_from_document
 from brians_brain import (
     DYING,
     FIRING,
@@ -44,7 +45,7 @@ from langtons_ant import (
 )
 from mode_registry import MODE_BY_KEY, MODE_KEYS
 from rng_state import encode_random_state, restore_random_state, seeded_random
-from rules import apply_rules_2d
+from rules import RULES, apply_rules_2d
 from scientific_analysis import StateObservation
 from themes import Menu
 from timeline_history import TimelineBinding, TimelineStatus
@@ -81,6 +82,7 @@ class LifeModeState:
     rng: random.Random
     rule: str = "conway"
     generation: int = 0
+    custom_rule: CustomRuleDefinition | None = None
 
 
 @dataclass
@@ -324,6 +326,45 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
             binding.reset()
             self.services.reset_analysis(self.analysis_observation(mode))
 
+    def apply_custom_life_rule(self, rule: CustomRuleDefinition) -> None:
+        """Activate one validated 2D Life-like rule without altering its grid."""
+
+        if rule.dimension != "2d":
+            raise ValueError("Custom rule does not belong to the 2D workspace.")
+        rule.life_like_2d()
+        state = self.state.life
+        if state.custom_rule is not None and state.custom_rule.key == rule.key:
+            self._status(f"Custom rule '{rule.name}' is already active.")
+            return
+        self.services.before_operation()
+        self.timelines["life"].prepare_change()
+        state.rule = rule.key
+        state.custom_rule = rule
+        self.services.set_running(False)
+        self.services.mark_life_dirty()
+        self.services.state_changed()
+        self.timelines["life"].sync()
+        self.services.rebuild_sidebar()
+        self._status(f"Custom 2D rule: {rule.name} · {rule.notation}.", 5.0)
+
+    def set_builtin_life_rule(self, rule_key: str) -> None:
+        """Activate one built-in Life-like rule and clear custom metadata."""
+
+        if rule_key not in RULES:
+            raise ValueError(f"Unknown built-in Life-like rule: {rule_key}")
+        state = self.state.life
+        if state.rule == rule_key and state.custom_rule is None:
+            return
+        self.services.before_operation()
+        self.timelines["life"].prepare_change()
+        state.rule = rule_key
+        state.custom_rule = None
+        self.services.set_running(False)
+        self.services.mark_life_dirty()
+        self.services.state_changed()
+        self.timelines["life"].sync()
+        self.services.rebuild_sidebar()
+
     def set_life_cell(self, row: int, column: int, value: int) -> bool:
         life = self.state.life
         old_value = life.grid[row][column]
@@ -468,7 +509,10 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
             self._status("Simulation stopped: no live cells.")
             return False
         self.save_history()
-        new_grid = apply_rules_2d(state.grid, state.rule)
+        rule_definition: str | Mapping[str, Any] = state.rule
+        if state.custom_rule is not None:
+            rule_definition = state.custom_rule.life_like_2d()
+        new_grid = apply_rules_2d(state.grid, rule_definition)
         for row in range(self.state.rows):
             for column in range(self.state.columns):
                 state.activity[row][column] = max(0.0, state.activity[row][column] - 0.10)
@@ -681,7 +725,11 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
         grid = getattr(state, "grid")
         if selected == "life":
             values = tuple(1 if cell > 0 else 0 for row in grid for cell in row)
-            context: object = self.state.life.rule
+            context: object = (
+                self.state.life.custom_rule.notation
+                if self.state.life.custom_rule is not None
+                else self.state.life.rule
+            )
             state_count, active, label = 2, (1,), "Live cells"
             signature: tuple[object, ...] = ()
         elif selected == "immigration":
@@ -733,6 +781,11 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
         if mode == "life":
             return {
                 "rule": self.state.life.rule,
+                "custom_rule": (
+                    self.state.life.custom_rule.as_document()
+                    if self.state.life.custom_rule is not None
+                    else None
+                ),
                 "grid": deepcopy(self.state.life.grid),
                 "trail": deepcopy(self.state.life.trail),
                 "activity": deepcopy(self.state.life.activity),
@@ -754,6 +807,18 @@ class TwoDimensionalWorkspaceController(WorkspaceController):
         setattr(state, "generation", int(snapshot["generation"]))
         if mode == "life":
             self.state.life.rule = str(snapshot["rule"])
+            self.state.life.custom_rule = None
+            custom_document = snapshot.get("custom_rule")
+            if isinstance(custom_document, Mapping):
+                custom_rule = custom_rule_from_document(custom_document)
+                if (
+                    custom_rule.dimension != "2d"
+                    or custom_rule.key != self.state.life.rule
+                ):
+                    raise ValueError(
+                        "Embedded 2D custom rule does not match its rule key."
+                    )
+                self.state.life.custom_rule = custom_rule
             self.state.life.trail = deepcopy(snapshot["trail"])
             self.state.life.activity = deepcopy(snapshot["activity"])
             self.services.clear_transitions()

@@ -42,6 +42,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - Aktif 3D moda ve kurala göre filtrelenen; kaynaklı yapıları deneysel seed'lerden
   ayıran, 24 küp rotasyonu, ayna dönüşümü ve yeşil/kırmızı ghost önizleme sunan
   3D Pattern Studio
+- Aktif boyuta göre 1D rule recipe, 2D Life-like B/S ve 3D Life/Generations
+  kuralları oluşturan, doğrulayan ve yeniden kullanan Custom Rule Studio
 - Çok durumlu voxel'leri koruyan, UTF-8 JSON kullanan güvenli özel 3D pattern kaydı
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
@@ -168,6 +170,9 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `mode_registry.py`: Mod adları, açıklamaları, renkleri ve bağlamsal kontrol tanımları
 - `mode_patterns.py`: Life dışındaki modların hazır pattern ve başlangıç durumları
 - `rules.py`: Kurallar ve pattern recognition
+- `custom_rules.py`: Boyuta özel kural şemaları, notasyon ayrıştırma, doğrulama ve
+  güvenli UTF-8 JSON kural deposu
+- `rule_studio.py`: Aktif workspace'e göre filtrelenen özel kural katalog/editör arayüzü
 - `patterns.py`: Hazır ve özel pattern yönetimi
 - `session_storage.py`: Sürümlü oturum/profile şeması, doğrulama ve güvenli JSON depolama
 - `session_ui.py`: Oturum kataloğu, 1D profil menüsü ve modal input/render akışı
@@ -190,6 +195,26 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `life3d.py`: Deneysel 3D slice sürümü
 - `life2d_backup.py`: Eski 2D sürüm yedeği
 - `benchmarks/render_benchmark.py`: Mod bazında tekrar çalıştırılabilir render ölçümü
+
+## Custom Rule Studio
+
+Her çalışma alanının `Rule & Comparison`, `Mode & Active Tool` veya `Rule & Volume`
+bölümündeki `Custom Rule Studio` düğmesi yalnız o boyuta ait kullanıcı kurallarını
+gösterir. `Create New Rule from Current Context`, mevcut çalışma alanının family,
+state count, radius veya neighborhood ayarlarını başlangıç kabul eder:
+
+- 1D, mevcut rule family/state/radius bileşimini adlandırır ve geçerli aralıkta yeni
+  bir rule code kabul eder.
+- 2D, Life-like modunda `B36/S23` gibi B/S notasyonu kabul eder.
+- 3D Spatial Life, aktif 6 ya da 26 komşuluğu koruyarak B/S notasyonu; 3D
+  Generations ise `S/B/C/M` veya `S/B/C/N` notasyonu kabul eder.
+
+Kural adları taşınabilir dosya adına dönüştürülür; traversal ve Windows için sakıncalı
+adlar engellenir. Aynı adlı dosyanın üstüne sessizce yazılmaz ve aktif kural silinemez.
+Dosyalar işletim sistemine uygun kullanıcı veri dizinindeki `rules/<dimension>/`
+klasöründe UTF-8 JSON olarak tutulur. Tam session, 1D profil ve paylaşılabilir deney
+JSON'ları aktif özel kuralın tarifini ayrıca belge içine gömer; böylece deney, ayrı
+kural dosyası bulunmayan başka bir kurulumda da doğrulanıp yeniden açılabilir.
 
 ## Workspace mimarisi
 
