@@ -34,6 +34,9 @@ COLOR_SCHEMES = (
     "white",
 )
 LIGHTING_MODES = ("studio", "soft", "flat")
+PROJECTION_ORTHOGRAPHIC = "orthographic"
+PROJECTION_PERSPECTIVE = "perspective"
+PROJECTION_MODES = (PROJECTION_ORTHOGRAPHIC, PROJECTION_PERSPECTIVE)
 TRANSPARENT_SORT_DIRECTION_STEPS = 50.0
 CAMERA_FACE_DIRECTIONS = {
     "front": (0.0, 0.0, 1.0),
@@ -144,6 +147,26 @@ def perspective_matrix(
     return matrix
 
 
+def orthographic_matrix(
+    vertical_size: float,
+    aspect: float,
+    near: float,
+    far: float,
+) -> FloatMatrix:
+    """Return a centered OpenGL orthographic matrix for column vectors."""
+
+    if vertical_size <= 0.0 or aspect <= 0.0 or near <= 0.0 or far <= near:
+        raise ValueError("Orthographic size, aspect, and clipping distances are invalid.")
+    half_height = vertical_size / 2.0
+    half_width = half_height * aspect
+    matrix = np.identity(4, dtype=np.float32)
+    matrix[0, 0] = 1.0 / half_width
+    matrix[1, 1] = 1.0 / half_height
+    matrix[2, 2] = -2.0 / (far - near)
+    matrix[2, 3] = -(far + near) / (far - near)
+    return matrix
+
+
 def look_at_matrix(
     eye: FloatVector,
     target: FloatVector,
@@ -212,6 +235,7 @@ class OrbitCamera3D:
     fov_y: float = 45.0
     near: float = 0.1
     far: float = 500.0
+    projection: str = PROJECTION_ORTHOGRAPHIC
 
     def __post_init__(self) -> None:
         self.target = _vector3(self.target, "camera target")
@@ -226,6 +250,8 @@ class OrbitCamera3D:
             raise ValueError("Camera field of view must be between 1 and 179 degrees.")
         if self.near <= 0.0 or self.far <= self.near:
             raise ValueError("Camera clipping distances are invalid.")
+        if self.projection not in PROJECTION_MODES:
+            raise ValueError(f"Unknown camera projection: {self.projection!r}.")
 
     @property
     def eye(self) -> FloatVector:
@@ -312,6 +338,14 @@ class OrbitCamera3D:
         return look_at_matrix(self.eye, self.target)
 
     def projection_matrix(self, aspect: float) -> FloatMatrix:
+        if self.projection == PROJECTION_ORTHOGRAPHIC:
+            vertical_size = 2.0 * self.distance * tan(radians(self.fov_y) / 2.0)
+            return orthographic_matrix(
+                vertical_size,
+                aspect,
+                self.near,
+                self.far,
+            )
         return perspective_matrix(self.fov_y, aspect, self.near, self.far)
 
     def view_projection(self, aspect: float) -> FloatMatrix:
@@ -339,7 +373,12 @@ class OrbitCamera3D:
             (far_world[:3] - near_world[:3]).astype(np.float32),
             "screen ray",
         )
-        return self.eye.copy(), direction
+        origin = (
+            near_world[:3].astype(np.float32, copy=True)
+            if self.projection == PROJECTION_ORTHOGRAPHIC
+            else self.eye.copy()
+        )
+        return origin, direction
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -348,6 +387,7 @@ class OrbitCamera3D:
             "pitch": self.pitch,
             "distance": self.distance,
             "fov_y": self.fov_y,
+            "projection": self.projection,
         }
 
     @classmethod
@@ -360,6 +400,7 @@ class OrbitCamera3D:
             pitch=value["pitch"],
             distance=value["distance"],
             fov_y=value.get("fov_y", 45.0),
+            projection=value.get("projection", PROJECTION_ORTHOGRAPHIC),
         )
 
 

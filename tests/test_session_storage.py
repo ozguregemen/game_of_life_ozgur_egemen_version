@@ -259,6 +259,7 @@ class SessionStorageTests(unittest.TestCase):
         self.assertGreater(camera["distance"], 8.0)
         self.assertIn("yaw", camera)
         self.assertIn("pitch", camera)
+        self.assertEqual(camera["projection"], "orthographic")
 
     def test_invalid_3d_orbit_camera_is_rejected(self) -> None:
         document = self.valid_session("Invalid 3D Camera")
@@ -267,6 +268,23 @@ class SessionStorageTests(unittest.TestCase):
         with self.assertRaisesRegex(
             session_storage.DocumentValidationError,
             "pitch",
+        ):
+            session_storage.validate_session_document(document)
+
+    def test_3d_projection_is_validated_and_legacy_camera_defaults_to_orthographic(self) -> None:
+        document = self.valid_session("Projection")
+        document["workspaces"]["3d"]["camera"].pop("projection", None)
+
+        normalized = session_storage.validate_session_document(document)
+        self.assertEqual(
+            normalized["workspaces"]["3d"]["camera"]["projection"],
+            "orthographic",
+        )
+
+        document["workspaces"]["3d"]["camera"]["projection"] = "fisheye"
+        with self.assertRaisesRegex(
+            session_storage.DocumentValidationError,
+            "projection",
         ):
             session_storage.validate_session_document(document)
 

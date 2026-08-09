@@ -39,7 +39,12 @@ from three_dimensional_modes import (
     rule_state_count,
 )
 from three_dimensional_rules import DEFAULT_RULE_3D
-from three_dimensional_rendering import COLOR_SCHEMES, LIGHTING_MODES
+from three_dimensional_rendering import (
+    COLOR_SCHEMES,
+    LIGHTING_MODES,
+    PROJECTION_MODES,
+    PROJECTION_ORTHOGRAPHIC,
+)
 from rng_state import MAX_SEED, decode_random_state, encode_random_state, seeded_random
 
 SESSION_SCHEMA = "cellular-automata-lab/session"
@@ -774,6 +779,7 @@ def _default_3d_orbit_camera(shape: Sequence[int]) -> dict[str, Any]:
         "pitch": math.radians(28.0),
         "distance": max(8.0, diagonal * 1.35),
         "fov_y": 45.0,
+        "projection": PROJECTION_ORTHOGRAPHIC,
     }
 
 
@@ -782,7 +788,7 @@ def _validate_3d_orbit_camera(
     label: str,
     shape: Sequence[int],
 ) -> dict[str, Any]:
-    """Validate the perspective camera and upgrade the old slice camera."""
+    """Validate the orbit camera and upgrade legacy slice/perspective views."""
     camera = _mapping(value, label)
     if "target" not in camera:
         _validate_camera(camera, label, minimum_size=2, maximum_size=24)
@@ -799,6 +805,11 @@ def _validate_3d_orbit_camera(
     pitch = _number(camera.get("pitch"), f"{label}.pitch")
     distance = _number(camera.get("distance"), f"{label}.distance", minimum=2.0)
     fov_y = _number(camera.get("fov_y", 45.0), f"{label}.fov_y", minimum=1.0)
+    projection = _choice(
+        camera.get("projection", PROJECTION_ORTHOGRAPHIC),
+        f"{label}.projection",
+        PROJECTION_MODES,
+    )
     if not math.radians(-90.0) <= pitch <= math.radians(90.0):
         raise DocumentValidationError(f"{label}.pitch is outside the orbit limit.")
     if distance > 10_000.0:
@@ -811,6 +822,7 @@ def _validate_3d_orbit_camera(
         "pitch": pitch,
         "distance": distance,
         "fov_y": fov_y,
+        "projection": projection,
     }
 
 

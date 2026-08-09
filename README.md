@@ -232,11 +232,14 @@ varsayılan 48³ ve daha geniş 64³ deney alanları arasında geçilebilir. Boy
 mevcut deneyi sıfırlar fakat önceki hacmi timeline'a kaydeder. `Spatial Life` modu
 Carter Bays'in 26-komşulu B6/S567 kuralıyla başlar; B5/S45 alternatifi ve altı yüz
 komşulu deneysel B3/S23 seçeneği sidebar'dan değiştirilebilir. Canlı hücreler ModernGL
-ile tek tek draw call yerine instanced cube
-olarak, perspektif projection, depth test ve yönlü ışıkla çizilir. Sol sürükleme orbit,
+ile tek tek draw call yerine instanced cube olarak, depth test ve yönlü ışıkla çizilir.
+Varsayılan ortografik projection paralel küp kenarlarını paralel tutar ve bilimsel
+incelemede perspektif yamulmasını önler; `Camera & View` bölümü isteğe bağlı perspektif
+projection'a geri dönebilir. Sol sürükleme orbit,
 orta sürükleme pan, tekerlek zoom yapar. İmlecin ışını 3D DDA ile volume içinde gezerek
 ilk canlı voxel'i bulur; sol tık önündeki boş komşuya ekler, sağ tık seçili voxel'i
-siler. Kamera hedefi, açıları, uzaklığı ve görüş alanı tam oturum JSON'unda saklanır.
+siler. Kamera hedefi, açıları, uzaklığı, görüş alanı ve projection modu tam oturum
+JSON'unda saklanır.
 
 Pygame sidebar, timeline, analiz ve modal bileşenleri yeniden yazılmamıştır: şeffaf
 bir Pygame surface'e çizilip her frame OpenGL sahnesinin üstüne tek texture olarak

@@ -41,7 +41,7 @@ THREE_D_FOUNDATION_PAGES: tuple[TutorialPage, ...] = (
     _page(
         "3D FOUNDATIONS 1 - VOLUME",
         "The world is a volume, not three stacked pictures",
-        "Every position has an x, y, and z coordinate and stores one voxel state. The perspective view projects that cubic lattice onto the screen; it does not turn depth into time.",
+        "Every position has an x, y, and z coordinate and stores one voxel state. The default orthographic view projects that cubic lattice without converging parallel edges; it does not turn depth into time.",
         "volume",
         _section("A true 3D lattice", "Rows, columns, and depth are all spatial directions. A voxel can have neighbors in front of and behind the screen plane."),
         _section("One state per coordinate", "The volume is a NumPy uint8 array addressed internally as (z, y, x). The camera changes only how those coordinates are viewed."),
@@ -87,6 +87,7 @@ THREE_D_FOUNDATION_PAGES: tuple[TutorialPage, ...] = (
         _section("Middle drag", "Pan the target parallel to the view plane."),
         _section("Mouse wheel", "Change camera distance to zoom."),
         _section("Orientation cube", "Click a visible cube face for an aligned ±X, ±Y, or ±Z view; Ctrl+0 fits the full volume."),
+        _section("Projection", "Orthographic is the shape-accurate scientific default. Use Camera & View to enable perspective when depth convergence is useful."),
     ),
     _page(
         "3D FOUNDATIONS 6 - EDITING",

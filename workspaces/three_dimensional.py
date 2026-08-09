@@ -48,6 +48,9 @@ from three_dimensional_rendering import (
     FILTER_MODES,
     LIGHTING_MODES,
     OrbitCamera3D,
+    PROJECTION_MODES,
+    PROJECTION_ORTHOGRAPHIC,
+    PROJECTION_PERSPECTIVE,
     VoxelRenderSettings,
     orientation_cube_face_at,
     orientation_cube_faces,
@@ -96,6 +99,10 @@ THREE_D_LIGHTING_LABELS = {
     "studio": "Studio",
     "soft": "Soft",
     "flat": "Flat",
+}
+THREE_D_PROJECTION_LABELS = {
+    PROJECTION_ORTHOGRAPHIC: "Orthographic",
+    PROJECTION_PERSPECTIVE: "Perspective",
 }
 THREE_D_OUTLINE_LABELS = {
     0.0: "Off",
@@ -326,6 +333,18 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self.state.cell_size = new_size
         self.center_view()
         self._status(f"3D cell size: {new_size}px")
+
+    def cycle_projection(self) -> None:
+        """Switch between shape-preserving and depth-emphasizing projections."""
+
+        camera = self.state.camera
+        index = PROJECTION_MODES.index(camera.projection)
+        camera.projection = PROJECTION_MODES[(index + 1) % len(PROJECTION_MODES)]
+        self.state.selected_voxel = None
+        self.services.rebuild_sidebar()
+        self._status(
+            f"3D projection: {THREE_D_PROJECTION_LABELS[camera.projection]}."
+        )
 
     def save_history(self) -> None:
         self.timeline.prepare_change()
@@ -1341,10 +1360,20 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         menu.begin_section(
             "3d_camera",
             "Camera & View",
-            tooltip="Orbit, pan, zoom, and reset the perspective voxel view.",
+            tooltip="Orbit, pan, zoom, projection, and camera alignment.",
         )
         menu.add_button("Fit Full Volume (Ctrl+0)", self.fit_view, accent=accent)
         menu.add_button("Reset Camera (C)", self.center_view)
+        if self.services.hardware_3d():
+            menu.add_button(
+                f"Projection: {THREE_D_PROJECTION_LABELS[self.state.camera.projection]}",
+                self.cycle_projection,
+                active=self.state.camera.projection != PROJECTION_ORTHOGRAPHIC,
+                tooltip=(
+                    "Orthographic keeps parallel cube edges parallel; perspective "
+                    "adds depth convergence."
+                ),
+            )
         menu.add_button(
             f"Theme: {self.services.theme_name().title()}",
             self.services.cycle_theme,
@@ -1493,6 +1522,7 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             state.camera.yaw,
             state.camera.pitch,
             state.camera.distance,
+            state.camera.projection,
             state.view_mode,
             state.clip_keep_lower,
             state.voxel_opacity,

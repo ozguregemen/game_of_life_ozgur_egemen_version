@@ -8,8 +8,11 @@ from three_dimensional_display import framebuffer_rgb_array
 from three_dimensional_rendering import (
     CAMERA_FACE_DIRECTIONS,
     OrbitCamera3D,
+    PROJECTION_ORTHOGRAPHIC,
+    PROJECTION_PERSPECTIVE,
     VoxelRenderSettings,
     look_at_matrix,
+    orthographic_matrix,
     perspective_matrix,
     pick_voxel,
     orientation_cube_face_at,
@@ -69,6 +72,7 @@ class Camera3DTests(unittest.TestCase):
 
     def test_projection_and_view_matrices_reject_invalid_inputs(self) -> None:
         self.assertEqual(perspective_matrix(45, 1.5, 0.1, 100).shape, (4, 4))
+        self.assertEqual(orthographic_matrix(80, 1.5, 0.1, 100).shape, (4, 4))
         self.assertEqual(
             look_at_matrix(
                 np.asarray((0, 0, 5), dtype=np.float32),
@@ -78,8 +82,46 @@ class Camera3DTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             perspective_matrix(45, 0, 0.1, 100)
+        with self.assertRaises(ValueError):
+            orthographic_matrix(0, 1.5, 0.1, 100)
         with self.assertRaisesRegex(ValueError, "field of view"):
             OrbitCamera3D(fov_y=180)
+        with self.assertRaisesRegex(ValueError, "projection"):
+            OrbitCamera3D(projection="fisheye")
+
+    def test_orthographic_projection_keeps_parallel_cube_edges_parallel(self) -> None:
+        camera = OrbitCamera3D(projection=PROJECTION_ORTHOGRAPHIC)
+        matrix = camera.view_projection(16 / 9)
+        points = np.asarray(
+            (
+                (-24.0, -24.0, -24.0, 1.0),
+                (24.0, -24.0, -24.0, 1.0),
+                (-24.0, 24.0, 24.0, 1.0),
+                (24.0, 24.0, 24.0, 1.0),
+            ),
+            dtype=np.float32,
+        )
+        clip = (matrix @ points.T).T
+        projected = clip[:, :2] / clip[:, 3:4]
+
+        near_edge = projected[1] - projected[0]
+        far_edge = projected[3] - projected[2]
+        np.testing.assert_allclose(near_edge, far_edge, atol=1e-6)
+
+    def test_projection_mode_round_trips_and_changes_pointer_rays(self) -> None:
+        camera = OrbitCamera3D(projection=PROJECTION_ORTHOGRAPHIC)
+        restored = OrbitCamera3D.from_mapping(camera.as_dict())
+        self.assertEqual(restored.projection, PROJECTION_ORTHOGRAPHIC)
+
+        left_origin, left_direction = camera.screen_ray((200, 300), (0, 0, 800, 600))
+        right_origin, right_direction = camera.screen_ray((600, 300), (0, 0, 800, 600))
+        self.assertFalse(np.allclose(left_origin, right_origin))
+        np.testing.assert_allclose(left_direction, right_direction, atol=1e-6)
+
+        camera.projection = PROJECTION_PERSPECTIVE
+        _, perspective_left = camera.screen_ray((200, 300), (0, 0, 800, 600))
+        _, perspective_right = camera.screen_ray((600, 300), (0, 0, 800, 600))
+        self.assertFalse(np.allclose(perspective_left, perspective_right))
 
     def test_transparent_sort_bucket_ignores_zoom_pan_and_tiny_orbits(self) -> None:
         camera = OrbitCamera3D()

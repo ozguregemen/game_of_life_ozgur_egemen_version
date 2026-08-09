@@ -11,7 +11,11 @@ import pygame
 
 from themes import Menu
 from three_dimensional_patterns import BAYS_5766_GLIDER
-from three_dimensional_rendering import orientation_cube_faces
+from three_dimensional_rendering import (
+    PROJECTION_ORTHOGRAPHIC,
+    PROJECTION_PERSPECTIVE,
+    orientation_cube_faces,
+)
 from three_dimensional_modes import MODE_GENERATIONS, MODE_SPATIAL_LIFE
 from workspaces.three_dimensional import (
     DEFAULT_VOLUME_SHAPE,
@@ -126,6 +130,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.controller.cycle_boundary()
         self.controller.cycle_axis()
         self.controller.move_slice(2)
+        self.controller.cycle_projection()
         snapshot = self.controller.snapshot()
 
         restored = ThreeDimensionalWorkspaceController(
@@ -179,6 +184,10 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertTrue(any(label.startswith("Coloring:") for label in labels))
         self.assertTrue(any(label.startswith("Lighting:") for label in labels))
         self.assertTrue(any(label.startswith("Outline:") for label in labels))
+        self.assertIn("Projection: Orthographic", labels)
+        self.assertEqual(controller.state.camera.projection, PROJECTION_ORTHOGRAPHIC)
+        controller.cycle_projection()
+        self.assertEqual(controller.state.camera.projection, PROJECTION_PERSPECTIVE)
 
         center = self.viewport.center
         initial_yaw = controller.state.camera.yaw
