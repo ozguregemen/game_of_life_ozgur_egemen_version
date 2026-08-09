@@ -3203,6 +3203,9 @@ def active_tool_label() -> str:
     if active_dimension == "1d":
         return f"Cell state {elementary_controller.state.brush_state}"
     if active_dimension == "3d":
+        pattern = three_dimensional_controller.state.selected_pattern
+        if pattern is not None:
+            return f"3D Pattern: {pattern.name}"
         return "Orbit camera · Add voxel"
     if selected_pattern is not None:
         return f"Pattern: {selected_pattern['name']}"
@@ -3306,9 +3309,10 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
             ("Timeline arrows", "Step backward or forward through recorded state"),
         )
     if active_dimension == "3d":
-        return (
+        entries = [
             ("M", "Switch Spatial Life / 3D Generations mode"),
             ("V", "Cycle 32³, 48³, and 64³ experiment volumes"),
+            ("Pattern Studio", "Browse structures compatible with the active rule"),
             ("U", "Cycle Softology-inspired voxel color schemes"),
             ("Projection button", "Keep parallel edges orthographic or add perspective"),
             ("Left drag", "Orbit the 3D camera around the volume"),
@@ -3325,7 +3329,16 @@ def help_context_entries() -> tuple[tuple[str, str], ...]:
             ("K", "Switch between 26-neighbor and six-face rule families"),
             ("Ctrl+0 / C", "Fit or reset the complete volume view"),
             ("Timeline arrows", "Step backward or forward through 3D generations"),
-        )
+        ]
+        if three_dimensional_controller.state.selected_pattern is not None:
+            entries.extend(
+                (
+                    ("Arrows / PgUp / PgDn", "Move the 3D pattern anchor"),
+                    ("R / F", "Apply one of 24 cube rotations / mirror X"),
+                    ("Enter / Esc", "Place the complete pattern / cancel"),
+                )
+            )
+        return tuple(entries)
     entries = [
         ("Left / Right click", "Draw with the active tool / erase a cell"),
         ("Middle drag", "Pan the grid"),
@@ -3955,6 +3968,13 @@ def handle_keydown(event: pygame.event.Event) -> None:
     """Handle app-wide commands before delegating workspace-specific keys."""
     global simulation_active, single_step_requested, speed
 
+    if (
+        active_dimension == "3d"
+        and three_dimensional_controller.state.selected_pattern is not None
+        and three_dimensional_controller.handle_keydown(event)
+    ):
+        return
+
     modifiers = getattr(event, "mod", pygame.key.get_mods())
     question_mark = event.key == pygame.K_SLASH and bool(modifiers & pygame.KMOD_SHIFT)
     if event.key == pygame.K_F2:
@@ -4298,7 +4318,7 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
     record_analysis=analysis_registry.observe,
     reset_analysis=analysis_registry.reset,
     hardware_3d=lambda: display_backend.is_opengl,
-    render_volume=lambda volume, camera, viewport, revision, settings, selected: (
+    render_volume=lambda volume, camera, viewport, revision, settings, selected, preview: (
         display_backend.render_volume(
             volume,
             camera,
@@ -4308,8 +4328,10 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
             accent_color=DIMENSION_BY_KEY["3d"].accent,
             selected=selected,
             settings=settings,
+            preview=preview,
         )
     ),
+    request_text=get_text_input,
 )
 three_dimensional_controller = ThreeDimensionalWorkspaceController(
     three_dimensional_services,

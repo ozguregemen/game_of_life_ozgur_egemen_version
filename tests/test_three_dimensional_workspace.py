@@ -10,7 +10,11 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pygame
 
 from themes import Menu
-from three_dimensional_patterns import BAYS_5766_GLIDER
+from three_dimensional_patterns import (
+    ASYMMETRIC_HOOK_6,
+    BAYS_5766_GLIDER,
+    HOLLOW_CUBE_26,
+)
 from three_dimensional_rendering import (
     PROJECTION_ORTHOGRAPHIC,
     PROJECTION_PERSPECTIVE,
@@ -154,16 +158,18 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         labels = [entry["button"].text for entry in menu.buttons]
         self.assertIn("Session Save / Load (P)", labels)
         self.assertIn("Tutorial: 3D & Mode Guide (F2)", labels)
+        self.assertIn("Browse 3D Patterns", labels)
+        self.assertIn("Save Occupied Voxels", labels)
         self.assertTrue(any(label.startswith("Rule: B") for label in labels))
         self.assertTrue(any(label.startswith("Axis:") for label in labels))
 
     def test_hardware_renderer_and_orbit_voxel_controls_use_world_space(self) -> None:
-        rendered: list[tuple[object, object]] = []
+        rendered: list[tuple[object, object, object]] = []
         services = replace(
             self.controller.services,
             hardware_3d=lambda: True,
-            render_volume=lambda volume, _camera, _viewport, _revision, _settings, selected: (
-                rendered.append((volume, selected)) or True
+            render_volume=lambda volume, _camera, _viewport, _revision, _settings, selected, preview: (
+                rendered.append((volume, selected, preview)) or True
             ),
         )
         controller = ThreeDimensionalWorkspaceController(
@@ -367,6 +373,84 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
         self.assertEqual(self.controller.generation, 0)
         self.controller.step_back()
         self.assertEqual(self.controller.snapshot(), original)
+
+    def test_pattern_catalog_is_rule_filtered_and_opens_as_workspace_overlay(self) -> None:
+        self.controller.open_pattern_catalog()
+
+        self.assertTrue(self.controller.overlay_active)
+        patterns = self.controller.pattern_catalog_patterns()
+        self.assertIn(BAYS_5766_GLIDER, patterns)
+        self.assertIn(ASYMMETRIC_HOOK_6, patterns)
+        self.assertTrue(
+            all(
+                pattern.compatible_with(
+                    self.controller.state.mode_key,
+                    self.controller.state.rule_key,
+                )
+                for pattern in patterns
+            )
+        )
+        self.renderer.draw_modal()
+        self.controller.handle_overlay_event(
+            pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE)
+        )
+        self.assertFalse(self.controller.overlay_active)
+
+    def test_pattern_preview_rotates_mirrors_and_places_as_one_history_change(self) -> None:
+        self.controller.select_pattern(ASYMMETRIC_HOOK_6)
+        initial_preview = self.controller.pattern_preview()
+        self.assertIsNotNone(initial_preview)
+        self.assertTrue(initial_preview.valid)
+        initial_frames = self.controller.history_status().frame_count
+
+        self.controller.rotate_pattern()
+        self.controller.mirror_pattern()
+        transformed_preview = self.controller.pattern_preview()
+        self.assertNotEqual(initial_preview.positions, transformed_preview.positions)
+        self.assertTrue(self.controller.place_selected_pattern())
+
+        self.assertIsNone(self.controller.state.selected_pattern)
+        self.assertEqual(
+            int(np.count_nonzero(self.controller.state.volume.cells)),
+            ASYMMETRIC_HOOK_6.voxel_count,
+        )
+        self.assertEqual(
+            self.controller.history_status().frame_count,
+            initial_frames + 1,
+        )
+
+    def test_out_of_bounds_pattern_stays_red_and_never_partially_places(self) -> None:
+        self.controller.select_pattern(HOLLOW_CUBE_26)
+        self.controller.state.pattern_anchor = (0, 0, 0)
+        preview = self.controller.pattern_preview()
+
+        self.assertFalse(preview.valid)
+        before = self.controller.state.volume.cells.copy()
+        frame_count = self.controller.history_status().frame_count
+        self.assertFalse(self.controller.place_selected_pattern())
+        np.testing.assert_array_equal(self.controller.state.volume.cells, before)
+        self.assertEqual(self.controller.history_status().frame_count, frame_count)
+
+    def test_placing_identical_pattern_does_not_add_empty_history(self) -> None:
+        self.controller.select_pattern(ASYMMETRIC_HOOK_6)
+        anchor = self.controller.state.pattern_anchor
+        self.assertTrue(self.controller.place_selected_pattern())
+        frame_count = self.controller.history_status().frame_count
+
+        self.controller.select_pattern(ASYMMETRIC_HOOK_6)
+        self.controller.state.pattern_anchor = anchor
+        self.assertFalse(self.controller.place_selected_pattern())
+        self.assertEqual(self.controller.history_status().frame_count, frame_count)
+
+    def test_session_snapshot_excludes_and_restore_clears_transient_preview(self) -> None:
+        self.controller.select_pattern(ASYMMETRIC_HOOK_6)
+        snapshot = self.controller.snapshot()
+
+        self.assertNotIn("selected_pattern", snapshot)
+        self.assertNotIn("pattern_anchor", snapshot)
+        self.controller.restore(snapshot)
+        self.assertIsNone(self.controller.state.selected_pattern)
+        self.assertIsNone(self.controller.pattern_preview())
 
 
 if __name__ == "__main__":

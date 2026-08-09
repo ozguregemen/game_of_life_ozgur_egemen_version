@@ -23,7 +23,15 @@ from three_dimensional_ca import (
     SLICE_AXES,
     Volume3D,
 )
-from three_dimensional_patterns import BAYS_5766_GLIDER, Pattern3D
+from three_dimensional_patterns import (
+    PATTERN_3D_CATEGORY_LABELS,
+    BAYS_5766_GLIDER,
+    Pattern3D,
+    PatternTransform3D,
+    get_patterns_3d,
+    pattern_from_volume,
+    save_custom_pattern_3d,
+)
 from three_dimensional_generations import GenerationsRule3D, step_generations_3d
 from three_dimensional_modes import (
     ALL_RULES_3D,
@@ -48,6 +56,7 @@ from three_dimensional_rendering import (
     FILTER_MODES,
     LIGHTING_MODES,
     OrbitCamera3D,
+    PatternPreview3D,
     PROJECTION_MODES,
     PROJECTION_ORTHOGRAPHIC,
     PROJECTION_PERSPECTIVE,
@@ -81,6 +90,8 @@ THREE_D_VOXEL_SCALES = (0.68, 0.80, 0.92)
 THREE_D_OCCLUSION_LEVELS = (0.0, 0.35, 0.65)
 THREE_D_ORIENTATION_CUBE_SIZE = 116
 THREE_D_ORIENTATION_HINT_HEIGHT = 18
+THREE_D_PATTERN_ROW_HEIGHT = 58
+THREE_D_PATTERN_CATEGORY_WIDTH = 190
 THREE_D_VIEW_LABELS = {
     "all": "Full Volume",
     "clip": "Clipping Plane",
@@ -155,6 +166,12 @@ class ThreeDimensionalWorkspaceState:
     outline_thickness: float = 0.055
     voxel_scale: float = 0.80
     occlusion_strength: float = 0.65
+    pattern_catalog_open: bool = False
+    pattern_category: str = "all"
+    pattern_scroll: int = 0
+    selected_pattern: Pattern3D | None = None
+    pattern_transform: PatternTransform3D = field(default_factory=PatternTransform3D)
+    pattern_anchor: tuple[int, int, int] | None = None
     brush_state: int = 1
     drawing: bool = False
     drawing_value: int = 1
@@ -204,9 +221,11 @@ class ThreeDimensionalWorkspaceServices:
             int,
             VoxelRenderSettings,
             tuple[int, int, int] | None,
+            PatternPreview3D | None,
         ],
         bool,
-    ] = lambda _volume, _camera, _viewport, _revision, _settings, _selected: False
+    ] = lambda _volume, _camera, _viewport, _revision, _settings, _selected, _preview: False
+    request_text: Callable[[str], str | None] = lambda _prompt: None
 
 
 class ThreeDimensionalWorkspaceController(WorkspaceController):
@@ -241,11 +260,264 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
     def mode_label(self) -> str:
         return MODE_LABELS_3D[self.state.mode_key]
 
+    @property
+    def overlay_active(self) -> bool:
+        return self.state.pattern_catalog_open
+
     def _status(self, message: str, duration: float = 2.5) -> None:
         self.services.set_status(message, duration)
 
     def _invalidate(self) -> None:
         self.services.invalidate(THREE_D_RENDER_KEY)
+
+    def pattern_catalog_patterns(self) -> tuple[Pattern3D, ...]:
+        """Return cached patterns compatible with the active mode and rule."""
+
+        category = self.state.pattern_category
+        return get_patterns_3d(
+            mode_key=self.state.mode_key,
+            rule_key=self.state.rule_key,
+            category=None if category == "all" else category,
+        )
+
+    def pattern_catalog_categories(self) -> tuple[tuple[str, str, int], ...]:
+        """Return non-empty categories for the current rule context."""
+
+        patterns = get_patterns_3d(
+            mode_key=self.state.mode_key,
+            rule_key=self.state.rule_key,
+        )
+        counts: dict[str, int] = {}
+        for pattern in patterns:
+            counts[pattern.category] = counts.get(pattern.category, 0) + 1
+        ordered = [
+            category for category in PATTERN_3D_CATEGORY_LABELS if category in counts
+        ]
+        ordered.extend(sorted(set(counts) - set(ordered)))
+        return (
+            ("all", "All Compatible", len(patterns)),
+            *(
+                (
+                    category,
+                    PATTERN_3D_CATEGORY_LABELS.get(
+                        category,
+                        category.replace("_", " ").title(),
+                    ),
+                    counts[category],
+                )
+                for category in ordered
+            ),
+        )
+
+    def pattern_catalog_geometry(
+        self,
+    ) -> tuple[
+        pygame.Rect,
+        pygame.Rect,
+        tuple[tuple[str, pygame.Rect], ...],
+        tuple[tuple[Pattern3D, pygame.Rect], ...],
+        int,
+    ]:
+        """Return modal, close button, category cards, visible rows, and capacity."""
+
+        window_width, window_height = self.services.window_size()
+        content_width = max(520, window_width - self.services.menu_width)
+        modal = pygame.Rect(
+            24,
+            52,
+            max(500, content_width - 48),
+            max(410, window_height - 104),
+        )
+        close = pygame.Rect(modal.right - 46, modal.y + 16, 30, 30)
+        categories = self.pattern_catalog_categories()
+        category_rects = tuple(
+            (
+                key,
+                pygame.Rect(
+                    modal.x + 18,
+                    modal.y + 82 + index * 48,
+                    THREE_D_PATTERN_CATEGORY_WIDTH,
+                    40,
+                ),
+            )
+            for index, (key, _label, _count) in enumerate(categories)
+        )
+        list_left = modal.x + THREE_D_PATTERN_CATEGORY_WIDTH + 36
+        list_top = modal.y + 82
+        list_bottom = modal.bottom - 54
+        capacity = max(1, (list_bottom - list_top) // THREE_D_PATTERN_ROW_HEIGHT)
+        patterns = self.pattern_catalog_patterns()
+        max_scroll = max(0, len(patterns) - capacity)
+        self.state.pattern_scroll = max(0, min(max_scroll, self.state.pattern_scroll))
+        visible = patterns[
+            self.state.pattern_scroll : self.state.pattern_scroll + capacity
+        ]
+        rows = tuple(
+            (
+                pattern,
+                pygame.Rect(
+                    list_left,
+                    list_top + index * THREE_D_PATTERN_ROW_HEIGHT,
+                    modal.right - list_left - 18,
+                    THREE_D_PATTERN_ROW_HEIGHT - 7,
+                ),
+            )
+            for index, pattern in enumerate(visible)
+        )
+        return modal, close, category_rects, rows, capacity
+
+    def open_pattern_catalog(self) -> None:
+        """Pause and open the rule-filtered 3D pattern catalog."""
+
+        self.services.set_running(False)
+        self.state.pattern_catalog_open = True
+        self.state.pattern_category = "all"
+        self.state.pattern_scroll = 0
+
+    def close_pattern_catalog(self) -> None:
+        self.state.pattern_catalog_open = False
+
+    def _discard_pattern_state(self) -> None:
+        self.state.pattern_catalog_open = False
+        self.state.selected_pattern = None
+        self.state.pattern_anchor = None
+        self.state.pattern_transform = PatternTransform3D()
+
+    def select_pattern(self, pattern: Pattern3D) -> None:
+        """Start a non-destructive centered ghost preview."""
+
+        if not pattern.compatible_with(self.state.mode_key, self.state.rule_key):
+            self._status(
+                f"{pattern.name} is not compatible with {self.rule.name}.",
+                4.0,
+            )
+            return
+        self.state.selected_pattern = pattern
+        self.state.pattern_transform = PatternTransform3D()
+        self.state.pattern_anchor = tuple(length // 2 for length in self.state.volume.shape)
+        self.state.pattern_catalog_open = False
+        self.state.selected_voxel = None
+        self.services.set_running(False)
+        self.services.rebuild_sidebar()
+        source_note = "documented pattern" if pattern.source_url else "experiment seed"
+        self._status(
+            f"Previewing {pattern.name} ({source_note}). Move, rotate, then place.",
+            4.0,
+        )
+
+    def cancel_pattern_selection(self, *, rebuild: bool = True) -> None:
+        if self.state.selected_pattern is None:
+            return
+        self._discard_pattern_state()
+        if rebuild:
+            self.services.rebuild_sidebar()
+        self._status("3D pattern placement cancelled.")
+
+    def pattern_preview(self) -> PatternPreview3D | None:
+        """Return transformed preview positions, including invalid out-of-bounds cells."""
+
+        pattern = self.state.selected_pattern
+        anchor = self.state.pattern_anchor
+        if pattern is None or anchor is None:
+            return None
+        positions = tuple(
+            tuple(anchor[axis] + offset[axis] for axis in range(3))
+            for offset, _state in pattern.transformed_voxels(self.state.pattern_transform)
+        )
+        valid = all(
+            all(0 <= position[axis] < self.state.volume.shape[axis] for axis in range(3))
+            for position in positions
+        )
+        return PatternPreview3D(positions, valid)
+
+    def move_pattern(self, delta: tuple[int, int, int]) -> None:
+        if self.state.selected_pattern is None or self.state.pattern_anchor is None:
+            return
+        self.state.pattern_anchor = tuple(
+            self.state.pattern_anchor[axis] + int(delta[axis]) for axis in range(3)
+        )
+
+    def rotate_pattern(self) -> None:
+        if self.state.selected_pattern is None:
+            return
+        self.state.pattern_transform = self.state.pattern_transform.next_rotation()
+        self._status(
+            f"3D rotation {self.state.pattern_transform.rotation + 1}/24."
+        )
+
+    def mirror_pattern(self) -> None:
+        if self.state.selected_pattern is None:
+            return
+        self.state.pattern_transform = self.state.pattern_transform.toggled_mirror()
+        label = "on" if self.state.pattern_transform.mirrored else "off"
+        self._status(f"3D pattern mirror: {label}.")
+
+    def place_selected_pattern(self) -> bool:
+        """Place the complete preview as one history change, never clipped."""
+
+        pattern = self.state.selected_pattern
+        anchor = self.state.pattern_anchor
+        if pattern is None or anchor is None:
+            return False
+        if not pattern.compatible_with(self.state.mode_key, self.state.rule_key):
+            self.cancel_pattern_selection()
+            self._status("The selected pattern no longer matches the active rule.", 4.0)
+            return False
+        try:
+            voxels = pattern.positioned_voxels(
+                anchor,
+                self.state.volume.shape,
+                self.state.pattern_transform,
+            )
+        except ValueError:
+            self._status("The complete 3D pattern must fit inside the volume.", 4.0)
+            return False
+        changes = tuple(
+            (position, state)
+            for position, state in voxels
+            if self.state.volume.get_cell(position) != state
+        )
+        if not changes:
+            self.cancel_pattern_selection()
+            self._status(f"{pattern.name} already matches those voxels.")
+            return False
+        self.save_history()
+        for position, state in changes:
+            self.state.volume.set_cell(position, state)
+        self._invalidate()
+        self.sync_history()
+        self.state.selected_pattern = None
+        self.state.pattern_anchor = None
+        self.state.pattern_transform = PatternTransform3D()
+        self.services.rebuild_sidebar()
+        self._status(f"Placed {pattern.name}: {len(changes)} voxels changed.")
+        return True
+
+    def save_current_pattern(self) -> None:
+        """Prompt for a name and save the occupied bounding box as custom JSON."""
+
+        if not np.any(self.state.volume.cells):
+            self._status("There are no occupied voxels to save.")
+            return
+        self.services.set_running(False)
+        name = self.services.request_text("3D pattern name")
+        if not name:
+            self._status("3D pattern save cancelled.")
+            return
+        try:
+            pattern = pattern_from_volume(
+                self.state.volume,
+                name,
+                mode_key=self.state.mode_key,
+                rule_key=self.state.rule_key,
+                description=f"Saved from {self.rule.name} at generation {self.generation}.",
+            )
+            saved = save_custom_pattern_3d(pattern)
+        except (FileExistsError, OSError, TypeError, ValueError) as exc:
+            self._status(f"Could not save 3D pattern: {exc}", 5.0)
+            return
+        self.services.rebuild_sidebar()
+        self._status(f"Saved 3D pattern '{saved.name}' ({saved.voxel_count} voxels).")
 
     def activate(self) -> None:
         self.services.set_running(False)
@@ -255,6 +527,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             self.center_view()
 
     def deactivate(self) -> None:
+        self._discard_pattern_state()
         self.state.drawing = False
         self.state.stroke_history_pending = False
         self.state.pointer_button = 0
@@ -545,6 +818,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             raise ValueError(f"Unsupported 3D workspace volume: {shape}")
         if shape == self.state.volume.shape:
             return
+        self._discard_pattern_state()
         self.save_history()
         rule = self.rule
         cells = (
@@ -582,6 +856,9 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def seed_pattern(self, pattern: Pattern3D) -> None:
         """Load a documented rule-compatible pattern as one history change."""
+        if pattern.rule_key == "*":
+            raise ValueError("Generic 3D seeds must be placed through the catalog.")
+        self._discard_pattern_state()
         cells = pattern.centered_cells(self.state.volume.shape)
         if (
             self.state.mode_key == MODE_SPATIAL_LIFE
@@ -619,6 +896,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             raise ValueError(f"Unknown 3D mode: {mode_key}")
         if mode_key == self.state.mode_key:
             return
+        self._discard_pattern_state()
         self.save_history()
         rule = DEFAULT_RULE_BY_MODE_3D[mode_key]
         if isinstance(rule, GenerationsRule3D):
@@ -655,6 +933,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         rule = registry[rule_key]
         if rule.key == self.state.rule_key:
             return
+        self._discard_pattern_state()
         self.save_history()
         self.state.rule_key = rule.key
         if isinstance(rule, GenerationsRule3D):
@@ -863,6 +1142,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         )
 
     def _restore_timeline_snapshot(self, snapshot: Mapping[str, Any]) -> None:
+        self._discard_pattern_state()
         previous_shape = self.state.volume.shape
         shape = tuple(int(value) for value in snapshot["shape"])
         cells = np.frombuffer(snapshot["cells"], dtype=np.uint8).reshape(shape)
@@ -929,6 +1209,7 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
 
     def restore(self, snapshot: Mapping[str, Any]) -> None:
         """Restore a validated complete 3D workspace snapshot."""
+        self._discard_pattern_state()
         rule_key = str(snapshot["rule"])
         rule = ALL_RULES_3D[rule_key]
         mode_key = str(snapshot.get("mode", mode_for_rule(rule_key)))
@@ -1035,7 +1316,65 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         self._invalidate()
         return True
 
+    def handle_overlay_event(self, event: pygame.event.Event) -> bool:
+        if not self.state.pattern_catalog_open:
+            return False
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_ESCAPE:
+                self.close_pattern_catalog()
+            elif event.key in (pygame.K_UP, pygame.K_PAGEUP):
+                self.state.pattern_scroll = max(0, self.state.pattern_scroll - 1)
+            elif event.key in (pygame.K_DOWN, pygame.K_PAGEDOWN):
+                self.state.pattern_scroll += 1
+            return True
+        if event.type == pygame.MOUSEWHEEL:
+            self.state.pattern_scroll = max(
+                0,
+                self.state.pattern_scroll - event.y,
+            )
+            return True
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            modal, close, categories, rows, _capacity = self.pattern_catalog_geometry()
+            if close.collidepoint(event.pos) or not modal.collidepoint(event.pos):
+                self.close_pattern_catalog()
+                return True
+            for category, rect in categories:
+                if rect.collidepoint(event.pos):
+                    self.state.pattern_category = category
+                    self.state.pattern_scroll = 0
+                    return True
+            for pattern, rect in rows:
+                if rect.collidepoint(event.pos):
+                    self.select_pattern(pattern)
+                    return True
+            return True
+        return True
+
     def handle_keydown(self, event: pygame.event.Event) -> bool:
+        if self.state.selected_pattern is not None:
+            pattern_commands = {
+                pygame.K_LEFT: (0, 0, -1),
+                pygame.K_RIGHT: (0, 0, 1),
+                pygame.K_UP: (0, -1, 0),
+                pygame.K_DOWN: (0, 1, 0),
+                pygame.K_PAGEUP: (-1, 0, 0),
+                pygame.K_PAGEDOWN: (1, 0, 0),
+            }
+            if event.key in pattern_commands:
+                self.move_pattern(pattern_commands[event.key])
+            elif event.key == pygame.K_r:
+                self.rotate_pattern()
+            elif event.key == pygame.K_f:
+                self.mirror_pattern()
+            elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                self.place_selected_pattern()
+            elif event.key == pygame.K_ESCAPE:
+                self.cancel_pattern_selection()
+            elif event.key == pygame.K_SPACE:
+                self._status("Place or cancel the 3D pattern before running.")
+            else:
+                return False
+            return True
         if event.key == pygame.K_q:
             self.cycle_axis()
         elif event.key in (pygame.K_COMMA, pygame.K_PAGEUP):
@@ -1070,9 +1409,67 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         return True
 
     def handle_pointer_event(self, event: pygame.event.Event) -> bool:
+        if self.state.selected_pattern is not None:
+            return self._handle_pattern_pointer_event(event)
         if self.services.hardware_3d():
             return self._handle_voxel_pointer_event(event)
         return self._handle_slice_pointer_event(event)
+
+    def _pattern_anchor_at(self, position: tuple[int, int]) -> tuple[int, int, int] | None:
+        if self.services.hardware_3d():
+            result = self._pick_at(position)
+            if result is None:
+                return None
+            return result.adjacent if result.adjacent is not None else result.hit
+        return self.mouse_to_position(position)
+
+    def _handle_pattern_pointer_event(self, event: pygame.event.Event) -> bool:
+        viewport = self.services.viewport()
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 3:
+                self.cancel_pattern_selection()
+                return True
+            if event.button not in (1, 2) or not viewport.collidepoint(event.pos):
+                return True
+            self.state.pointer_button = event.button
+            self.state.pointer_origin = event.pos
+            self.state.pointer_dragged = False
+            anchor = self._pattern_anchor_at(event.pos)
+            if anchor is not None:
+                self.state.pattern_anchor = anchor
+            return True
+        if event.type == pygame.MOUSEMOTION:
+            if self.state.pointer_button == 1 and event.buttons[0] and self.services.hardware_3d():
+                if self.state.pointer_origin is not None:
+                    dx = event.pos[0] - self.state.pointer_origin[0]
+                    dy = event.pos[1] - self.state.pointer_origin[1]
+                    if abs(dx) + abs(dy) >= 4:
+                        self.state.pointer_dragged = True
+                if self.state.pointer_dragged:
+                    self.state.camera.orbit(*event.rel)
+            elif self.state.pointer_button == 2 and event.buttons[1]:
+                self.state.pointer_dragged = True
+                if self.services.hardware_3d():
+                    self.state.camera.pan(event.rel[0], event.rel[1], viewport.height)
+                else:
+                    self.state.view_offset_x += event.rel[0]
+                    self.state.view_offset_y += event.rel[1]
+            elif not any(event.buttons):
+                anchor = self._pattern_anchor_at(event.pos)
+                if anchor is not None:
+                    self.state.pattern_anchor = anchor
+            return True
+        if event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1 and not self.state.pointer_dragged:
+                anchor = self._pattern_anchor_at(event.pos)
+                if anchor is not None:
+                    self.state.pattern_anchor = anchor
+                self.place_selected_pattern()
+            self.state.pointer_button = 0
+            self.state.pointer_origin = None
+            self.state.pointer_dragged = False
+            return True
+        return False
 
     def _pick_at(self, position: tuple[int, int]):
         viewport = self.services.viewport()
@@ -1327,15 +1724,6 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
         )
         if self.state.mode_key == MODE_SPATIAL_LIFE:
             menu.add_button("Centered Seed", self.seed_cluster)
-            menu.add_button(
-                "Bays 5766 Glider",
-                lambda: self.seed_pattern(BAYS_5766_GLIDER),
-                accent=(245, 185, 70),
-                tooltip=(
-                    "Load Carter Bays' documented ten-voxel, period-four glider "
-                    "and select its B6/S567 rule."
-                ),
-            )
             menu.add_button("Randomize Volume", lambda: self.randomize(0.18))
         else:
             menu.add_button(
@@ -1356,6 +1744,44 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
                 tooltip=self.rule.description,
             )
         menu.add_button("Clear Volume", self.clear)
+
+        menu.begin_section(
+            "3d_patterns",
+            "3D Pattern Studio",
+            tooltip=(
+                "Browse rule-compatible structures, preview transforms, place "
+                "without clipping, or save the occupied volume."
+            ),
+        )
+        menu.add_button(
+            "Browse 3D Patterns",
+            self.open_pattern_catalog,
+            accent=(245, 185, 70),
+            tooltip=(
+                "Open the cached catalog filtered to patterns compatible with "
+                "the active 3D mode and rule."
+            ),
+        )
+        menu.add_button(
+            "Save Occupied Voxels",
+            self.save_current_pattern,
+            tooltip="Crop all occupied voxels and save their states as custom JSON.",
+        )
+        if self.state.selected_pattern is not None:
+            pattern = self.state.selected_pattern
+            menu.add_button(
+                f"Place: {pattern.name} (Enter)",
+                self.place_selected_pattern,
+                accent=accent,
+                active=True,
+                tooltip=(
+                    "Green preview fits; red preview is outside the volume. "
+                    "Arrow/Page keys move the anchor."
+                ),
+            )
+            menu.add_button("Rotate Cube (R)", self.rotate_pattern)
+            menu.add_button("Mirror X (F)", self.mirror_pattern)
+            menu.add_button("Cancel Pattern (Esc)", self.cancel_pattern_selection)
 
         menu.begin_section(
             "3d_camera",
@@ -1531,6 +1957,10 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             state.outline_thickness,
             state.voxel_scale,
             state.occlusion_strength,
+            None if state.selected_pattern is None else state.selected_pattern.key,
+            state.pattern_transform.rotation,
+            state.pattern_transform.mirrored,
+            state.pattern_anchor,
             self.services.theme_name(),
             self.services.show_grid(),
         )
@@ -1568,6 +1998,7 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
                 self.services.render_revision(THREE_D_RENDER_KEY),
                 self.controller.render_settings(),
                 self.controller.state.selected_voxel,
+                self.controller.pattern_preview(),
             )
             return
         old_clip = screen.get_clip()
@@ -1597,6 +2028,47 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
                 y = rect.y + row * cell_size
                 pygame.draw.line(screen, theme["grid"], (rect.left, y), (rect.right, y))
         pygame.draw.rect(screen, DIMENSION_BY_KEY["3d"].accent, rect, 2)
+        screen.set_clip(old_clip)
+
+    def draw_dynamic(self) -> None:
+        """Draw a semi-transparent slice fallback for the active 3D pattern."""
+
+        if self.services.hardware_3d():
+            return
+        preview = self.controller.pattern_preview()
+        if preview is None:
+            return
+        screen = self.services.screen()
+        viewport = self.services.viewport()
+        old_clip = screen.get_clip()
+        screen.set_clip(viewport)
+        color = (45, 235, 105, 145) if preview.valid else (255, 55, 45, 165)
+        overlay = pygame.Surface(viewport.size, pygame.SRCALPHA)
+        origin_x, origin_y = self.controller.slice_origin()
+        cell_size = self.controller.state.cell_size
+        axis = self.controller.state.slice_axis
+        layer = self.controller.state.slice_index
+        for z, y, x in preview.positions:
+            if axis == AXIS_Z:
+                if z != layer:
+                    continue
+                row, column = y, x
+            elif axis == AXIS_Y:
+                if y != layer:
+                    continue
+                row, column = z, x
+            else:
+                if x != layer:
+                    continue
+                row, column = z, y
+            rect = pygame.Rect(
+                origin_x - viewport.x + column * cell_size,
+                origin_y - viewport.y + row * cell_size,
+                cell_size,
+                cell_size,
+            )
+            pygame.draw.rect(overlay, color, rect)
+        screen.blit(overlay, viewport.topleft)
         screen.set_clip(old_clip)
 
     def draw_decorations(self) -> None:
@@ -1660,6 +2132,98 @@ class ThreeDimensionalWorkspaceRenderer(WorkspaceRenderer):
             hint,
             (rect.centerx - hint.get_width() // 2, rect.bottom - hint.get_height() - 3),
         )
+
+    def draw_modal(self) -> None:
+        """Draw the contextual, rule-filtered 3D pattern catalog."""
+
+        if not self.controller.state.pattern_catalog_open:
+            return
+        screen = self.services.screen()
+        theme = THEMES[self.services.theme_name()]
+        accent = DIMENSION_BY_KEY["3d"].accent
+        large = self.services.large_font()
+        small = self.services.small_font()
+        tiny = self.services.tiny_font()
+        dimmer = pygame.Surface(screen.get_size(), pygame.SRCALPHA)
+        dimmer.fill((0, 0, 0, 205))
+        screen.blit(dimmer, (0, 0))
+        modal, close, category_rects, rows, capacity = (
+            self.controller.pattern_catalog_geometry()
+        )
+        pygame.draw.rect(screen, theme["info_bar"], modal, border_radius=12)
+        pygame.draw.rect(screen, theme["text"], modal, 2, border_radius=12)
+        title = large.render("3D Pattern Studio", True, theme["text"])
+        screen.blit(title, (modal.x + 20, modal.y + 16))
+        context = tiny.render(
+            f"{self.controller.mode_label} · {self.controller.rule.name} "
+            f"{self.controller.rule.notation} · compatible patterns only",
+            True,
+            theme["menu_text"],
+        )
+        screen.blit(context, (modal.x + 22, modal.y + 52))
+        pygame.draw.rect(screen, theme["button"], close, border_radius=5)
+        close_text = small.render("×", True, theme["button_text"])
+        screen.blit(close_text, close_text.get_rect(center=close.center))
+
+        categories = {
+            key: (label, count)
+            for key, label, count in self.controller.pattern_catalog_categories()
+        }
+        mouse = pygame.mouse.get_pos()
+        for key, rect in category_rects:
+            active = key == self.controller.state.pattern_category
+            hovered = rect.collidepoint(mouse)
+            color = theme["button_hover"] if active or hovered else theme["button"]
+            pygame.draw.rect(screen, color, rect, border_radius=6)
+            pygame.draw.rect(screen, accent if active else theme["grid"], rect, 2, border_radius=6)
+            label, count = categories[key]
+            text = tiny.render(
+                self._fit_text(tiny, f"{label} ({count})", rect.width - 16),
+                True,
+                theme["button_text"],
+            )
+            screen.blit(text, (rect.x + 8, rect.centery - text.get_height() // 2))
+
+        for pattern, rect in rows:
+            hovered = rect.collidepoint(mouse)
+            pygame.draw.rect(
+                screen,
+                theme["button_hover"] if hovered else theme["button"],
+                rect,
+                border_radius=7,
+            )
+            pygame.draw.rect(screen, accent if hovered else theme["grid"], rect, 2, border_radius=7)
+            badge = "CUSTOM" if not pattern.builtin else ("SOURCE" if pattern.source_url else "SEED")
+            badge_color = (80, 190, 145) if not pattern.builtin else (245, 185, 70)
+            badge_surface = tiny.render(badge, True, badge_color)
+            screen.blit(badge_surface, (rect.right - badge_surface.get_width() - 10, rect.y + 7))
+            title_width = rect.width - badge_surface.get_width() - 34
+            title_surface = small.render(
+                self._fit_text(small, pattern.name, title_width),
+                True,
+                theme["button_text"],
+            )
+            screen.blit(title_surface, (rect.x + 10, rect.y + 5))
+            detail = (
+                f"{pattern.voxel_count} voxels · recommended boundary: "
+                f"{pattern.boundary.title()} · {pattern.description}"
+            )
+            detail_surface = tiny.render(
+                self._fit_text(tiny, detail, rect.width - 20),
+                True,
+                theme["menu_text"],
+            )
+            screen.blit(detail_surface, (rect.x + 10, rect.bottom - detail_surface.get_height() - 7))
+
+        patterns = self.controller.pattern_catalog_patterns()
+        start = min(len(patterns), self.controller.state.pattern_scroll + 1) if patterns else 0
+        end = min(len(patterns), self.controller.state.pattern_scroll + capacity)
+        footer = tiny.render(
+            f"{start}-{end} / {len(patterns)} · click to preview · wheel/arrow scroll · Esc closes",
+            True,
+            theme["menu_text"],
+        )
+        screen.blit(footer, (modal.x + THREE_D_PATTERN_CATEGORY_WIDTH + 36, modal.bottom - 35))
 
     def _stats(self) -> dict[str, Any]:
         volume = self.controller.state.volume

@@ -12,6 +12,7 @@ from three_dimensional_ca import Position3D, Volume3D
 from three_dimensional_rendering import (
     ModernGLVoxelRenderer,
     OrbitCamera3D,
+    PatternPreview3D,
     VoxelRenderSettings,
 )
 
@@ -163,6 +164,7 @@ class HybridDisplayBackend:
         accent_color: tuple[int, int, int],
         selected: Position3D | None,
         settings: VoxelRenderSettings,
+        preview: PatternPreview3D | None = None,
     ) -> bool:
         """Render an instanced voxel volume when an OpenGL context is active."""
         if not self.is_opengl or self.voxel_renderer is None:
@@ -177,6 +179,7 @@ class HybridDisplayBackend:
             accent_color=accent_color,
             selected=selected,
             settings=settings,
+            preview=preview,
         )
         return True
 

@@ -91,13 +91,14 @@ THREE_D_FOUNDATION_PAGES: tuple[TutorialPage, ...] = (
     ),
     _page(
         "3D FOUNDATIONS 6 - EDITING",
-        "A screen click becomes a ray through the volume",
-        "The editor casts a ray from the camera through the pointer. It selects the first occupied voxel hit and the face crossed, which makes addition and erasure unambiguous in depth.",
+        "Edit one voxel or place a complete 3D structure",
+        "Direct editing casts a camera ray to the first occupied voxel. Pattern Studio adds a rule-compatible structure as a green ghost first, so rotation, reflection, position, and full-volume fit can be checked before one atomic placement.",
         "editing_3d",
         _section("Left click", "Add the active voxel state in the empty cell immediately outside the hit face."),
         _section("Right click", "Erase the first occupied voxel hit by the ray."),
-        _section("Rotate before editing", "An aligned face view and clipping plane make deep edits easier to predict."),
-        _section("State brush", "In multi-state rules the active brush chooses which voxel state a left click places."),
+        _section("Pattern Studio", "The catalog shows only structures compatible with the active mode, rule, and state count. Documented structures and general experiment seeds are labelled separately."),
+        _section("Green or red ghost", "Green means every transformed voxel fits; red means at least one voxel lies outside the volume, so nothing will be placed."),
+        _section("Transform and place", "Use all 24 cube rotations with R, mirror with F, move with arrows/Page keys, and commit with Enter. One placement creates one history frame only when cells change."),
     ),
     _page(
         "3D FOUNDATIONS 7 - EXPERIMENT",
@@ -107,7 +108,7 @@ THREE_D_FOUNDATION_PAGES: tuple[TutorialPage, ...] = (
         _section("Choose a finite volume", "Use 32³ while learning, 48³ for routine experiments, and 64³ only when the structure needs room."),
         _section("Record the boundary", "Fixed, wrapped, and reflected boundaries can make identical seeds diverge after reaching an edge."),
         _section("Inspect through time", "Use N, the timeline, clipping, and analysis metrics instead of judging one exterior frame."),
-        _section("Save evidence", "Sessions preserve rule, volume, boundary, camera, view filters, generation, and timeline context."),
+        _section("Save evidence", "Sessions preserve the full experiment. Save Occupied Voxels additionally crops a reusable, state-bearing custom pattern into safe UTF-8 JSON."),
     ),
 )
 
@@ -158,7 +159,7 @@ SPATIAL_LIFE_PAGES: tuple[TutorialPage, ...] = (
         "A ten-voxel pattern translates after four generations",
         "The documented Bays 5766 glider has period four. After four synchronous updates its shape repeats one cell away along a diagonal direction.",
         "spatial_glider",
-        _section("Load the verified seed", "The Bays 5766 Glider button installs its ten coordinates and compatible rule."),
+        _section("Load the verified seed", "Choose Bays 5766 Glider in Pattern Studio while the B6/S567 rule is active; the catalog verifies compatibility before previewing its ten coordinates."),
         _section("Step four times", "Use N and compare generations 0 and 4 from several camera angles."),
         _section("Distinguish period from position", "The shape repeats, but its coordinates are translated."),
         _section("Boundary", "The documented preset uses wrapping so continued motion can cross a volume edge."),

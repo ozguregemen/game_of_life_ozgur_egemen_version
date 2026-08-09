@@ -39,6 +39,10 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - Tam hacim, clipping plane ve tek katman filtreleri; iki yönlü kesim ve sıralanmış
   %65/%35 saydam voxel görünümleri
 - Carter Bays'in yayımlanmış 10 voxel'lik, period-4 Life 5766 glider hazır deneyi
+- Aktif 3D moda ve kurala göre filtrelenen; kaynaklı yapıları deneysel seed'lerden
+  ayıran, 24 küp rotasyonu, ayna dönüşümü ve yeşil/kırmızı ghost önizleme sunan
+  3D Pattern Studio
+- Çok durumlu voxel'leri koruyan, UTF-8 JSON kullanan güvenli özel 3D pattern kaydı
 - Conway, HighLife, Day & Night ve Seeds kuralları
 - İki türün Conway kurallarıyla rekabet ettiği Immigration Game modu
 - Üç durumlu dalga ve parçacıklar üreten Brian's Brain modu
@@ -109,6 +113,10 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 | 3D'de orta sürükle | Kamera hedefini düzlem üzerinde taşı |
 | 3D'de sol tık | İşaretlenen voxel'in yanına yeni voxel ekle |
 | 3D'de sağ tık | İşaretlenen voxel'i sil |
+| 3D pattern seçiliyken oklar | Patterni X/Y düzleminde taşı |
+| 3D pattern seçiliyken Page Up / Page Down | Patterni Z ekseninde taşı |
+| 3D pattern seçiliyken R / F | 24 küp rotasyonu arasında ilerle / aynala |
+| 3D pattern seçiliyken Enter / Esc | Tam patterni tek işlemde yerleştir / iptal et |
 | L | 3D'de tam hacim / clipping plane / tek katman görünümünü değiştir |
 | Q | 3D görünüm filtresinin X / Y / Z eksenini değiştir |
 | `,` / `.` | 3D kesim veya katman düzlemini geri / ileri taşı |
@@ -147,7 +155,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `one_dimensional_ca.py`: Sonlu durumlu genel 1D rule-family motoru
 - `three_dimensional_ca.py`: Sınırlı uint8 volume, 3D komşuluk ve slice çekirdeği
 - `three_dimensional_rules.py`: Binary 3D Life-like kural tanımları ve toplu geçiş motoru
-- `three_dimensional_patterns.py`: Kaynaklı 3D hazır pattern koordinatları ve yerleştirme modeli
+- `three_dimensional_patterns.py`: Kaynaklı/deneysel 3D katalog, 24 rotasyon,
+  atomik yerleştirme ve güvenli özel pattern JSON deposu
 - `three_dimensional_rendering.py`: Orbit kamera, ray/voxel seçimi ve instanced cube renderer
 - `three_dimensional_display.py`: Pygame yazılım ekranı ile ModernGL 3D ekranı arasında geçiş ve UI compositing
 - `surface_rasterizer.py`: NumPy/surfarray tabanlı ortak 2D state-plane çizicisi
@@ -284,13 +293,25 @@ Görsel tasarım referansları:
 [Visions of Chaos](https://softology.pro/voc.htm) ve MIT lisanslı
 [William Yang 3D Cellular Automata](https://github.com/williamyang98/3D-Cellular-Automata).
 
-`Bays 5766 Glider` düğmesi yayımlanmış 10 koordinatlı ortak 3D glider'ı yükler,
-`B6/S567` kuralını ve sürekli dolaşım için `wrap` sınırını seçer. Desen dört nesilde
-aynı biçime dönerek bir hücre çapraz ötelenir. Başlangıç koordinatları:
+`3D Pattern Studio`, yalnız aktif mod ve kuralla uyumlu yapıları gösterir. Kaynaklı
+`Bays 5766 Glider`, `B6/S567` seçiliyken katalogda görünür; seçim mevcut kuralı veya
+boundary ayarını kendiliğinden değiştirmez. Yeşil ghost patternin bütünüyle
+sığdığını, kırmızı ghost ise yerleştirmenin reddedileceğini gösterir. Yerleştirme
+tek bir history işlemi oluşturur; hiçbir voxel değişmiyorsa boş history kaydı eklenmez.
+
+Yayımlanmış 10 koordinatlı Bays deseni dört nesilde aynı biçime dönerek bir hücre
+çapraz ötelenir. Kesintisiz uzun deneylerde `wrap` sınırı önerilir. Başlangıç koordinatları:
 [3D Gliders](https://www.ibiblio.org/e-notes/Life/Gliders.htm). Glider'ın Life 5766
 içindeki tarihsel bağlamı ve diğer fazları Carter Bays'in
 [“The Discovery of a New Glider for the Game of Three-Dimensional Life”](https://www.complex-systems.com/abstracts/v04_i06_a02/)
 makalesinde açıklanır.
+
+Katalogdaki `Documented Structures` bölümü kaynak bağlantısı olan doğrulanmış
+yapıları; `Compact Seeds` ve `Shells & Surfaces` bölümleri ise belirli bir uzay gemisi
+veya osilatör iddiası taşımayan deney geometrilerini içerir. `Save Occupied Voxels`,
+volume'un dolu bounding box'ını durum değerleriyle birlikte kullanıcı veri dizinindeki
+`patterns/3d/` klasörüne kaydeder. Aynı adlı dosya açık hata verir; bozuk bir JSON
+uygulamayı durdurmadan atlanır.
 
 `M` tuşu 3D workspace içinde `Spatial Life` ile ayrı `3D Generations` modu arasında
 geçiş yapar. Generations modunda state 0 boş, state 1 aktif, daha yüksek state'ler
@@ -426,11 +447,14 @@ bilimsel state/block entropy, Hamming, komşu uyumu, pencere istatistiklerini,
 periyot/stabilizasyon algılamayı ve 1D rule karşılaştırmasını;
 PNG/GIF/MP4 raster kodlamayı, CSV/JSON güvenliğini ve export menü entegrasyonunu;
 oturum/profile güvenliğini ve tam-state round-trip davranışını; 3D volume/rule,
-orbit kamera, yön küpü yüz hizalaması, ray seçimi ve voxel geometri çekirdeğini; üç workspace'in SDL dummy
+24 rotasyon/ayna dönüşümünü, güvenli özel pattern depolamayı, uyumluluk filtresini,
+atomik ve history-duyarlı 3D yerleştirmeyi, orbit kamera, yön küpü yüz hizalaması,
+ray seçimi ve voxel geometri çekirdeğini; üç workspace'in SDL dummy
 video driver ile başlangıcını kapsar. Ayrıca gerçek OpenGL smoke testi instanced
 renderer'ın bir volume frame'i üretebildiğini doğrulamak için elle çalıştırılabilir.
-GitHub Actions aynı syntax, unittest ve SDL dummy başlangıç kontrollerini Windows ve
-Linux üzerinde Python 3.10 ile 3.14 için otomatik çalıştırır.
+GitHub Actions aynı syntax, unittest ve SDL dummy başlangıç kontrollerini Windows'ta
+Python 3.10/3.14, Ubuntu'da desteklenen ModernGL bağımlılıklarıyla Python 3.10 için
+otomatik çalıştırır.
 
 ## Tam oturum kaydetme ve yükleme
 
@@ -468,7 +492,8 @@ kullanıcı verisi Git tarafından izlenmez.
 
 ## Kullanıcı verisi ve taşınabilir çalışma
 
-Oturumlar, özel patternler, dışa aktarımlar ve arayüz tercihleri artık kaynak kod
+Oturumlar, 2D ve `patterns/3d/` altındaki özel 3D patternler, dışa aktarımlar ve
+arayüz tercihleri artık kaynak kod
 klasörüne yazılmaz. Windows'ta veri `%LOCALAPPDATA%\cellular-automata-lab`, tercihler
 `%APPDATA%\cellular-automata-lab`; Linux'ta XDG data/config; macOS'ta
 `~/Library/Application Support/cellular-automata-lab` altında saklanır. Eski

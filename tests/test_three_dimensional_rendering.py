@@ -10,6 +10,7 @@ from three_dimensional_rendering import (
     OrbitCamera3D,
     PROJECTION_ORTHOGRAPHIC,
     PROJECTION_PERSPECTIVE,
+    PatternPreview3D,
     VoxelRenderSettings,
     look_at_matrix,
     orthographic_matrix,
@@ -163,6 +164,15 @@ class Camera3DTests(unittest.TestCase):
 
 
 class VoxelGeometryTests(unittest.TestCase):
+    def test_pattern_preview_validates_positions_and_validity(self) -> None:
+        preview = PatternPreview3D(((1, 2, 3), (-1, 0, 4)), False)
+        self.assertEqual(len(preview.positions), 2)
+        self.assertFalse(preview.valid)
+        with self.assertRaises(ValueError):
+            PatternPreview3D((), True)
+        with self.assertRaises(TypeError):
+            PatternPreview3D(((1, 2, 3),), 1)  # type: ignore[arg-type]
+
     def test_render_settings_validate_filter_and_opacity(self) -> None:
         settings = VoxelRenderSettings(
             mode="clip",

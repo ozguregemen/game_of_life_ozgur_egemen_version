@@ -109,6 +109,26 @@ class VoxelRenderSettings:
                 )
 
 
+@dataclass(frozen=True)
+class PatternPreview3D:
+    """Transient voxel positions shown before an all-or-nothing placement."""
+
+    positions: tuple[Position3D, ...]
+    valid: bool
+
+    def __post_init__(self) -> None:
+        if not self.positions:
+            raise ValueError("3D pattern preview must contain at least one voxel.")
+        if any(
+            len(position) != 3
+            or any(isinstance(value, bool) or not isinstance(value, int) for value in position)
+            for position in self.positions
+        ):
+            raise TypeError("3D pattern preview positions must contain integer z, y, and x.")
+        if not isinstance(self.valid, bool):
+            raise TypeError("3D pattern preview validity must be boolean.")
+
+
 def _vector3(value: Any, label: str) -> FloatVector:
     try:
         vector = np.asarray(value, dtype=np.float32)
@@ -873,6 +893,37 @@ class ModernGLVoxelRenderer:
                 ),
             ),
         )
+        self.preview_program = self.ctx.program(
+            vertex_shader="""
+                #version 330
+                uniform mat4 mvp;
+                uniform float voxel_scale;
+                in vec3 in_position;
+                in vec3 in_offset;
+                void main() {
+                    gl_Position = mvp * vec4(
+                        in_position * voxel_scale + in_offset,
+                        1.0
+                    );
+                }
+            """,
+            fragment_shader="""
+                #version 330
+                uniform vec4 preview_color;
+                out vec4 frag_color;
+                void main() { frag_color = preview_color; }
+            """,
+        )
+        preview_cube = np.ascontiguousarray(cube[:, :3])
+        self.preview_cube_buffer = self.ctx.buffer(preview_cube.tobytes())
+        self.preview_instance_buffer = self.ctx.buffer(reserve=12, dynamic=True)
+        self.preview_vao = self.ctx.vertex_array(
+            self.preview_program,
+            (
+                (self.preview_cube_buffer, "3f", "in_position"),
+                (self.preview_instance_buffer, "3f /i", "in_offset"),
+            ),
+        )
         self.line_program = self.ctx.program(
             vertex_shader="""
                 #version 330
@@ -902,6 +953,16 @@ class ModernGLVoxelRenderer:
         self._buffer_order_key: tuple[Any, ...] | None = None
         self._revision: int | None = None
         self._shape: VolumeShape | None = None
+
+    def _preview_instance_data(
+        self,
+        preview: PatternPreview3D,
+        shape: VolumeShape,
+    ) -> NDArray[np.float32]:
+        return np.asarray(
+            [volume_position_to_world(position, shape) for position in preview.positions],
+            dtype=np.float32,
+        )
 
     def update_volume(self, volume: Volume3D, revision: int) -> None:
         if self._revision == revision and self._shape == volume.shape:
@@ -956,6 +1017,7 @@ class ModernGLVoxelRenderer:
         accent_color: RGBColor,
         selected: Position3D | None = None,
         settings: VoxelRenderSettings | None = None,
+        preview: PatternPreview3D | None = None,
     ) -> None:
         settings = VoxelRenderSettings() if settings is None else settings
         self.update_volume(volume, revision)
@@ -1022,6 +1084,33 @@ class ModernGLVoxelRenderer:
             self.vao.render(instances=self.instance_count)
         self.ctx.depth_mask = True
 
+        if preview is not None:
+            preview_data = self._preview_instance_data(preview, volume.shape)
+            byte_count = max(12, preview_data.nbytes)
+            if self.preview_instance_buffer.size < byte_count:
+                self.preview_instance_buffer.orphan(byte_count)
+            self.preview_instance_buffer.write(preview_data.tobytes())
+            self.preview_program["mvp"].write(matrix_bytes(matrix))
+            self.preview_program["voxel_scale"].value = min(
+                0.98,
+                settings.voxel_scale + 0.06,
+            )
+            self.preview_program["preview_color"].value = (
+                (0.18, 0.95, 0.42, 0.48)
+                if preview.valid
+                else (1.0, 0.16, 0.12, 0.58)
+            )
+            self.ctx.enable_only(
+                moderngl.DEPTH_TEST | moderngl.CULL_FACE | moderngl.BLEND
+            )
+            self.ctx.blend_func = (
+                moderngl.SRC_ALPHA,
+                moderngl.ONE_MINUS_SRC_ALPHA,
+            )
+            self.ctx.depth_mask = False
+            self.preview_vao.render(instances=len(preview.positions))
+            self.ctx.depth_mask = True
+
         self.line_program["mvp"].write(matrix_bytes(matrix))
         self.line_program["line_color"].value = tuple(
             channel / 255.0 for channel in accent_color
@@ -1050,6 +1139,10 @@ class ModernGLVoxelRenderer:
             self.box_vao,
             self.box_buffer,
             self.line_program,
+            self.preview_vao,
+            self.preview_instance_buffer,
+            self.preview_cube_buffer,
+            self.preview_program,
             self.vao,
             self.instance_buffer,
             self.cube_buffer,
