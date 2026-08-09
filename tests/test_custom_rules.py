@@ -50,6 +50,14 @@ class CustomRuleTests(unittest.TestCase):
             parse_generations_notation("4/4/5/M"),
             ((4,), (4,), 5, "moore"),
         )
+        self.assertEqual(
+            parse_generations_notation("/4/2/M"),
+            ((), (4,), 2, "moore"),
+        )
+        self.assertEqual(
+            parse_generations_notation("13-26/13-14,17-19/2/M"),
+            (tuple(range(13, 27)), (13, 14, 17, 18, 19), 2, "moore"),
+        )
         with self.assertRaisesRegex(ValueError, "B3/S23"):
             parse_life_like_notation("3/23", maximum=8)
         with self.assertRaisesRegex(ValueError, "state count"):

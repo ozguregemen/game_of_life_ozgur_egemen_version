@@ -200,14 +200,24 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 
 Her çalışma alanının `Rule & Comparison`, `Mode & Active Tool` veya `Rule & Volume`
 bölümündeki `Custom Rule Studio` düğmesi yalnız o boyuta ait kullanıcı kurallarını
-gösterir. `Create & Apply Rule from Current Context`, mevcut çalışma alanının family,
-state count, radius veya neighborhood ayarlarını başlangıç kabul eder:
+gösterir. Studio önce `Learn & Templates` sekmesini açar. Bu sekme kuralın her
+parçasını düz metin ve küçük geçiş şemalarıyla açıklar; dört başlangıç kartından biri
+tıklanınca notasyonu düzenlenebilir bir şablon olarak forma taşır. `My Rules` sekmesi
+kaydedilmiş kuralları uygulama ve silme alanıdır. `Build & Apply a Custom Rule from
+Current Context`, mevcut çalışma alanının family, state count, radius veya neighborhood
+ayarlarını başlangıç kabul eder:
 
 - 1D, mevcut rule family/state/radius bileşimini adlandırır ve geçerli aralıkta yeni
   bir rule code kabul eder.
 - 2D, Life-like modunda `B36/S23` gibi B/S notasyonu kabul eder.
 - 3D Spatial Life, aktif 6 ya da 26 komşuluğu koruyarak B/S notasyonu; 3D
   Generations ise `S/B/C/M` veya `S/B/C/N` notasyonu kabul eder.
+
+1D rehberi code'un generation sayısı değil bütün lookup tablosunun base-k kodlaması
+olduğunu; 2D/3D Life-like rehberi `B` (birth) ve `S` (survival) listelerini; 3D
+Generations rehberi `S/B/C/M-or-N` içindeki refractory state zincirini açıklar. Hazır
+kartlar 1D'de 30/90/110/184, 2D'de Conway/HighLife/Seeds/Day & Night ve 3D'de aktif
+moda uygun Bays ya da Generations örneklerini içerir.
 
 Kural adları taşınabilir dosya adına dönüştürülür; traversal ve Windows için sakıncalı
 adlar engellenir. Aynı adlı dosyanın üstüne sessizce yazılmaz ve aktif kural silinemez.

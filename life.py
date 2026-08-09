@@ -110,7 +110,11 @@ from rng_state import (
     new_experiment_seed,
     seeded_random,
 )
-from rule_studio import CustomRuleStudio, RuleStudioServices
+from rule_studio import (
+    CustomRuleStudio,
+    RuleStudioServices,
+    RuleStudioTemplate,
+)
 from rules import RULES, find_patterns
 from session_storage import (
     DOCUMENT_VERSION,
@@ -1240,10 +1244,11 @@ def get_text_input(
     initial_text: str = "",
 ) -> str | None:
     """Collect short text in a modal field with an optional visible default."""
+    input_width = min(620, max(320, WINDOW_WIDTH - MENU_WIDTH - 80))
     input_box = pygame.Rect(
-        max(20, (WINDOW_WIDTH - MENU_WIDTH) // 2 - 150),
+        max(20, (WINDOW_WIDTH - MENU_WIDTH - input_width) // 2),
         max(70, WINDOW_HEIGHT // 2 - 25),
-        300,
+        input_width,
         46,
     )
     text = initial_text[:80]
@@ -1279,7 +1284,16 @@ def get_text_input(
         overlay.fill((0, 0, 0, 150))
         screen.blit(overlay, (0, 0))
 
-        prompt = font.render(prompt_text, True, (255, 255, 255))
+        visible_prompt = prompt_text
+        suffix = "…"
+        if font.size(visible_prompt)[0] > input_box.width:
+            while (
+                visible_prompt
+                and font.size(visible_prompt + suffix)[0] > input_box.width
+            ):
+                visible_prompt = visible_prompt[:-1]
+            visible_prompt = visible_prompt.rstrip() + suffix
+        prompt = font.render(visible_prompt, True, (255, 255, 255))
         screen.blit(prompt, (input_box.x, input_box.y - 34))
         pygame.draw.rect(
             screen,
@@ -3465,7 +3479,154 @@ def custom_rule_context_label() -> str:
     )
 
 
-def create_contextual_custom_rule() -> CustomRuleDefinition | None:
+def custom_rule_editor_kind() -> str:
+    """Return the notation lesson appropriate for the active rule engine."""
+
+    if active_dimension == "1d":
+        return "one_dimensional"
+    if (
+        active_dimension == "3d"
+        and three_dimensional_controller.state.mode_key == "generations"
+    ):
+        return "generations"
+    return "life_like"
+
+
+def custom_rule_studio_templates() -> tuple[RuleStudioTemplate, ...]:
+    """Return four documented, context-valid starting recipes."""
+
+    if active_dimension == "1d":
+        spec = elementary_controller.rule_spec
+        if spec.family == FAMILY_ELEMENTARY:
+            return (
+                RuleStudioTemplate(
+                    "Rule 30 · chaotic",
+                    "30",
+                    "Asymmetric local rule with irregular, pseudo-random-looking growth.",
+                ),
+                RuleStudioTemplate(
+                    "Rule 90 · fractal",
+                    "90",
+                    "XOR-like rule that grows a Sierpiński triangle from one cell.",
+                ),
+                RuleStudioTemplate(
+                    "Rule 110 · complex",
+                    "110",
+                    "Supports persistent structures and universal computation.",
+                ),
+                RuleStudioTemplate(
+                    "Rule 184 · traffic",
+                    "184",
+                    "Moves isolated state-1 cells through state-0 gaps like traffic.",
+                ),
+            )
+        candidates = (
+            ("Current code", spec.code, "Clone the rule currently visible in the workspace."),
+            ("Previous code", max(0, spec.code - 1), "Change one integer step while keeping family, k, and radius."),
+            ("Next code", min(spec.max_code, spec.code + 1), "Compare the neighboring lookup-table encoding."),
+            ("Zero code", 0, "A baseline whose encoded outputs are all state 0."),
+        )
+        unique: list[RuleStudioTemplate] = []
+        seen: set[int] = set()
+        for title, code, description in candidates:
+            if code in seen:
+                continue
+            seen.add(code)
+            unique.append(RuleStudioTemplate(title, str(code), description))
+        return tuple(unique)
+    if active_dimension == "2d":
+        return (
+            RuleStudioTemplate(
+                "Conway's Life",
+                "B3/S23",
+                "Balanced birth and survival; supports still lifes, oscillators, and gliders.",
+            ),
+            RuleStudioTemplate(
+                "HighLife",
+                "B36/S23",
+                "Adds birth at six neighbors and permits a famous replicator pattern.",
+            ),
+            RuleStudioTemplate(
+                "Seeds",
+                "B2/S",
+                "Every live cell dies immediately; births with exactly two neighbors spread rapidly.",
+            ),
+            RuleStudioTemplate(
+                "Day & Night",
+                "B3678/S34678",
+                "A symmetric rule where live and dead regions have related behavior.",
+            ),
+        )
+    current = three_dimensional_controller.rule
+    if three_dimensional_controller.state.mode_key == "generations":
+        candidates = (
+            RuleStudioTemplate(
+                "Current 3D rule",
+                current.notation,
+                "Clone the active survival, birth, state, and neighborhood recipe.",
+            ),
+            RuleStudioTemplate(
+                "445 trails",
+                "4/4/5/M",
+                "Survive and birth at four; deaths cool through three refractory states.",
+            ),
+            RuleStudioTemplate(
+                "3D Brain",
+                "/4/2/M",
+                "Birth-only two-state rule: no active voxel survives to the next step.",
+            ),
+            RuleStudioTemplate(
+                "Pyroclastic",
+                "4-7/6-8/10/M",
+                "Ten states create long refractory trails and turbulent structures.",
+            ),
+            RuleStudioTemplate(
+                "Clouds 1",
+                "13-26/13-14,17-19/2/M",
+                "Dense survival and birth bands create cloud-like volumes.",
+            ),
+        )
+    else:
+        candidates = (
+            RuleStudioTemplate(
+                "Current 3D rule",
+                current.notation,
+                "Clone the active B/S recipe and its current neighborhood type.",
+            ),
+            RuleStudioTemplate(
+                "Bays 5766",
+                "B6/S567",
+                "Carter Bays' bounded-growth rule for a 26-neighbor volume.",
+            ),
+            RuleStudioTemplate(
+                "Bays 4555",
+                "B5/S45",
+                "An alternate sparse 3D Life rule documented by Carter Bays.",
+            ),
+            RuleStudioTemplate(
+                "Low-count experiment",
+                "B3/S23",
+                "Use small birth/survival counts with the active 3D neighborhood.",
+            ),
+            RuleStudioTemplate(
+                "Four-neighbor experiment",
+                "B4/S45",
+                "A neutral starting point for observing sparse 3D growth.",
+            ),
+        )
+    unique_templates: list[RuleStudioTemplate] = []
+    seen_expressions: set[str] = set()
+    for template in candidates:
+        if template.expression in seen_expressions:
+            continue
+        seen_expressions.add(template.expression)
+        unique_templates.append(template)
+    return tuple(unique_templates)
+
+
+def create_contextual_custom_rule(
+    template_expression: str | None = None,
+) -> CustomRuleDefinition | None:
     """Prompt for, validate, and persist one rule for the active dimension."""
 
     name = get_text_input("Custom rule name")
@@ -3474,7 +3635,10 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
     try:
         if active_dimension == "1d":
             current = elementary_controller.rule_spec
-            code_text = get_text_input("Rule code", str(current.code))
+            code_text = get_text_input(
+                f"Rule code: 0 to {current.max_code}",
+                template_expression or str(current.code),
+            )
             if code_text is None:
                 return None
             code = int(code_text)
@@ -3499,7 +3663,10 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
                 + "/S"
                 + "".join(str(value) for value in current["survival"])
             )
-            notation = get_text_input("B/S notation", default_notation)
+            notation = get_text_input(
+                "B/S notation — B: birth, S: survival",
+                template_expression or default_notation,
+            )
             if notation is None:
                 return None
             rule = custom_rule_from_2d(name, notation)
@@ -3507,8 +3674,8 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
             current = three_dimensional_controller.rule
             if three_dimensional_controller.state.mode_key == "generations":
                 notation = get_text_input(
-                    "S/B/C/M-or-N notation",
-                    current.notation,
+                    "S/B/C/M-or-N — survive / birth / states / neighbors",
+                    template_expression or current.notation,
                 )
                 if notation is None:
                     return None
@@ -3517,7 +3684,10 @@ def create_contextual_custom_rule() -> CustomRuleDefinition | None:
                     notation,
                 )
             else:
-                notation = get_text_input("B/S notation", current.notation)
+                notation = get_text_input(
+                    "B/S notation — B: birth, S: survival",
+                    template_expression or current.notation,
+                )
                 if notation is None:
                     return None
                 neighborhood = (
@@ -4667,13 +4837,18 @@ rule_studio = CustomRuleStudio(
         small_font=lambda: small_font,
         tiny_font=lambda: tiny_font,
         active_dimension=lambda: active_dimension,
+        editor_kind=custom_rule_editor_kind,
         context_label=custom_rule_context_label,
         current_rule_key=active_custom_rule_key,
+        templates=custom_rule_studio_templates,
         create_rule=create_contextual_custom_rule,
         apply_rule=apply_contextual_custom_rule,
         delete_rule=delete_contextual_custom_rule,
         pause=lambda: _set_simulation_running(False),
         set_status=set_status,
+        feedback_text=lambda: (
+            status_message if time.time() < status_message_until else ""
+        ),
     )
 )
 
