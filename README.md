@@ -179,7 +179,9 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `timeline_history.py`: Checkpoint/delta geçmiş motoru, dallanma ve doğrudan frame/nesil erişimi
 - `timeline_ui.py`: Sürüklenebilir ortak timeline, ileri/geri oynatma ve checkpoint göstergeleri
 - `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
-- `analysis_ui.py`: Canlı metrik grafikleri ve arka plan rule karşılaştırma paneli
+- `analysis_ui.py`: Canlı metrik grafikleri, yöntemler, rule karşılaştırma ve deney paneli
+- `experiment_lab.py`: Boyuttan bağımsız, sınırlı ve tekrar üretilebilir batch deney motoru
+- `experiment_lab_ui.py`: Parametre taraması kontrolleri, ilerleme, sonuç tablosu ve export arayüzü
 - `help_ui.py`: F1 / `?` ile açılan bağlamsal kısayol ve etkileşim yardım paneli
 - `tutorial_ui.py`: Tam ekran görsel şemalarla kaynaklı ve etkileşimli 1D öğrenme akışı
 - `two_dimensional_tutorial_content.py`: Ortak 2D müfredatı, moda özel dersler ve kaynak kataloğu
@@ -195,6 +197,29 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `life3d.py`: Deneysel 3D slice sürümü
 - `life2d_backup.py`: Eski 2D sürüm yedeği
 - `benchmarks/render_benchmark.py`: Mod bazında tekrar çalıştırılabilir render ölçümü
+
+## Genelleştirilmiş Deney Laboratuvarı
+
+`Scientific Analysis` panelindeki `Experiment Lab` sekmesi aktif 1D, 2D veya 3D
+çalışma alanından bağımsız ve tekrar üretilebilir parametre taramaları çalıştırır.
+Panelde karşılaştırılacak hazır/özel kuralların sayısı, sınır koşulları, eksen başına
+lattice boyutu, generation sayısı, tekrar sayısı, başlangıç türü ve rastgele başlangıç
+yoğunluğu seçilebilir. Aktif kural her zaman listenin başındadır; kayıtlı özel kurallar
+ve aynı ailedeki hazır kurallar onu izler.
+
+Her tekrar, görünür master seed'den türetilen ayrı ve raporda saklanan bir seed kullanır.
+Hesaplama Pygame event loop'unu durdurmayan tek bir arka plan worker'ında yürür ve
+`Cancel safely` ile generation sınırında kontrollü biçimde iptal edilir. Kural, sınır,
+tekrar ve toplam hücre güncellemesi için güvenli üst sınırlar aşılırsa deney başlamadan
+açık bir hata gösterilir.
+
+Sonuç tablosu her kural/sınır grubu için ortalama ve population standard deviation ile
+final density, entropy, block entropy, temporal change, algılanan periyot ve stabilizasyon
+generation'ını özetler. `Export analysis CSV`, her bağımsız koşuyu kendi seed'i ve grup
+istatistikleriyle tidy UTF-8 CSV'ye; `Export reproducible JSON` ise planı, bütün ham
+koşuları, aggregate değerlerini, uygulama sürümünü ve tamamlanma zamanını sürümlü JSON'a
+yazar. Dosyalar kullanıcı veri dizinindeki `exports/experiment_lab/` klasörüne atomik
+olarak kaydedilir.
 
 ## Custom Rule Studio
 

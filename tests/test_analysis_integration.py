@@ -105,7 +105,15 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         life.handle_keydown(
             life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_i)
         )
-        modal, live_tab, summary_tab, methods_tab, comparison_tab, close_button = (
+        (
+            modal,
+            live_tab,
+            summary_tab,
+            methods_tab,
+            comparison_tab,
+            experiment_tab,
+            close_button,
+        ) = (
             life.analysis_panel.geometry()
         )
 
@@ -114,13 +122,14 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         self.assertTrue(modal.contains(summary_tab))
         self.assertTrue(modal.contains(methods_tab))
         self.assertTrue(modal.contains(comparison_tab))
+        self.assertTrue(modal.contains(experiment_tab))
         self.assertTrue(modal.contains(close_button))
         life.draw_scene()
 
     def test_comparison_tab_requests_background_rule_experiment(self) -> None:
         self.configure_life_blinker()
         life.analysis_panel.active = True
-        _, _, _, _, comparison_tab, _ = life.analysis_panel.geometry()
+        _, _, _, _, comparison_tab, _, _ = life.analysis_panel.geometry()
 
         with patch.object(life.analysis_panel, "request_comparison") as request:
             consumed = life.analysis_panel.handle_event(
@@ -134,6 +143,26 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         self.assertTrue(consumed)
         self.assertEqual(life.analysis_panel.tab, "comparison")
         request.assert_called_once_with()
+
+    def test_experiment_lab_is_contextual_for_every_dimension(self) -> None:
+        life.analysis_panel.active = True
+        _, _, _, _, _, experiment_tab, _ = life.analysis_panel.geometry()
+        consumed = life.analysis_panel.handle_event(
+            life.pygame.event.Event(
+                life.pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=experiment_tab.center,
+            )
+        )
+        self.assertTrue(consumed)
+        self.assertEqual(life.analysis_panel.tab, "experiment")
+
+        for dimension in ("1d", "2d", "3d"):
+            life.set_active_dimension(dimension)
+            context = life.active_experiment_context()
+            self.assertEqual(context.dimension, dimension)
+            self.assertTrue(context.rules)
+            life.draw_scene()
 
     def test_summary_tab_draws_for_all_three_dimensions(self) -> None:
         life.analysis_panel.active = True

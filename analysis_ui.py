@@ -7,6 +7,8 @@ from typing import Callable
 
 import pygame
 
+from experiment_lab import ExperimentContext, ExperimentRunner
+from experiment_lab_ui import ExperimentLabView, ExperimentLabViewServices
 from scientific_analysis import (
     AnalysisSample,
     AnalysisSeries,
@@ -30,6 +32,8 @@ class AnalysisPanelServices:
     current_generation: Callable[[], int]
     comparison_rules: Callable[[], tuple[int, ...]]
     current_rule: Callable[[], int]
+    experiment_context: Callable[[], ExperimentContext]
+    master_seed: Callable[[], int]
     set_status: Callable[[str, float], None]
 
 
@@ -40,6 +44,7 @@ class ScientificAnalysisPanel:
         self,
         services: AnalysisPanelServices,
         comparison_runner: ElementaryComparisonRunner,
+        experiment_runner: ExperimentRunner,
     ) -> None:
         self.services = services
         self.comparison_runner = comparison_runner
@@ -47,6 +52,18 @@ class ScientificAnalysisPanel:
         self.tab = "live"
         self.comparison_results: list[ElementaryRuleComparison] | None = None
         self.comparison_error = ""
+        self.experiment_lab = ExperimentLabView(
+            ExperimentLabViewServices(
+                screen=services.screen,
+                theme=services.theme,
+                small_font=services.small_font,
+                tiny_font=services.tiny_font,
+                context=services.experiment_context,
+                master_seed=services.master_seed,
+                set_status=services.set_status,
+            ),
+            experiment_runner,
+        )
 
     def toggle(self) -> None:
         self.active = not self.active
@@ -82,6 +99,7 @@ class ScientificAnalysisPanel:
         pygame.Rect,
         pygame.Rect,
         pygame.Rect,
+        pygame.Rect,
     ]:
         width, height = self.services.window_size()
         content_width = self.services.content_width()
@@ -92,13 +110,22 @@ class ScientificAnalysisPanel:
             max(360, min(760, height - 40)),
         )
         modal.center = (content_width // 2, height // 2)
-        tab_width = min(170, (modal.width - 120) // 4)
+        tab_width = min(170, (modal.width - 128) // 5)
         live_tab = pygame.Rect(modal.x + 18, modal.y + 47, tab_width, 28)
         summary_tab = pygame.Rect(live_tab.right + 8, live_tab.y, tab_width, 28)
         methods_tab = pygame.Rect(summary_tab.right + 8, live_tab.y, tab_width, 28)
         comparison_tab = pygame.Rect(methods_tab.right + 8, live_tab.y, tab_width, 28)
+        experiment_tab = pygame.Rect(comparison_tab.right + 8, live_tab.y, tab_width, 28)
         close_button = pygame.Rect(modal.right - 42, modal.y + 12, 28, 25)
-        return modal, live_tab, summary_tab, methods_tab, comparison_tab, close_button
+        return (
+            modal,
+            live_tab,
+            summary_tab,
+            methods_tab,
+            comparison_tab,
+            experiment_tab,
+            close_button,
+        )
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not self.active:
@@ -107,7 +134,7 @@ class ScientificAnalysisPanel:
             if event.key in (pygame.K_ESCAPE, pygame.K_i):
                 self.close()
                 return True
-            return False
+            return self.tab == "experiment"
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             (
                 modal,
@@ -115,6 +142,7 @@ class ScientificAnalysisPanel:
                 summary_tab,
                 methods_tab,
                 comparison_tab,
+                experiment_tab,
                 close_button,
             ) = self.geometry()
             if close_button.collidepoint(event.pos) or not modal.collidepoint(event.pos):
@@ -128,7 +156,26 @@ class ScientificAnalysisPanel:
             elif comparison_tab.collidepoint(event.pos):
                 self.tab = "comparison"
                 self.request_comparison()
+            elif experiment_tab.collidepoint(event.pos):
+                self.tab = "experiment"
+            elif self.tab == "experiment":
+                content = pygame.Rect(
+                    modal.x + 16,
+                    live_tab.bottom + 9,
+                    modal.width - 32,
+                    modal.bottom - live_tab.bottom - 23,
+                )
+                self.experiment_lab.handle_event(event, content)
             return True
+        if event.type == pygame.MOUSEWHEEL and self.tab == "experiment":
+            modal, live_tab, *_ = self.geometry()
+            content = pygame.Rect(
+                modal.x + 16,
+                live_tab.bottom + 9,
+                modal.width - 32,
+                modal.bottom - live_tab.bottom - 23,
+            )
+            return self.experiment_lab.handle_event(event, content)
         return event.type in (
             pygame.MOUSEMOTION,
             pygame.MOUSEBUTTONUP,
@@ -145,6 +192,7 @@ class ScientificAnalysisPanel:
             summary_tab,
             methods_tab,
             comparison_tab,
+            experiment_tab,
             close_button,
         ) = self.geometry()
         screen = self.services.screen()
@@ -170,6 +218,11 @@ class ScientificAnalysisPanel:
             "1D Rule Comparison",
             self.tab == "comparison",
         )
+        self._draw_tab(
+            experiment_tab,
+            "Experiment Lab",
+            self.tab == "experiment",
+        )
         pygame.draw.rect(screen, theme["button"], close_button, border_radius=4)
         pygame.draw.rect(screen, theme["text"], close_button, 1, border_radius=4)
         close_text = self.services.small_font().render("×", True, theme["text"])
@@ -181,7 +234,9 @@ class ScientificAnalysisPanel:
             modal.width - 32,
             modal.bottom - live_tab.bottom - 23,
         )
-        if self.tab == "comparison":
+        if self.tab == "experiment":
+            self.experiment_lab.draw(content)
+        elif self.tab == "comparison":
             self._draw_comparison(content)
         elif self.tab == "methods":
             self._draw_methods(content)

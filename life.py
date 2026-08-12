@@ -33,6 +33,7 @@ from cyclic_automaton import (
 from custom_rules import (
     CUSTOM_RULE_PACKAGE_DIRECTORY,
     KIND_GENERATIONS,
+    KIND_LIFE_LIKE,
     NEIGHBORHOOD_FACE,
     NEIGHBORHOOD_MOORE,
     CustomRuleDefinition,
@@ -43,6 +44,7 @@ from custom_rules import (
     custom_rule_from_3d_life,
     delete_custom_rule,
     export_custom_rule_package,
+    get_custom_rules,
     get_custom_rule_packages,
     import_custom_rule_package,
     refresh_custom_rule_package_cache,
@@ -66,6 +68,22 @@ from elementary_ca import (
 from experiment_exports import (
     ExperimentExportCoordinator,
     ExperimentExportServices,
+)
+from experiment_lab import (
+    ENGINE_1D,
+    ENGINE_2D_ANT,
+    ENGINE_2D_BRAIN,
+    ENGINE_2D_CYCLIC,
+    ENGINE_2D_IMMIGRATION,
+    ENGINE_2D_LIFE,
+    ENGINE_2D_WIREWORLD,
+    ENGINE_3D_GENERATIONS,
+    ENGINE_3D_LIFE,
+    SEED_RANDOM,
+    SEED_SINGLE,
+    ExperimentContext,
+    ExperimentRule,
+    ExperimentRunner,
 )
 from help_ui import HelpPanelServices, ShortcutHelpPanel
 from export_ui import ExportMenu, ExportMenuServices
@@ -166,6 +184,9 @@ from three_dimensional_display import (
     HybridDisplayBackend,
     ThreeDimensionalDisplayError,
 )
+from three_dimensional_ca import BOUNDARY_MODES as THREE_D_BOUNDARY_MODES
+from three_dimensional_generations import GenerationsRule3D
+from three_dimensional_modes import RULES_BY_MODE_3D
 from three_dimensional_patterns import BAYS_5766_GLIDER
 from three_dimensional_tutorial import (
     ThreeDimensionalTutorial,
@@ -381,6 +402,7 @@ single_step_requested = False
 speed = 10
 analysis_registry = ScientificAnalysisRegistry(max_samples=TIMELINE_MAX_FRAMES)
 comparison_runner = ElementaryComparisonRunner()
+experiment_runner = ExperimentRunner()
 export_runner = ExportRunner()
 ui_preferences = UIPreferences.load(
     autosave=os.environ.get("SDL_VIDEODRIVER") != "dummy"
@@ -1710,6 +1732,231 @@ def elementary_comparison_rules() -> tuple[int, ...]:
         return tuple(ECA_RULE_PRESETS)
     current = elementary_controller.state.rule
     return tuple(dict.fromkeys((current, *ECA_RULE_PRESETS)))
+
+
+def _unique_experiment_rules(
+    candidates: list[ExperimentRule],
+) -> tuple[ExperimentRule, ...]:
+    """Preserve catalog priority while removing equivalent rule keys."""
+
+    selected: list[ExperimentRule] = []
+    keys: set[str] = set()
+    for rule in candidates:
+        if rule.key in keys:
+            continue
+        keys.add(rule.key)
+        selected.append(rule)
+        if len(selected) == 8:
+            break
+    return tuple(selected)
+
+
+def _one_d_experiment_context() -> ExperimentContext:
+    controller = elementary_controller
+    active_spec = controller.rule_spec
+    active_custom = controller.state.custom_rule
+    candidates = [
+        ExperimentRule(
+            active_custom.key if active_custom is not None else (
+                f"1d:{active_spec.family}:{active_spec.states}:"
+                f"{active_spec.radius}:{active_spec.code}"
+            ),
+            active_custom.name if active_custom is not None else active_spec.label,
+            "1d",
+            ENGINE_1D,
+            active_spec.as_dict(),
+        )
+    ]
+    for custom in get_custom_rules("1d"):
+        spec = custom.one_dimensional_spec()
+        candidates.append(
+            ExperimentRule(custom.key, custom.name, "1d", ENGINE_1D, spec.as_dict())
+        )
+    if active_spec.family == FAMILY_ELEMENTARY:
+        for code in ECA_RULE_PRESETS:
+            spec = RuleSpec(code=code)
+            candidates.append(
+                ExperimentRule(
+                    f"1d:elementary:2:1:{code}",
+                    f"Elementary rule {code}",
+                    "1d",
+                    ENGINE_1D,
+                    spec.as_dict(),
+                )
+            )
+    boundaries = tuple(
+        dict.fromkeys(
+            (
+                controller.state.boundary,
+                BOUNDARY_INFINITE,
+                BOUNDARY_FIXED,
+                BOUNDARY_WRAP,
+            )
+        )
+    )
+    return ExperimentContext(
+        "1d",
+        controller.family_name,
+        _unique_experiment_rules(candidates),
+        boundaries,
+        (121, 251, 501),
+        0.20,
+        (SEED_RANDOM, SEED_SINGLE),
+    )
+
+
+def _two_d_experiment_context() -> ExperimentContext:
+    definition = MODE_BY_KEY[simulation_mode]
+    if simulation_mode == "life":
+        active_custom = two_dimensional_state.life.custom_rule
+        candidates: list[ExperimentRule] = []
+        if active_custom is not None:
+            candidates.append(
+                ExperimentRule(
+                    active_custom.key,
+                    active_custom.name,
+                    "2d",
+                    ENGINE_2D_LIFE,
+                    active_custom.parameters,
+                )
+            )
+        else:
+            active = RULES[current_rule]
+            candidates.append(
+                ExperimentRule(
+                    f"2d:{current_rule}",
+                    str(active["name"]),
+                    "2d",
+                    ENGINE_2D_LIFE,
+                    {
+                        "birth": tuple(active["birth"]),
+                        "survival": tuple(active["survival"]),
+                    },
+                )
+            )
+        for custom in get_custom_rules("2d"):
+            candidates.append(
+                ExperimentRule(
+                    custom.key,
+                    custom.name,
+                    "2d",
+                    ENGINE_2D_LIFE,
+                    custom.parameters,
+                )
+            )
+        for key, definition_data in RULES.items():
+            candidates.append(
+                ExperimentRule(
+                    f"2d:{key}",
+                    str(definition_data["name"]),
+                    "2d",
+                    ENGINE_2D_LIFE,
+                    {
+                        "birth": tuple(definition_data["birth"]),
+                        "survival": tuple(definition_data["survival"]),
+                    },
+                )
+            )
+        rules = _unique_experiment_rules(candidates)
+        seed_kinds = (SEED_RANDOM, SEED_SINGLE)
+    else:
+        engine_by_mode = {
+            "immigration": ENGINE_2D_IMMIGRATION,
+            "brians_brain": ENGINE_2D_BRAIN,
+            "langtons_ant": ENGINE_2D_ANT,
+            "wireworld": ENGINE_2D_WIREWORLD,
+            "cyclic_automaton": ENGINE_2D_CYCLIC,
+        }
+        parameters: dict[str, Any] = {}
+        if simulation_mode == "cyclic_automaton":
+            parameters = {
+                "state_count": CYCLIC_STATE_COUNT,
+                "threshold": cyclic_threshold,
+            }
+        rules = (
+            ExperimentRule(
+                f"2d:{simulation_mode}",
+                definition.name,
+                "2d",
+                engine_by_mode[simulation_mode],
+                parameters,
+            ),
+        )
+        seed_kinds = (
+            (SEED_SINGLE,) if simulation_mode == "langtons_ant" else (SEED_RANDOM,)
+        )
+    return ExperimentContext(
+        "2d",
+        definition.name,
+        rules,
+        ("fixed",),
+        (32, 64, 96),
+        0.20,
+        seed_kinds,
+    )
+
+
+def _three_d_experiment_rule(key: str, rule: Any) -> ExperimentRule:
+    neighborhood = (
+        NEIGHBORHOOD_MOORE if rule.neighborhood.size == 26 else NEIGHBORHOOD_FACE
+    )
+    parameters: dict[str, Any] = {
+        "birth": tuple(rule.birth),
+        "survival": tuple(rule.survival),
+        "neighborhood": neighborhood,
+    }
+    engine = ENGINE_3D_LIFE
+    if isinstance(rule, GenerationsRule3D):
+        engine = ENGINE_3D_GENERATIONS
+        parameters.update(
+            state_count=rule.state_count,
+            seed_density=rule.seed_density,
+        )
+    return ExperimentRule(key, rule.name, "3d", engine, parameters)
+
+
+def _three_d_experiment_context() -> ExperimentContext:
+    controller = three_dimensional_controller
+    runtime_rule = controller.rule
+    candidates = [_three_d_experiment_rule(controller.state.rule_key, runtime_rule)]
+    for key, rule in RULES_BY_MODE_3D[controller.state.mode_key].items():
+        candidates.append(_three_d_experiment_rule(key, rule))
+    expected_kind = (
+        KIND_GENERATIONS
+        if controller.state.mode_key == "generations"
+        else KIND_LIFE_LIKE
+    )
+    for custom in get_custom_rules("3d", kind=expected_kind):
+        candidates.append(
+            _three_d_experiment_rule(custom.key, custom.three_dimensional_rule())
+        )
+    boundaries = tuple(
+        dict.fromkeys((controller.state.volume.boundary, *THREE_D_BOUNDARY_MODES))
+    )
+    density = (
+        runtime_rule.seed_density
+        if isinstance(runtime_rule, GenerationsRule3D)
+        else 0.12
+    )
+    return ExperimentContext(
+        "3d",
+        controller.mode_label,
+        _unique_experiment_rules(candidates),
+        boundaries,
+        (12, 16, 24),
+        density,
+        (SEED_RANDOM, SEED_SINGLE),
+    )
+
+
+def active_experiment_context() -> ExperimentContext:
+    """Build the bounded batch catalog for the currently visible workspace."""
+
+    if active_dimension == "1d":
+        return _one_d_experiment_context()
+    if active_dimension == "3d":
+        return _three_d_experiment_context()
+    return _two_d_experiment_context()
 
 
 def toggle_analysis_panel() -> None:
@@ -4847,9 +5094,12 @@ analysis_panel = ScientificAnalysisPanel(
             if elementary_controller.state.family == FAMILY_ELEMENTARY
             else -1
         ),
+        experiment_context=active_experiment_context,
+        master_seed=lambda: experiment_seed,
         set_status=set_status,
     ),
     comparison_runner,
+    experiment_runner,
 )
 
 help_panel = ShortcutHelpPanel(
@@ -5076,6 +5326,7 @@ def run() -> None:
     finally:
         pattern_scan_executor.shutdown(wait=True, cancel_futures=True)
         comparison_runner.shutdown()
+        experiment_runner.shutdown()
         export_runner.shutdown()
         display_backend.close()
         pygame.quit()
