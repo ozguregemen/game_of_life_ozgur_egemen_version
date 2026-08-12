@@ -10,6 +10,8 @@ os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
+from experiment_lab import ExperimentPlan, SEED_RANDOM, run_experiment_plan
+from experiment_lab_ui import RESULT_METRIC_BY_KEY
 
 
 class ScientificAnalysisIntegrationTests(unittest.TestCase):
@@ -191,6 +193,55 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         self.assertTrue(all(content.contains(rect) for _group, _value, rect in chips))
         self.assertTrue(content.contains(repetitions))
         self.assertTrue(content.contains(run))
+        life.draw_scene()
+
+    def test_experiment_results_dashboard_is_visual_and_interactive(self) -> None:
+        life.set_active_dimension("1d")
+        life.update_window_size(760, 560)
+        life.experiment_lab_panel.active = True
+        life.experiment_lab_panel.tab = "results"
+        view = life.experiment_lab_panel.view
+        context = view.sync_context()
+        plan = ExperimentPlan(
+            "1d",
+            context.mode_label,
+            tuple(context.rules[:2]),
+            tuple(context.boundaries[:2]),
+            (15,),
+            (10,),
+            2,
+            (SEED_RANDOM,),
+            (0.20,),
+            2468,
+        )
+        view.report = run_experiment_plan(plan)
+        _modal, _design, _results, _close, content = (
+            life.experiment_lab_panel.geometry()
+        )
+        geometry = view._results_geometry(content)
+
+        self.assertTrue(all(content.contains(card) for card in geometry.cards))
+        self.assertTrue(content.contains(geometry.chart))
+        self.assertTrue(content.contains(geometry.insight))
+        self.assertTrue(content.contains(geometry.table))
+        block_button = dict(geometry.metric_buttons)["block_entropy"]
+        consumed = view.handle_event(
+            life.pygame.event.Event(
+                life.pygame.MOUSEBUTTONDOWN,
+                button=1,
+                pos=block_button.center,
+            ),
+            content,
+            "results",
+        )
+        self.assertTrue(consumed)
+        self.assertEqual(view.result_metric, "block_entropy")
+        self.assertIsNotNone(
+            view._strongest_factor_effect(
+                view.report,
+                RESULT_METRIC_BY_KEY[view.result_metric],
+            )
+        )
         life.draw_scene()
 
     def test_summary_tab_draws_for_all_three_dimensions(self) -> None:
