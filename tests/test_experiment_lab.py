@@ -60,11 +60,11 @@ class ExperimentLabTests(unittest.TestCase):
                     for index in range(8)
                 ),
                 ("fixed", "wrap", "reflect"),
-                48,
-                500,
+                (48,),
+                (500,),
                 2,
-                SEED_RANDOM,
-                0.2,
+                (SEED_RANDOM,),
+                (0.2,),
                 1,
             )
 
@@ -74,11 +74,11 @@ class ExperimentLabTests(unittest.TestCase):
             "Elementary",
             (self.one_d_rule(30), self.one_d_rule(90)),
             ("fixed", "wrap"),
-            31,
-            20,
+            (31,),
+            (20,),
             2,
-            SEED_RANDOM,
-            0.2,
+            (SEED_RANDOM,),
+            (0.2,),
             987654,
         )
         first = run_experiment_plan(plan)
@@ -89,6 +89,51 @@ class ExperimentLabTests(unittest.TestCase):
         self.assertEqual(len(first.runs), 8)
         self.assertEqual(len(first.aggregates), 4)
         self.assertTrue(all(item.repetitions == 2 for item in first.aggregates))
+
+    def test_multi_factor_cartesian_sweep_preserves_each_configuration(self) -> None:
+        plan = ExperimentPlan(
+            "1d",
+            "Elementary",
+            (self.one_d_rule(30), self.one_d_rule(90)),
+            ("fixed", "wrap"),
+            (15, 21),
+            (10, 12),
+            2,
+            (SEED_RANDOM, SEED_SINGLE),
+            (0.10, 0.35),
+            1234,
+        )
+        report = run_experiment_plan(plan)
+
+        self.assertEqual(plan.run_count, 80)
+        self.assertEqual(len(report.runs), 80)
+        self.assertEqual(len(report.aggregates), 48)
+        configurations = {
+            (
+                item.rule_key,
+                item.boundary,
+                item.size,
+                item.generations,
+                item.seed_kind,
+                item.seed_density,
+            )
+            for item in report.aggregates
+        }
+        self.assertEqual(len(configurations), 48)
+        paired_seed_sets = {
+            rule_key: {
+                run.seed
+                for run in report.runs
+                if run.rule_key == rule_key
+                and run.boundary == "fixed"
+                and run.size == 15
+                and run.generations == 10
+                and run.seed_kind == SEED_RANDOM
+                and run.seed_density == 0.10
+            }
+            for rule_key in ("eca-30", "eca-90")
+        }
+        self.assertEqual(paired_seed_sets["eca-30"], paired_seed_sets["eca-90"])
 
     def test_dimension_specific_engines_produce_measurements(self) -> None:
         conway = ExperimentRule(
@@ -110,8 +155,8 @@ class ExperimentLabTests(unittest.TestCase):
             },
         )
         plans = (
-            ExperimentPlan("2d", "Life-like", (conway,), ("fixed",), 9, 10, 1, SEED_SINGLE, 0.2, 7),
-            ExperimentPlan("3d", "Spatial Life", (spatial,), ("fixed",), 5, 10, 1, SEED_SINGLE, 0.2, 7),
+            ExperimentPlan("2d", "Life-like", (conway,), ("fixed",), (9,), (10,), 1, (SEED_SINGLE,), (0.2,), 7),
+            ExperimentPlan("3d", "Spatial Life", (spatial,), ("fixed",), (5,), (10,), 1, (SEED_SINGLE,), (0.2,), 7),
         )
         for plan in plans:
             report = run_experiment_plan(plan)
@@ -140,11 +185,11 @@ class ExperimentLabTests(unittest.TestCase):
                     rule.name,
                     (rule,),
                     ("fixed",),
-                    9,
-                    10,
+                    (9,),
+                    (10,),
                     1,
-                    SEED_SINGLE if rule.engine == ENGINE_2D_ANT else SEED_RANDOM,
-                    0.2,
+                    (SEED_SINGLE if rule.engine == ENGINE_2D_ANT else SEED_RANDOM,),
+                    (0.2,),
                     101,
                 )
             )
@@ -169,11 +214,11 @@ class ExperimentLabTests(unittest.TestCase):
                 "3D Generations",
                 (generations,),
                 ("reflect",),
-                5,
-                10,
+                (5,),
+                (10,),
                 1,
-                SEED_RANDOM,
-                0.2,
+                (SEED_RANDOM,),
+                (0.2,),
                 202,
             )
         )
@@ -187,11 +232,11 @@ class ExperimentLabTests(unittest.TestCase):
                 "Elementary",
                 (self.one_d_rule(),),
                 ("fixed",),
-                31,
-                10,
+                (31,),
+                (10,),
                 2,
-                SEED_RANDOM,
-                0.2,
+                (SEED_RANDOM,),
+                (0.2,),
                 5,
             )
             self.assertTrue(runner.request(plan))
@@ -213,11 +258,11 @@ class ExperimentLabTests(unittest.TestCase):
             "Elementary",
             (self.one_d_rule(),),
             ("fixed",),
-            15,
-            10,
+            (15,),
+            (10,),
             1,
-            SEED_SINGLE,
-            0.2,
+            (SEED_SINGLE,),
+            (0.2,),
             42,
         )
         report = run_experiment_plan(plan)

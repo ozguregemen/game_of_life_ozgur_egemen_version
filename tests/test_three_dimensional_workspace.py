@@ -66,6 +66,7 @@ class ThreeDimensionalWorkspaceTests(unittest.TestCase):
             activate_dimension_menu=lambda: None,
             activate_session_menu=lambda: None,
             activate_analysis=lambda: None,
+            activate_experiment_lab=lambda: None,
             activate_help=lambda: None,
             activate_tutorial=lambda: setattr(
                 self, "tutorial_opens", self.tutorial_opens + 1

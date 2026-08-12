@@ -204,6 +204,7 @@ class ThreeDimensionalWorkspaceServices:
     activate_dimension_menu: Callable[[], None]
     activate_session_menu: Callable[[], None]
     activate_analysis: Callable[[], None]
+    activate_experiment_lab: Callable[[], None]
     activate_help: Callable[[], None]
     toggle_grid: Callable[[], None]
     cycle_theme: Callable[[], None]
@@ -1785,6 +1786,12 @@ class ThreeDimensionalWorkspaceController(WorkspaceController):
             "Scientific Analysis (I)",
             self.services.activate_analysis,
             accent=(90, 195, 255),
+        )
+        menu.add_button(
+            "Experiment Lab (Shift+I)",
+            self.services.activate_experiment_lab,
+            accent=(90, 220, 130),
+            tooltip="Run bounded multi-factor 3D rule, boundary, volume, and seed sweeps.",
         )
         menu.add_button(
             "Tutorial: 3D & Mode Guide (F2)",

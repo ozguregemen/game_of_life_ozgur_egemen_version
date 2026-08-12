@@ -9,7 +9,7 @@ import random
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from statistics import fmean, pstdev
 from types import MappingProxyType
@@ -69,7 +69,7 @@ MIN_REPETITIONS = 1
 MAX_REPETITIONS = 12
 MAX_RULES = 8
 MAX_BOUNDARIES = 3
-MAX_CASES = 64
+MAX_CASES = 128
 MAX_CELL_UPDATES = 30_000_000
 
 
@@ -143,11 +143,11 @@ class ExperimentPlan:
     mode_label: str
     rules: tuple[ExperimentRule, ...]
     boundaries: tuple[str, ...]
-    size: int
-    generations: int
+    sizes: tuple[int, ...]
+    generation_counts: tuple[int, ...]
     repetitions: int
-    seed_kind: str
-    seed_density: float
+    seed_kinds: tuple[str, ...]
+    seed_densities: tuple[float, ...]
     master_seed: int
 
     def __post_init__(self) -> None:
@@ -159,9 +159,17 @@ class ExperimentPlan:
             raise ValueError("Every selected rule must match the plan dimension.")
         if not self.boundaries or len(self.boundaries) > MAX_BOUNDARIES:
             raise ValueError("Select between one and three boundary modes.")
-        if not 3 <= self.size <= {"1d": 1001, "2d": 160, "3d": 48}[self.dimension]:
+        if not self.sizes or len(self.sizes) > 3:
+            raise ValueError("Select between one and three lattice sizes.")
+        maximum_size = {"1d": 1001, "2d": 160, "3d": 48}[self.dimension]
+        if any(not 3 <= size <= maximum_size for size in self.sizes):
             raise ValueError("Experiment lattice size is outside its safe range.")
-        if not MIN_GENERATIONS <= self.generations <= MAX_GENERATIONS:
+        if not self.generation_counts or len(self.generation_counts) > 3:
+            raise ValueError("Select between one and three generation horizons.")
+        if any(
+            not MIN_GENERATIONS <= generations <= MAX_GENERATIONS
+            for generations in self.generation_counts
+        ):
             raise ValueError(
                 f"Generations must be between {MIN_GENERATIONS} and {MAX_GENERATIONS}."
             )
@@ -169,17 +177,27 @@ class ExperimentPlan:
             raise ValueError(
                 f"Repetitions must be between {MIN_REPETITIONS} and {MAX_REPETITIONS}."
             )
-        if self.seed_kind not in SEED_KINDS:
-            raise ValueError(f"Unknown seed kind: {self.seed_kind}.")
-        if not 0.01 <= self.seed_density <= 0.99:
+        if not self.seed_kinds or any(kind not in SEED_KINDS for kind in self.seed_kinds):
+            raise ValueError("Select at least one supported seed kind.")
+        if not self.seed_densities or len(self.seed_densities) > 3:
+            raise ValueError("Select between one and three random seed densities.")
+        if any(not 0.01 <= density <= 0.99 for density in self.seed_densities):
             raise ValueError("Seed density must be between 0.01 and 0.99.")
         if isinstance(self.master_seed, bool) or not isinstance(self.master_seed, int):
             raise TypeError("Master seed must be an integer.")
-        cases = len(self.rules) * len(self.boundaries) * self.repetitions
+        cases = self.run_count
         if cases > MAX_CASES:
             raise ValueError(f"Experiment requests {cases} runs; limit is {MAX_CASES}.")
-        cells = self.size ** {"1d": 1, "2d": 2, "3d": 3}[self.dimension]
-        updates = cases * cells * self.generations
+        dimension = {"1d": 1, "2d": 2, "3d": 3}[self.dimension]
+        seed_factor = (
+            (len(self.seed_densities) * self.repetitions if SEED_RANDOM in self.seed_kinds else 0)
+            + (1 if SEED_SINGLE in self.seed_kinds else 0)
+        )
+        updates = len(self.rules) * len(self.boundaries) * seed_factor * sum(
+            size**dimension * generations
+            for size in self.sizes
+            for generations in self.generation_counts
+        )
         if updates > MAX_CELL_UPDATES:
             raise ValueError(
                 f"Experiment requests about {updates:,} cell updates; "
@@ -188,7 +206,68 @@ class ExperimentPlan:
 
     @property
     def run_count(self) -> int:
-        return len(self.rules) * len(self.boundaries) * self.repetitions
+        seed_runs = (
+            (len(self.seed_densities) * self.repetitions if SEED_RANDOM in self.seed_kinds else 0)
+            + (1 if SEED_SINGLE in self.seed_kinds else 0)
+        )
+        return (
+            len(self.rules)
+            * len(self.boundaries)
+            * len(self.sizes)
+            * len(self.generation_counts)
+            * seed_runs
+        )
+
+    @property
+    def size(self) -> int:
+        """Return the sole size of an internal concrete run plan."""
+
+        if len(self.sizes) != 1:
+            raise ValueError("A concrete run must contain exactly one lattice size.")
+        return self.sizes[0]
+
+    @property
+    def generations(self) -> int:
+        """Return the sole generation horizon of an internal concrete run plan."""
+
+        if len(self.generation_counts) != 1:
+            raise ValueError("A concrete run must contain exactly one generation horizon.")
+        return self.generation_counts[0]
+
+    @property
+    def seed_kind(self) -> str:
+        if len(self.seed_kinds) != 1:
+            raise ValueError("A concrete run must contain exactly one seed kind.")
+        return self.seed_kinds[0]
+
+    @property
+    def seed_density(self) -> float:
+        if len(self.seed_densities) != 1:
+            raise ValueError("A concrete run must contain exactly one seed density.")
+        return self.seed_densities[0]
+
+    def concrete(
+        self,
+        *,
+        rule: ExperimentRule,
+        boundary: str,
+        size: int,
+        generations: int,
+        seed_kind: str,
+        seed_density: float,
+    ) -> ExperimentPlan:
+        """Return one validated single-configuration plan used by a worker run."""
+
+        return replace(
+            self,
+            rules=(rule,),
+            boundaries=(boundary,),
+            sizes=(size,),
+            generation_counts=(generations,),
+            repetitions=1,
+            seed_kinds=(seed_kind,),
+            seed_densities=(seed_density,),
+        )
 
     def as_document(self) -> dict[str, Any]:
         return {
@@ -196,11 +275,11 @@ class ExperimentPlan:
             "mode_label": self.mode_label,
             "rules": [rule.as_document() for rule in self.rules],
             "boundaries": list(self.boundaries),
-            "size": self.size,
-            "generations": self.generations,
+            "sizes": list(self.sizes),
+            "generation_counts": list(self.generation_counts),
             "repetitions": self.repetitions,
-            "seed_kind": self.seed_kind,
-            "seed_density": self.seed_density,
+            "seed_kinds": list(self.seed_kinds),
+            "seed_densities": list(self.seed_densities),
             "master_seed": self.master_seed,
         }
 
@@ -210,6 +289,10 @@ class ExperimentRun:
     rule_key: str
     rule_name: str
     boundary: str
+    size: int
+    generations: int
+    seed_kind: str
+    seed_density: float | None
     repetition: int
     seed: int
     final_population: int
@@ -229,6 +312,10 @@ class ExperimentAggregate:
     rule_key: str
     rule_name: str
     boundary: str
+    size: int
+    generations: int
+    seed_kind: str
+    seed_density: float | None
     repetitions: int
     mean_final_population: float
     sd_final_population: float
@@ -293,12 +380,19 @@ class ExperimentProgress:
         return self.completed_runs / self.total_runs if self.total_runs else 0.0
 
 
-def _seed_for(plan: ExperimentPlan, rule_index: int, boundary_index: int, repetition: int) -> int:
+def _seed_for(
+    plan: ExperimentPlan,
+    seed_kind_index: int,
+    density_index: int,
+    repetition: int,
+) -> int:
+    """Pair initial randomness across rules and boundaries for fair comparisons."""
+
     return (
         plan.master_seed
-        + 1_000_003 * rule_index
-        + 10_007 * boundary_index
-        + 101 * repetition
+        + 1_009 * seed_kind_index
+        + 101 * density_index
+        + repetition
     ) & ((1 << 63) - 1)
 
 
@@ -565,6 +659,10 @@ def _run_summary(
         rule.key,
         rule.name,
         boundary,
+        plan.size,
+        plan.generations,
+        plan.seed_kind,
+        plan.seed_density if plan.seed_kind == SEED_RANDOM else None,
         repetition,
         seed,
         final.population,
@@ -579,9 +677,22 @@ def _run_summary(
 
 
 def _aggregate(runs: tuple[ExperimentRun, ...]) -> tuple[ExperimentAggregate, ...]:
-    grouped: dict[tuple[str, str], list[ExperimentRun]] = {}
+    grouped: dict[
+        tuple[str, str, int, int, str, float | None],
+        list[ExperimentRun],
+    ] = {}
     for run in runs:
-        grouped.setdefault((run.rule_key, run.boundary), []).append(run)
+        grouped.setdefault(
+            (
+                run.rule_key,
+                run.boundary,
+                run.size,
+                run.generations,
+                run.seed_kind,
+                run.seed_density,
+            ),
+            [],
+        ).append(run)
     aggregates: list[ExperimentAggregate] = []
     for _, selected in grouped.items():
         final_populations = [float(run.final_population) for run in selected]
@@ -597,6 +708,10 @@ def _aggregate(runs: tuple[ExperimentRun, ...]) -> tuple[ExperimentAggregate, ..
                 selected[0].rule_key,
                 selected[0].rule_name,
                 selected[0].boundary,
+                selected[0].size,
+                selected[0].generations,
+                selected[0].seed_kind,
+                selected[0].seed_density,
                 len(selected),
                 fmean(final_populations),
                 pstdev(final_populations),
@@ -631,22 +746,52 @@ def run_experiment_plan(
     cancellation = cancelled or threading.Event()
     started = time.perf_counter()
     runs: list[ExperimentRun] = []
-    for rule_index, rule in enumerate(plan.rules):
-        for boundary_index, boundary in enumerate(plan.boundaries):
-            for repetition in range(plan.repetitions):
-                seed = _seed_for(plan, rule_index, boundary_index, repetition)
-                runs.append(
-                    _run_summary(
-                        plan,
-                        rule,
-                        boundary,
-                        repetition + 1,
-                        seed,
-                        cancellation,
-                    )
-                )
-                if progress is not None:
-                    progress(len(runs), plan.run_count, rule.name, boundary)
+    for rule in plan.rules:
+        for boundary in plan.boundaries:
+            for size in plan.sizes:
+                for generations in plan.generation_counts:
+                    configurations: list[tuple[str, float, int, int, int]] = []
+                    if SEED_RANDOM in plan.seed_kinds:
+                        configurations.extend(
+                            (SEED_RANDOM, density, repetition, 0, density_index)
+                            for density_index, density in enumerate(plan.seed_densities)
+                            for repetition in range(1, plan.repetitions + 1)
+                        )
+                    if SEED_SINGLE in plan.seed_kinds:
+                        configurations.append((SEED_SINGLE, plan.seed_densities[0], 1, 1, 0))
+                    for (
+                        seed_kind,
+                        seed_density,
+                        repetition,
+                        seed_kind_index,
+                        density_index,
+                    ) in configurations:
+                        run_plan = plan.concrete(
+                            rule=rule,
+                            boundary=boundary,
+                            size=size,
+                            generations=generations,
+                            seed_kind=seed_kind,
+                            seed_density=seed_density,
+                        )
+                        seed = _seed_for(
+                            plan,
+                            seed_kind_index,
+                            density_index,
+                            repetition,
+                        )
+                        runs.append(
+                            _run_summary(
+                                run_plan,
+                                rule,
+                                boundary,
+                                repetition,
+                                seed,
+                                cancellation,
+                            )
+                        )
+                        if progress is not None:
+                            progress(len(runs), plan.run_count, rule.name, boundary)
     frozen_runs = tuple(runs)
     return ExperimentReport(
         plan,
@@ -753,14 +898,31 @@ def export_experiment_csv(report: ExperimentReport) -> Path:
     path = EXPERIMENT_EXPORT_DIRECTORY / f"{_safe_report_stem(report)}.csv"
     temporary = path.with_suffix(".csv.tmp")
     run_fields = tuple(ExperimentRun.__dataclass_fields__)
+    group_keys = (
+        "rule_key",
+        "rule_name",
+        "boundary",
+        "size",
+        "generations",
+        "seed_kind",
+        "seed_density",
+        "repetitions",
+    )
     aggregate_fields = tuple(
         f"group_{name}"
         for name in ExperimentAggregate.__dataclass_fields__
-        if name not in ("rule_key", "rule_name", "boundary", "repetitions")
+        if name not in group_keys
     )
     fields = (*run_fields, *aggregate_fields)
     aggregates = {
-        (aggregate.rule_key, aggregate.boundary): aggregate
+        (
+            aggregate.rule_key,
+            aggregate.boundary,
+            aggregate.size,
+            aggregate.generations,
+            aggregate.seed_kind,
+            aggregate.seed_density,
+        ): aggregate
         for aggregate in report.aggregates
     }
     try:
@@ -769,9 +931,18 @@ def export_experiment_csv(report: ExperimentReport) -> Path:
             writer.writeheader()
             for run in report.runs:
                 row = dict(run.__dict__)
-                aggregate = aggregates[(run.rule_key, run.boundary)]
+                aggregate = aggregates[
+                    (
+                        run.rule_key,
+                        run.boundary,
+                        run.size,
+                        run.generations,
+                        run.seed_kind,
+                        run.seed_density,
+                    )
+                ]
                 for name in ExperimentAggregate.__dataclass_fields__:
-                    if name in ("rule_key", "rule_name", "boundary", "repetitions"):
+                    if name in group_keys:
                         continue
                     row[f"group_{name}"] = getattr(aggregate, name)
                 writer.writerow(row)

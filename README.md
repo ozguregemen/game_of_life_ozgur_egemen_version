@@ -98,6 +98,7 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 | N | Simülasyon duraklatılmışken tek nesil ilerlet |
 | J | Timeline içinde kayıtlı bir generation'a doğrudan git |
 | I | Bilimsel analiz ve 1D rule karşılaştırma panelini aç / kapat |
+| Shift + I | Bağımsız, çok faktörlü Experiment Lab panelini aç / kapat |
 | X | Bağlamsal dışa aktarma panelini aç / kapat |
 | Yukarı / Aşağı | Simülasyon hızını değiştir |
 | G | Grid çizgilerini aç/kapat |
@@ -200,20 +201,24 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 
 ## Genelleştirilmiş Deney Laboratuvarı
 
-`Scientific Analysis` panelindeki `Experiment Lab` sekmesi aktif 1D, 2D veya 3D
-çalışma alanından bağımsız ve tekrar üretilebilir parametre taramaları çalıştırır.
-Panelde karşılaştırılacak hazır/özel kuralların sayısı, sınır koşulları, eksen başına
-lattice boyutu, generation sayısı, tekrar sayısı, başlangıç türü ve rastgele başlangıç
-yoğunluğu seçilebilir. Aktif kural her zaman listenin başındadır; kayıtlı özel kurallar
-ve aynı ailedeki hazır kurallar onu izler.
+Sidebar'daki `Experiment Lab` düğmesi veya `Shift+I`, canlı Scientific Analysis'ten
+ayrı, ileri seviye ve tekrar üretilebilir parametre tarama panelini açar. Kullanıcı hazır
+ve özel kuralları, sınır koşullarını, eksen başına lattice boyutlarını, generation
+ufuklarını, başlangıç türlerini ve rastgele başlangıç yoğunluklarını tek tek işaretler.
+Laboratuvar seçilen bütün değerlerin Cartesian product'unu çalıştırır ve başlamadan
+önce bağımsız koşu sayısını gösterir. Aktif kural listenin başındadır; kayıtlı özel
+kurallar ve aynı ailedeki hazır kurallar onu izler.
 
-Her tekrar, görünür master seed'den türetilen ayrı ve raporda saklanan bir seed kullanır.
+Her tekrar, görünür master seed'den türetilen ve raporda saklanan bir seed kullanır.
+Aynı yoğunluk ve tekrar koşulundaki farklı kural, sınır, size ve generation ufukları
+eşlenmiş aynı başlangıç seed'ini alır; böylece karşılaştırma başlangıç rastlantısından
+etkilenmez.
 Hesaplama Pygame event loop'unu durdurmayan tek bir arka plan worker'ında yürür ve
 `Cancel safely` ile generation sınırında kontrollü biçimde iptal edilir. Kural, sınır,
 tekrar ve toplam hücre güncellemesi için güvenli üst sınırlar aşılırsa deney başlamadan
 açık bir hata gösterilir.
 
-Sonuç tablosu her kural/sınır grubu için ortalama ve population standard deviation ile
+Sonuç tablosu her kural/sınır/size/generation/seed/yoğunluk grubu için ortalama ve population standard deviation ile
 final density, entropy, block entropy, temporal change, algılanan periyot ve stabilizasyon
 generation'ını özetler. `Export analysis CSV`, her bağımsız koşuyu kendi seed'i ve grup
 istatistikleriyle tidy UTF-8 CSV'ye; `Export reproducible JSON` ise planı, bütün ham

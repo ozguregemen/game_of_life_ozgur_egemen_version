@@ -85,6 +85,7 @@ from experiment_lab import (
     ExperimentRule,
     ExperimentRunner,
 )
+from experiment_lab_ui import ExperimentLabPanel, ExperimentLabServices
 from help_ui import HelpPanelServices, ShortcutHelpPanel
 from export_ui import ExportMenu, ExportMenuServices
 from exporting import (
@@ -1484,6 +1485,8 @@ def restore_session_document(document: Mapping[str, Any]) -> dict[str, Any]:
     session_manager.close()
     if "analysis_panel" in globals():
         analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     if "export_manager" in globals():
         export_manager.close()
     drawing = False
@@ -1962,7 +1965,23 @@ def active_experiment_context() -> ExperimentContext:
 def toggle_analysis_panel() -> None:
     """Open or close the non-blocking scientific dashboard."""
     timeline_panel.stop()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     analysis_panel.toggle()
+
+
+def toggle_experiment_lab() -> None:
+    """Open the independent multi-factor research workspace."""
+
+    timeline_panel.stop()
+    analysis_panel.close()
+    session_manager.close()
+    help_panel.close()
+    if "export_manager" in globals():
+        export_manager.close()
+    if "rule_studio" in globals():
+        rule_studio.close()
+    experiment_lab_panel.toggle()
 
 
 def _active_export_timeline_snapshots() -> tuple[Mapping[str, Any], ...]:
@@ -2034,6 +2053,8 @@ def _prepare_export_menu() -> None:
     timeline_panel.stop()
     session_manager.close()
     analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     dimension_menu_active = False
     mode_menu_active = False
     pattern_menu_active = False
@@ -4057,6 +4078,8 @@ def activate_custom_rule_studio() -> None:
     active_workspace().controller.deactivate()
     session_manager.close()
     analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     help_panel.close()
     if "one_d_tutorial" in globals():
         one_d_tutorial.close()
@@ -4086,6 +4109,8 @@ def activate_one_d_tutorial() -> None:
     active_workspace().controller.deactivate()
     session_manager.close()
     analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     help_panel.close()
     if "two_d_tutorial" in globals():
         two_d_tutorial.close()
@@ -4113,6 +4138,8 @@ def activate_two_d_tutorial() -> None:
     active_workspace().controller.deactivate()
     session_manager.close()
     analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     help_panel.close()
     if "one_d_tutorial" in globals():
         one_d_tutorial.close()
@@ -4140,6 +4167,8 @@ def activate_three_d_tutorial() -> None:
     active_workspace().controller.deactivate()
     session_manager.close()
     analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     help_panel.close()
     if "one_d_tutorial" in globals():
         one_d_tutorial.close()
@@ -4187,6 +4216,8 @@ def toggle_help_panel() -> None:
     active_workspace().controller.deactivate()
     session_manager.close()
     analysis_panel.close()
+    if "experiment_lab_panel" in globals():
+        experiment_lab_panel.close()
     if "one_d_tutorial" in globals():
         one_d_tutorial.close()
     if "two_d_tutorial" in globals():
@@ -4284,6 +4315,7 @@ def draw_scene() -> None:
     draw_status()
     renderer.draw_modal()
     analysis_panel.draw()
+    experiment_lab_panel.draw()
     draw_dimension_menu()
     draw_session_menu()
     export_manager.draw()
@@ -4412,6 +4444,12 @@ def _build_2d_sidebar(menu: Menu) -> None:
         toggle_analysis_panel,
         accent=(90, 195, 255),
         tooltip="Open live scientific measurements and period detection.",
+    )
+    menu.add_button(
+        "Experiment Lab (Shift+I)",
+        toggle_experiment_lab,
+        accent=(90, 220, 130),
+        tooltip="Design repeatable multi-factor rule, boundary, size, and seed sweeps.",
     )
     menu.add_button(
         "Export Results (X)",
@@ -4699,6 +4737,8 @@ def handle_keydown(event: pygame.event.Event) -> None:
             set_status("The 1D workspace follows its active space-time diagram.")
     elif event.key == pygame.K_p:
         activate_session_menu()
+    elif event.key == pygame.K_i and modifiers & pygame.KMOD_SHIFT:
+        toggle_experiment_lab()
     elif event.key == pygame.K_i:
         toggle_analysis_panel()
     elif event.key == pygame.K_x:
@@ -4792,6 +4832,10 @@ def handle_event(event: pygame.event.Event) -> bool:
 
     if rule_studio.active:
         rule_studio.handle_event(event)
+        return True
+
+    if experiment_lab_panel.active:
+        experiment_lab_panel.handle_event(event)
         return True
 
     if two_d_tutorial.active:
@@ -4961,6 +5005,7 @@ elementary_services = ElementaryWorkspaceServices(
     activate_dimension_menu=activate_dimension_menu,
     activate_session_menu=activate_session_menu,
     activate_analysis=toggle_analysis_panel,
+    activate_experiment_lab=toggle_experiment_lab,
     activate_export=activate_export_menu,
     activate_help=toggle_help_panel,
     activate_tutorial=activate_one_d_tutorial,
@@ -5009,6 +5054,7 @@ three_dimensional_services = ThreeDimensionalWorkspaceServices(
     activate_dimension_menu=activate_dimension_menu,
     activate_session_menu=activate_session_menu,
     activate_analysis=toggle_analysis_panel,
+    activate_experiment_lab=toggle_experiment_lab,
     activate_help=toggle_help_panel,
     activate_tutorial=activate_three_d_tutorial,
     toggle_grid=toggle_grid_lines,
@@ -5094,11 +5140,25 @@ analysis_panel = ScientificAnalysisPanel(
             if elementary_controller.state.family == FAMILY_ELEMENTARY
             else -1
         ),
-        experiment_context=active_experiment_context,
-        master_seed=lambda: experiment_seed,
         set_status=set_status,
     ),
     comparison_runner,
+)
+
+experiment_lab_panel = ExperimentLabPanel(
+    ExperimentLabServices(
+        screen=lambda: screen,
+        window_size=lambda: (WINDOW_WIDTH, WINDOW_HEIGHT),
+        content_width=lambda: max(1, WINDOW_WIDTH - MENU_WIDTH),
+        theme=lambda: THEMES[current_theme],
+        large_font=lambda: font,
+        small_font=lambda: small_font,
+        tiny_font=lambda: tiny_font,
+        context=active_experiment_context,
+        master_seed=lambda: experiment_seed,
+        set_status=set_status,
+        pause=lambda: _set_simulation_running(False),
+    ),
     experiment_runner,
 )
 

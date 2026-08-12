@@ -17,9 +17,11 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         self.original_session = life.capture_session_document("Analysis Test")
         self.original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
         life.analysis_panel.close()
+        life.experiment_lab_panel.close()
 
     def tearDown(self) -> None:
         life.analysis_panel.close()
+        life.experiment_lab_panel.close()
         life.update_window_size(*self.original_size)
         life.restore_session_document(self.original_session)
 
@@ -105,15 +107,7 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         life.handle_keydown(
             life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_i)
         )
-        (
-            modal,
-            live_tab,
-            summary_tab,
-            methods_tab,
-            comparison_tab,
-            experiment_tab,
-            close_button,
-        ) = (
+        modal, live_tab, summary_tab, methods_tab, comparison_tab, close_button = (
             life.analysis_panel.geometry()
         )
 
@@ -122,14 +116,13 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         self.assertTrue(modal.contains(summary_tab))
         self.assertTrue(modal.contains(methods_tab))
         self.assertTrue(modal.contains(comparison_tab))
-        self.assertTrue(modal.contains(experiment_tab))
         self.assertTrue(modal.contains(close_button))
         life.draw_scene()
 
     def test_comparison_tab_requests_background_rule_experiment(self) -> None:
         self.configure_life_blinker()
         life.analysis_panel.active = True
-        _, _, _, _, comparison_tab, _, _ = life.analysis_panel.geometry()
+        _, _, _, _, comparison_tab, _ = life.analysis_panel.geometry()
 
         with patch.object(life.analysis_panel, "request_comparison") as request:
             consumed = life.analysis_panel.handle_event(
@@ -145,24 +138,60 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         request.assert_called_once_with()
 
     def test_experiment_lab_is_contextual_for_every_dimension(self) -> None:
-        life.analysis_panel.active = True
-        _, _, _, _, _, experiment_tab, _ = life.analysis_panel.geometry()
-        consumed = life.analysis_panel.handle_event(
+        life.handle_keydown(
             life.pygame.event.Event(
-                life.pygame.MOUSEBUTTONDOWN,
-                button=1,
-                pos=experiment_tab.center,
+                life.pygame.KEYDOWN,
+                key=life.pygame.K_i,
+                mod=life.pygame.KMOD_SHIFT,
             )
         )
-        self.assertTrue(consumed)
-        self.assertEqual(life.analysis_panel.tab, "experiment")
+        self.assertTrue(life.experiment_lab_panel.active)
+        self.assertFalse(life.analysis_panel.active)
 
         for dimension in ("1d", "2d", "3d"):
             life.set_active_dimension(dimension)
             context = life.active_experiment_context()
             self.assertEqual(context.dimension, dimension)
             self.assertTrue(context.rules)
+            life.experiment_lab_panel.view.sync_context()
+            self.assertEqual(
+                life.experiment_lab_panel.view.context.dimension,
+                dimension,
+            )
             life.draw_scene()
+        life.experiment_lab_panel.handle_event(
+            life.pygame.event.Event(
+                life.pygame.KEYDOWN,
+                key=life.pygame.K_i,
+                mod=life.pygame.KMOD_SHIFT,
+            )
+        )
+        self.assertFalse(life.experiment_lab_panel.active)
+
+    def test_experiment_lab_supports_individual_multi_factor_selection(self) -> None:
+        life.set_active_dimension("1d")
+        life.update_window_size(760, 560)
+        life.experiment_lab_panel.active = True
+        view = life.experiment_lab_panel.view
+        context = view.sync_context()
+        view.selected_rules = {rule.key for rule in context.rules[:2]}
+        view.selected_boundaries = set(context.boundaries[:2])
+        view.selected_sizes = set(context.size_options[:2])
+        view.selected_generations = set(view.GENERATION_OPTIONS["1d"][:2])
+        view.selected_seed_kinds = {"random"}
+        view.selected_densities = {0.10, 0.20}
+        view.repetition_index = 1
+
+        plan = view.plan()
+        self.assertEqual(plan.run_count, 96)
+        _modal, _design, _results, _close, content = (
+            life.experiment_lab_panel.geometry()
+        )
+        _intro, chips, repetitions, run = view._design_geometry(content)
+        self.assertTrue(all(content.contains(rect) for _group, _value, rect in chips))
+        self.assertTrue(content.contains(repetitions))
+        self.assertTrue(content.contains(run))
+        life.draw_scene()
 
     def test_summary_tab_draws_for_all_three_dimensions(self) -> None:
         life.analysis_panel.active = True

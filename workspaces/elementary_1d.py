@@ -131,6 +131,7 @@ class ElementaryWorkspaceServices:
     activate_dimension_menu: Callable[[], None]
     activate_session_menu: Callable[[], None]
     activate_analysis: Callable[[], None]
+    activate_experiment_lab: Callable[[], None]
     activate_export: Callable[[], None]
     activate_help: Callable[[], None]
     activate_tutorial: Callable[[], None]
@@ -1552,6 +1553,12 @@ class ElementaryWorkspaceController(WorkspaceController):
             self.services.activate_analysis,
             accent=(90, 195, 255),
             tooltip="Inspect population, density, entropy, change rate, and periods.",
+        )
+        menu.add_button(
+            "Experiment Lab (Shift+I)",
+            self.services.activate_experiment_lab,
+            accent=(90, 220, 130),
+            tooltip="Compare selected rules, boundaries, sizes, seeds, and run lengths.",
         )
         menu.add_button(
             "Export Results (X)",

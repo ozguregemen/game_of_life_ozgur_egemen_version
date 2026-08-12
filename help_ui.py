@@ -31,7 +31,7 @@ class ShortcutHelpPanel:
         ("N", "Advance one generation while paused"),
         ("Up / Down", "Change simulation speed"),
         ("D / M", "Choose dimension / choose 2D mode"),
-        ("P / I / X", "Sessions / scientific analysis / exports"),
+        ("P / I / Shift+I / X", "Sessions / live analysis / experiment lab / exports"),
         ("J", "Go directly to a recorded generation"),
         ("[ / ]", "Zoom out / zoom in"),
         ("C / G", "Center the view / toggle grid lines"),
