@@ -85,6 +85,33 @@ RESULT_METRICS = (
         (238, 100, 150),
         "Mean cell turnover per generation; high activity may be structured or turbulent.",
     ),
+    ResultMetric(
+        "cohesion",
+        "Largest component share",
+        "mean_largest_component_fraction",
+        "sd_largest_component_fraction",
+        "%",
+        (90, 220, 130),
+        "Share of active cells in the largest orthogonal component; high cohesion is not the same as high complexity.",
+    ),
+    ResultMetric(
+        "anisotropy",
+        "Anisotropy",
+        "mean_anisotropy",
+        "sd_anisotropy",
+        "",
+        (105, 205, 195),
+        "Covariance-based directional imbalance from 0 to 1; larger values indicate a more elongated final population.",
+    ),
+    ResultMetric(
+        "translation_speed",
+        "Motion speed",
+        "mean_translation_speed",
+        "sd_translation_speed",
+        " cells/gen",
+        (245, 135, 75),
+        "Translation-aware recurrence speed; zero means no moving recurrence was detected within the run horizon.",
+    ),
 )
 RESULT_METRIC_BY_KEY = {metric.key: metric for metric in RESULT_METRICS}
 
@@ -733,25 +760,30 @@ class ExperimentLabView:
         )
         metric_height = 28
         metric_gap = 5
+        metric_columns = min(4, len(RESULT_METRICS))
+        metric_rows = (len(RESULT_METRICS) + metric_columns - 1) // metric_columns
         metric_width = (
-            content.width - metric_gap * (len(RESULT_METRICS) - 1)
-        ) // len(RESULT_METRICS)
+            content.width - metric_gap * (metric_columns - 1)
+        ) // metric_columns
         metric_buttons = tuple(
             (
                 metric.key,
                 pygame.Rect(
-                    content.x + index * (metric_width + metric_gap),
-                    metric_y,
+                    content.x + (index % metric_columns) * (metric_width + metric_gap),
+                    metric_y + (index // metric_columns) * (metric_height + metric_gap),
                     metric_width
-                    if index < len(RESULT_METRICS) - 1
+                    if index % metric_columns < metric_columns - 1
                     else content.right
-                    - (content.x + index * (metric_width + metric_gap)),
+                    - (
+                        content.x
+                        + (index % metric_columns) * (metric_width + metric_gap)
+                    ),
                     metric_height,
                 ),
             )
             for index, metric in enumerate(RESULT_METRICS)
         )
-        chart_y = metric_y + metric_height + gap
+        chart_y = metric_y + metric_rows * metric_height + (metric_rows - 1) * metric_gap + gap
         insight_height = 58 if compact_cards else 68
         table_minimum = 65 if compact_cards else 88
         chart_height = max(
@@ -920,6 +952,9 @@ class ExperimentLabView:
         periodic_count = sum(
             item.period_detection_rate > 0.0 for item in aggregates
         )
+        translating_count = sum(
+            item.translation_detection_rate > 0.0 for item in aggregates
+        )
         values = (
             (
                 "EXPERIMENT SCALE",
@@ -942,7 +977,7 @@ class ExperimentLabView:
             (
                 "PERIOD DETECTED",
                 f"{periodic_count} / {len(aggregates)}",
-                "configurations with a period",
+                f"moving recurrence in {translating_count}",
                 (177, 126, 235),
             ),
         )

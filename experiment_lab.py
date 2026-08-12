@@ -35,7 +35,7 @@ from three_dimensional_rules import LifeLikeRule3D, step_life_like_3d
 from wireworld import apply_wireworld_rules, randomize_wireworld_grid
 
 EXPERIMENT_REPORT_SCHEMA = "cellular-automata-lab-batch-experiment"
-EXPERIMENT_REPORT_VERSION = 1
+EXPERIMENT_REPORT_VERSION = 2
 EXPERIMENT_EXPORT_DIRECTORY = APPLICATION_PATHS.exports / "experiment_lab"
 
 ENGINE_1D = "1d"
@@ -303,6 +303,16 @@ class ExperimentRun:
     mean_change_rate: float
     period: int | None
     stabilization_generation: int | None
+    final_component_count: int | None
+    final_largest_component_fraction: float
+    final_bounding_box_fill: float
+    final_radius_of_gyration: float
+    final_exposed_faces_per_cell: float
+    final_anisotropy: float
+    translation_detected: bool
+    translation_period: int | None
+    translation_displacement: tuple[int, ...]
+    translation_speed: float
 
 
 @dataclass(frozen=True)
@@ -334,6 +344,23 @@ class ExperimentAggregate:
     sd_detected_period: float | None
     mean_stabilization_generation: float | None
     sd_stabilization_generation: float | None
+    mean_final_component_count: float | None
+    sd_final_component_count: float | None
+    mean_largest_component_fraction: float
+    sd_largest_component_fraction: float
+    mean_bounding_box_fill: float
+    sd_bounding_box_fill: float
+    mean_radius_of_gyration: float
+    sd_radius_of_gyration: float
+    mean_exposed_faces_per_cell: float
+    sd_exposed_faces_per_cell: float
+    mean_anisotropy: float
+    sd_anisotropy: float
+    translation_detection_rate: float
+    mean_translation_period: float | None
+    sd_translation_period: float | None
+    mean_translation_speed: float
+    sd_translation_speed: float
 
     def as_document(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -655,24 +682,39 @@ def _run_summary(
     samples = series.samples
     final = samples[-1]
     temporal = samples[1:] or samples
+    structure = series.structure()
+    recurrence = series.translation_recurrence
+    moving_recurrence = recurrence if recurrence is not None and recurrence.moving else None
     return ExperimentRun(
-        rule.key,
-        rule.name,
-        boundary,
-        plan.size,
-        plan.generations,
-        plan.seed_kind,
-        plan.seed_density if plan.seed_kind == SEED_RANDOM else None,
-        repetition,
-        seed,
-        final.population,
-        final.density,
-        fmean(sample.density for sample in samples),
-        fmean(sample.entropy for sample in samples),
-        fmean(sample.block_entropy for sample in samples),
-        fmean(sample.change_rate for sample in temporal),
-        series.period,
-        series.stabilization_generation,
+        rule_key=rule.key,
+        rule_name=rule.name,
+        boundary=boundary,
+        size=plan.size,
+        generations=plan.generations,
+        seed_kind=plan.seed_kind,
+        seed_density=plan.seed_density if plan.seed_kind == SEED_RANDOM else None,
+        repetition=repetition,
+        seed=seed,
+        final_population=final.population,
+        final_density=final.density,
+        mean_density=fmean(sample.density for sample in samples),
+        mean_entropy=fmean(sample.entropy for sample in samples),
+        mean_block_entropy=fmean(sample.block_entropy for sample in samples),
+        mean_change_rate=fmean(sample.change_rate for sample in temporal),
+        period=series.period,
+        stabilization_generation=series.stabilization_generation,
+        final_component_count=structure.component_count,
+        final_largest_component_fraction=structure.largest_component_fraction,
+        final_bounding_box_fill=structure.bounding_box_fill,
+        final_radius_of_gyration=structure.radius_of_gyration,
+        final_exposed_faces_per_cell=structure.exposed_faces_per_cell,
+        final_anisotropy=structure.anisotropy,
+        translation_detected=moving_recurrence is not None,
+        translation_period=(moving_recurrence.period if moving_recurrence else None),
+        translation_displacement=(
+            moving_recurrence.displacement if moving_recurrence else ()
+        ),
+        translation_speed=(moving_recurrence.speed if moving_recurrence else 0.0),
     )
 
 
@@ -703,6 +745,24 @@ def _aggregate(runs: tuple[ExperimentRun, ...]) -> tuple[ExperimentAggregate, ..
         change_rates = [run.mean_change_rate for run in selected]
         periods = [float(run.period) for run in selected if run.period is not None]
         stabilizations = [run.stabilization_generation for run in selected if run.stabilization_generation is not None]
+        component_counts = [
+            float(run.final_component_count)
+            for run in selected
+            if run.final_component_count is not None
+        ]
+        largest_component_fractions = [
+            run.final_largest_component_fraction for run in selected
+        ]
+        bounding_box_fills = [run.final_bounding_box_fill for run in selected]
+        radii_of_gyration = [run.final_radius_of_gyration for run in selected]
+        exposed_faces = [run.final_exposed_faces_per_cell for run in selected]
+        anisotropies = [run.final_anisotropy for run in selected]
+        translation_periods = [
+            float(run.translation_period)
+            for run in selected
+            if run.translation_detected and run.translation_period is not None
+        ]
+        translation_speeds = [run.translation_speed for run in selected]
         aggregates.append(
             ExperimentAggregate(
                 selected[0].rule_key,
@@ -730,6 +790,25 @@ def _aggregate(runs: tuple[ExperimentRun, ...]) -> tuple[ExperimentAggregate, ..
                 pstdev(periods) if periods else None,
                 fmean(stabilizations) if stabilizations else None,
                 pstdev(stabilizations) if stabilizations else None,
+                fmean(component_counts) if component_counts else None,
+                pstdev(component_counts) if component_counts else None,
+                fmean(largest_component_fractions),
+                pstdev(largest_component_fractions),
+                fmean(bounding_box_fills),
+                pstdev(bounding_box_fills),
+                fmean(radii_of_gyration),
+                pstdev(radii_of_gyration),
+                fmean(exposed_faces),
+                pstdev(exposed_faces),
+                fmean(anisotropies),
+                pstdev(anisotropies),
+                100.0
+                * sum(run.translation_detected for run in selected)
+                / len(selected),
+                fmean(translation_periods) if translation_periods else None,
+                pstdev(translation_periods) if translation_periods else None,
+                fmean(translation_speeds),
+                pstdev(translation_speeds),
             )
         )
     return tuple(aggregates)

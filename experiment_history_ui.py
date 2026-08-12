@@ -27,6 +27,9 @@ METRIC_COLORS = {
     "entropy": (242, 184, 72),
     "block_entropy": (177, 126, 235),
     "change_rate": (238, 100, 150),
+    "cohesion": (90, 220, 130),
+    "anisotropy": (105, 205, 195),
+    "translation_speed": (245, 135, 75),
 }
 
 
@@ -162,15 +165,20 @@ class ExperimentHistoryView:
             open_button.y - list_panel.y - 35,
         )
         metric_gap = 5
+        metric_columns = min(4, len(COMPARISON_METRICS))
         metric_width = (
-            compare_panel.width - 12 - metric_gap * (len(COMPARISON_METRICS) - 1)
-        ) // len(COMPARISON_METRICS)
+            compare_panel.width - 12 - metric_gap * (metric_columns - 1)
+        ) // metric_columns
         metric_buttons = tuple(
             (
                 key,
                 pygame.Rect(
-                    compare_panel.x + 6 + index * (metric_width + metric_gap),
-                    compare_panel.y + 6,
+                    compare_panel.x
+                    + 6
+                    + (index % metric_columns) * (metric_width + metric_gap),
+                    compare_panel.y
+                    + 6
+                    + (index // metric_columns) * (27 + metric_gap),
                     metric_width,
                     27,
                 ),
@@ -496,9 +504,11 @@ class ExperimentHistoryView:
             )
         content = pygame.Rect(
             panel.x + 7,
-            panel.y + 40,
+            max(rect.bottom for _key, rect in geometry.metric_buttons) + 7,
             panel.width - 14,
-            geometry.export_png_button.y - panel.y - 47,
+            geometry.export_png_button.y
+            - max(rect.bottom for _key, rect in geometry.metric_buttons)
+            - 14,
         )
         if self.comparison is None:
             selected = len(self.selected_paths)

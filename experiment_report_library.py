@@ -28,6 +28,50 @@ COMPARISON_METRICS = {
     "entropy": ("State entropy", "mean_entropy", ""),
     "block_entropy": ("Block entropy", "mean_block_entropy", ""),
     "change_rate": ("Change rate", "mean_change_rate", "%"),
+    "cohesion": (
+        "Largest component share",
+        "mean_largest_component_fraction",
+        "%",
+    ),
+    "anisotropy": ("Anisotropy", "mean_anisotropy", ""),
+    "translation_speed": (
+        "Motion speed",
+        "mean_translation_speed",
+        " cells/gen",
+    ),
+}
+SUPPORTED_REPORT_VERSIONS = (1, EXPERIMENT_REPORT_VERSION)
+
+LEGACY_RUN_DEFAULTS: dict[str, Any] = {
+    "final_component_count": None,
+    "final_largest_component_fraction": 0.0,
+    "final_bounding_box_fill": 0.0,
+    "final_radius_of_gyration": 0.0,
+    "final_exposed_faces_per_cell": 0.0,
+    "final_anisotropy": 0.0,
+    "translation_detected": False,
+    "translation_period": None,
+    "translation_displacement": (),
+    "translation_speed": 0.0,
+}
+LEGACY_AGGREGATE_DEFAULTS: dict[str, Any] = {
+    "mean_final_component_count": None,
+    "sd_final_component_count": None,
+    "mean_largest_component_fraction": 0.0,
+    "sd_largest_component_fraction": 0.0,
+    "mean_bounding_box_fill": 0.0,
+    "sd_bounding_box_fill": 0.0,
+    "mean_radius_of_gyration": 0.0,
+    "sd_radius_of_gyration": 0.0,
+    "mean_exposed_faces_per_cell": 0.0,
+    "sd_exposed_faces_per_cell": 0.0,
+    "mean_anisotropy": 0.0,
+    "sd_anisotropy": 0.0,
+    "translation_detection_rate": 0.0,
+    "mean_translation_period": None,
+    "sd_translation_period": None,
+    "mean_translation_speed": 0.0,
+    "sd_translation_speed": 0.0,
 }
 
 
@@ -93,13 +137,38 @@ def _finite_number(value: Any, label: str) -> float:
     return result
 
 
+def _run_from_document(value: Any, version: int) -> ExperimentRun:
+    document = dict(_require_mapping(value, "run"))
+    if version == 1:
+        for name, default in LEGACY_RUN_DEFAULTS.items():
+            document.setdefault(name, default)
+    displacement = document.get("translation_displacement", ())
+    if not isinstance(displacement, (list, tuple)):
+        raise TypeError("run.translation_displacement must be an array.")
+    document["translation_displacement"] = tuple(int(item) for item in displacement)
+    return ExperimentRun(**document)
+
+
+def _aggregate_from_document(value: Any, version: int) -> ExperimentAggregate:
+    document = dict(_require_mapping(value, "aggregate"))
+    if version == 1:
+        for name, default in LEGACY_AGGREGATE_DEFAULTS.items():
+            document.setdefault(name, default)
+    return ExperimentAggregate(**document)
+
+
 def report_from_document(document: Mapping[str, Any]) -> ExperimentReport:
     """Validate and reconstruct an exported ExperimentReport document."""
 
     root = _require_mapping(document, "report")
     if root.get("schema") != EXPERIMENT_REPORT_SCHEMA:
         raise ValueError("Unsupported experiment-report schema.")
-    if root.get("version") != EXPERIMENT_REPORT_VERSION:
+    version = root.get("version")
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version not in SUPPORTED_REPORT_VERSIONS
+    ):
         raise ValueError("Unsupported experiment-report version.")
     plan_document = _require_mapping(root["plan"], "plan")
     rules = tuple(
@@ -151,11 +220,11 @@ def report_from_document(document: Mapping[str, Any]) -> ExperimentReport:
         master_seed=int(plan_document["master_seed"]),
     )
     runs = tuple(
-        ExperimentRun(**dict(_require_mapping(value, "run")))
+        _run_from_document(value, version)
         for value in _require_sequence(root["runs"], "runs")
     )
     aggregates = tuple(
-        ExperimentAggregate(**dict(_require_mapping(value, "aggregate")))
+        _aggregate_from_document(value, version)
         for value in _require_sequence(root["aggregates"], "aggregates")
     )
     if not runs or not aggregates:

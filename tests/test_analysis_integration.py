@@ -236,6 +236,9 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         geometry = view._results_geometry(content)
 
         self.assertTrue(all(content.contains(card) for card in geometry.cards))
+        self.assertTrue(
+            all(content.contains(button) for _key, button in geometry.metric_buttons)
+        )
         self.assertTrue(content.contains(geometry.chart))
         self.assertTrue(content.contains(geometry.insight))
         self.assertTrue(content.contains(geometry.table))
@@ -257,6 +260,19 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
                 RESULT_METRIC_BY_KEY[view.result_metric],
             )
         )
+        motion_button = dict(geometry.metric_buttons)["translation_speed"]
+        self.assertTrue(
+            view.handle_event(
+                life.pygame.event.Event(
+                    life.pygame.MOUSEBUTTONDOWN,
+                    button=1,
+                    pos=motion_button.center,
+                ),
+                content,
+                "results",
+            )
+        )
+        self.assertEqual(view.result_metric, "translation_speed")
         life.draw_scene()
 
     def test_saved_experiment_comparison_draws_and_exports_png_and_pdf(self) -> None:

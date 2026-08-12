@@ -222,17 +222,27 @@ açık bir hata gösterilir.
 
 Sonuç tablosu her kural/sınır/size/generation/seed/yoğunluk grubu için ortalama ve population standard deviation ile
 final density, entropy, block entropy, temporal change, algılanan periyot ve stabilizasyon
-generation'ını özetler. `Export analysis CSV`, her bağımsız koşuyu kendi seed'i ve grup
+generation'ını özetler. Görsel sonuç seçicisi bunlara final largest-component payı,
+anisotropy ve translation-aware motion speed karşılaştırmalarını ekler. Her bağımsız
+koşunun final component count, bounding-box fill, radius of gyration, exposed-face oranı,
+translation period/displacement/speed değerleri raporda ayrıca tutulur. Component analizi
+koşu başına yalnız final durumda hesaplandığından uzun batch deneylerinin her generation'ını
+yavaşlatmaz. `Export analysis CSV`, her bağımsız koşuyu kendi seed'i ve grup
 istatistikleriyle tidy UTF-8 CSV'ye; `Export reproducible JSON` ise planı, bütün ham
 koşuları, aggregate değerlerini, uygulama sürümünü ve tamamlanma zamanını sürümlü JSON'a
 yazar. Dosyalar kullanıcı veri dizinindeki `exports/experiment_lab/` klasörüne atomik
 olarak kaydedilir.
 
+Experiment report şeması bu ölçümlerle sürüm 2'dir. Önceki sürüm 1 raporları kütüphanede
+açılmaya devam eder; o tarihte kaydedilmemiş morfoloji ve motion alanları bilinmeyen/0
+varsayımlarıyla migrate edilir ve yeni dışa aktarımlar sürüm 2 olarak yazılır.
+
 `History & Compare` sekmesi tamamlanmış bir sonucu uygulama tarafından yönetilen deney
 geçmişine kaydeder. Bozuk veya uyumsuz bir JSON diğer kayıtların açılmasını engellemez;
 kütüphane en fazla 100 rapor tutar ve silme işlemi iki aşamalı onay ister. Bir kayıt
 yeniden `Results & Export` ekranında açılabilir. İki veya üç kayıt seçildiğinde final
-density, state entropy, block entropy ya da change rate için deney ortalaması ve
+density, state entropy, block entropy, change rate, largest-component payı, anisotropy
+ya da motion speed için deney ortalaması ve
 konfigürasyon aralığı birlikte çizilir. Boyut, mod veya parametre ızgaraları farklıysa
 karşılaştırma bunu açıkça belirtir; gösterilen farklar nedensel etki ya da güven aralığı
 olarak sunulmaz. Karşılaştırma paneli kullanıcı veri dizinindeki

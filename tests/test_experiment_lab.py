@@ -90,6 +90,31 @@ class ExperimentLabTests(unittest.TestCase):
         self.assertEqual(len(first.aggregates), 4)
         self.assertTrue(all(item.repetitions == 2 for item in first.aggregates))
 
+    def test_translating_rule_records_displacement_speed_and_detection_rate(self) -> None:
+        plan = ExperimentPlan(
+            "1d",
+            "Elementary",
+            (self.one_d_rule(170),),
+            ("fixed",),
+            (31,),
+            (10,),
+            1,
+            (SEED_SINGLE,),
+            (0.20,),
+            17,
+        )
+
+        report = run_experiment_plan(plan)
+        run = report.runs[0]
+        aggregate = report.aggregates[0]
+
+        self.assertTrue(run.translation_detected)
+        self.assertEqual(run.translation_period, 1)
+        self.assertEqual(run.translation_displacement, (-1,))
+        self.assertEqual(run.translation_speed, 1.0)
+        self.assertEqual(aggregate.translation_detection_rate, 100.0)
+        self.assertEqual(aggregate.mean_translation_speed, 1.0)
+
     def test_multi_factor_cartesian_sweep_preserves_each_configuration(self) -> None:
         plan = ExperimentPlan(
             "1d",
@@ -163,6 +188,15 @@ class ExperimentLabTests(unittest.TestCase):
             self.assertEqual(len(report.runs), 1)
             self.assertGreaterEqual(report.runs[0].mean_entropy, 0.0)
             self.assertLessEqual(report.runs[0].mean_entropy, 1.0)
+            self.assertGreaterEqual(report.runs[0].final_bounding_box_fill, 0.0)
+            self.assertLessEqual(report.runs[0].final_bounding_box_fill, 100.0)
+            self.assertGreaterEqual(report.runs[0].final_anisotropy, 0.0)
+            self.assertLessEqual(report.runs[0].final_anisotropy, 1.0)
+            aggregate = report.aggregates[0]
+            self.assertGreaterEqual(aggregate.mean_largest_component_fraction, 0.0)
+            self.assertLessEqual(aggregate.mean_largest_component_fraction, 100.0)
+            self.assertGreaterEqual(aggregate.translation_detection_rate, 0.0)
+            self.assertLessEqual(aggregate.translation_detection_rate, 100.0)
 
     def test_every_specialized_mode_engine_completes_a_bounded_run(self) -> None:
         rules = (
@@ -272,10 +306,14 @@ class ExperimentLabTests(unittest.TestCase):
                 csv_path = export_experiment_csv(report)
             document = json.loads(json_path.read_text(encoding="utf-8"))
             self.assertEqual(document["schema"], "cellular-automata-lab-batch-experiment")
+            self.assertEqual(document["version"], 2)
             self.assertEqual(document["plan"]["master_seed"], 42)
+            self.assertIn("final_anisotropy", document["runs"][0])
+            self.assertIn("translation_detection_rate", document["aggregates"][0])
             csv_lines = csv_path.read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(csv_lines), 2)
             self.assertIn("mean_entropy", csv_lines[0])
+            self.assertIn("translation_speed", csv_lines[0])
 
 
 if __name__ == "__main__":

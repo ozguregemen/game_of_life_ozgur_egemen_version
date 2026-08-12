@@ -7,6 +7,7 @@ from pathlib import Path
 
 from experiment_lab import (
     ENGINE_1D,
+    EXPERIMENT_REPORT_VERSION,
     SEED_RANDOM,
     ExperimentPlan,
     ExperimentRule,
@@ -79,6 +80,58 @@ class ExperimentReportLibraryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Invalid experiment report"):
                 load_experiment_report(path)
 
+    def test_version_one_report_migrates_with_explicit_missing_metric_defaults(self) -> None:
+        report = self.report(30)
+        document = report.as_document()
+        document["version"] = 1
+        run_fields = (
+            "final_component_count",
+            "final_largest_component_fraction",
+            "final_bounding_box_fill",
+            "final_radius_of_gyration",
+            "final_exposed_faces_per_cell",
+            "final_anisotropy",
+            "translation_detected",
+            "translation_period",
+            "translation_displacement",
+            "translation_speed",
+        )
+        aggregate_fields = (
+            "mean_final_component_count",
+            "sd_final_component_count",
+            "mean_largest_component_fraction",
+            "sd_largest_component_fraction",
+            "mean_bounding_box_fill",
+            "sd_bounding_box_fill",
+            "mean_radius_of_gyration",
+            "sd_radius_of_gyration",
+            "mean_exposed_faces_per_cell",
+            "sd_exposed_faces_per_cell",
+            "mean_anisotropy",
+            "sd_anisotropy",
+            "translation_detection_rate",
+            "mean_translation_period",
+            "sd_translation_period",
+            "mean_translation_speed",
+            "sd_translation_speed",
+        )
+        for run in document["runs"]:
+            for field in run_fields:
+                run.pop(field)
+        for aggregate in document["aggregates"]:
+            for field in aggregate_fields:
+                aggregate.pop(field)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "legacy.json"
+            path.write_text(json.dumps(document), encoding="utf-8")
+            migrated = load_experiment_report(path)
+
+        self.assertFalse(migrated.runs[0].translation_detected)
+        self.assertEqual(migrated.runs[0].translation_displacement, ())
+        self.assertEqual(migrated.aggregates[0].mean_anisotropy, 0.0)
+        self.assertEqual(migrated.as_document()["version"], EXPERIMENT_REPORT_VERSION)
+
     def test_comparison_summarizes_two_reports_and_flags_grid_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             library = ExperimentReportLibrary(Path(temporary))
@@ -93,6 +146,17 @@ class ExperimentReportLibraryTests(unittest.TestCase):
             self.assertIn(comparison.best, comparison.entries)
             self.assertEqual(comparison.metric_label, "State entropy")
             self.assertTrue(any("Ranges show" in note for note in comparison.notes))
+
+            structural = compare_reports(
+                ((first, library.load(first)), (second, library.load(second))),
+                "cohesion",
+            )
+            motion = compare_reports(
+                ((first, library.load(first)), (second, library.load(second))),
+                "translation_speed",
+            )
+            self.assertEqual(structural.metric_label, "Largest component share")
+            self.assertEqual(motion.unit, " cells/gen")
 
 
 if __name__ == "__main__":
