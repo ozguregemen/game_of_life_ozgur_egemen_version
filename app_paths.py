@@ -48,6 +48,12 @@ class ApplicationPaths:
         return self.data / "exports"
 
     @property
+    def experiment_reports(self) -> Path:
+        """Application-managed experiment history, separate from user exports."""
+
+        return self.data / "experiment_reports"
+
+    @property
     def preferences(self) -> Path:
         return self.config / "ui_preferences.json"
 

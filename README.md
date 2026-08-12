@@ -182,7 +182,9 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
 - `analysis_ui.py`: Canlı metrik grafikleri, yöntemler, rule karşılaştırma ve deney paneli
 - `experiment_lab.py`: Boyuttan bağımsız, sınırlı ve tekrar üretilebilir batch deney motoru
-- `experiment_lab_ui.py`: Parametre taraması kontrolleri, ilerleme, sonuç tablosu ve export arayüzü
+- `experiment_lab_ui.py`: Parametre taraması, görsel sonuç dashboard'u ve export arayüzü
+- `experiment_report_library.py`: Doğrulanmış deney geçmişi, rapor yükleme ve karşılaştırma modeli
+- `experiment_history_ui.py`: Kayıtlı deney kataloğu, karşılaştırma grafikleri ve PNG/PDF rapor çıktısı
 - `help_ui.py`: F1 / `?` ile açılan bağlamsal kısayol ve etkileşim yardım paneli
 - `tutorial_ui.py`: Tam ekran görsel şemalarla kaynaklı ve etkileşimli 1D öğrenme akışı
 - `two_dimensional_tutorial_content.py`: Ortak 2D müfredatı, moda özel dersler ve kaynak kataloğu
@@ -225,6 +227,16 @@ istatistikleriyle tidy UTF-8 CSV'ye; `Export reproducible JSON` ise planı, büt
 koşuları, aggregate değerlerini, uygulama sürümünü ve tamamlanma zamanını sürümlü JSON'a
 yazar. Dosyalar kullanıcı veri dizinindeki `exports/experiment_lab/` klasörüne atomik
 olarak kaydedilir.
+
+`History & Compare` sekmesi tamamlanmış bir sonucu uygulama tarafından yönetilen deney
+geçmişine kaydeder. Bozuk veya uyumsuz bir JSON diğer kayıtların açılmasını engellemez;
+kütüphane en fazla 100 rapor tutar ve silme işlemi iki aşamalı onay ister. Bir kayıt
+yeniden `Results & Export` ekranında açılabilir. İki veya üç kayıt seçildiğinde final
+density, state entropy, block entropy ya da change rate için deney ortalaması ve
+konfigürasyon aralığı birlikte çizilir. Boyut, mod veya parametre ızgaraları farklıysa
+karşılaştırma bunu açıkça belirtir; gösterilen farklar nedensel etki ya da güven aralığı
+olarak sunulmaz. Karşılaştırma paneli kullanıcı veri dizinindeki
+`exports/experiment_comparisons/` klasörüne PNG veya PDF olarak aktarılabilir.
 
 ## Custom Rule Studio
 

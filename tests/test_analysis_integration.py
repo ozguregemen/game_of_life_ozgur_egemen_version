@@ -3,27 +3,33 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
 import life
+from experiment_history_ui import ExperimentHistoryView
 from experiment_lab import ExperimentPlan, SEED_RANDOM, run_experiment_plan
 from experiment_lab_ui import RESULT_METRIC_BY_KEY
+from experiment_report_library import ExperimentReportLibrary
 
 
 class ScientificAnalysisIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.original_session = life.capture_session_document("Analysis Test")
         self.original_size = (life.WINDOW_WIDTH, life.WINDOW_HEIGHT)
+        self.original_experiment_history = life.experiment_lab_panel.history_view
         life.analysis_panel.close()
         life.experiment_lab_panel.close()
 
     def tearDown(self) -> None:
         life.analysis_panel.close()
         life.experiment_lab_panel.close()
+        life.experiment_lab_panel.history_view = self.original_experiment_history
         life.update_window_size(*self.original_size)
         life.restore_session_document(self.original_session)
 
@@ -186,7 +192,7 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
 
         plan = view.plan()
         self.assertEqual(plan.run_count, 96)
-        _modal, _design, _results, _close, content = (
+        _modal, _design, _results, _history, _close, content = (
             life.experiment_lab_panel.geometry()
         )
         _intro, chips, repetitions, run = view._design_geometry(content)
@@ -215,7 +221,7 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
             2468,
         )
         view.report = run_experiment_plan(plan)
-        _modal, _design, _results, _close, content = (
+        _modal, _design, _results, _history, _close, content = (
             life.experiment_lab_panel.geometry()
         )
         geometry = view._results_geometry(content)
@@ -243,6 +249,72 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
             )
         )
         life.draw_scene()
+
+    def test_saved_experiment_comparison_draws_and_exports_png_and_pdf(self) -> None:
+        life.set_active_dimension("1d")
+        life.update_window_size(1100, 720)
+        panel = life.experiment_lab_panel
+        panel.active = True
+        panel.tab = "history"
+        context = panel.view.sync_context()
+        first_plan = ExperimentPlan(
+            "1d",
+            context.mode_label,
+            (context.rules[0],),
+            (context.boundaries[0],),
+            (31,),
+            (20,),
+            2,
+            (SEED_RANDOM,),
+            (0.20,),
+            100,
+        )
+        second_plan = ExperimentPlan(
+            "1d",
+            context.mode_label,
+            (context.rules[1],),
+            (context.boundaries[0],),
+            (31,),
+            (20,),
+            2,
+            (SEED_RANDOM,),
+            (0.20,),
+            200,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            library = ExperimentReportLibrary(Path(temporary) / "library")
+            first = library.save(run_experiment_plan(first_plan), "Baseline")
+            second = library.save(run_experiment_plan(second_plan), "Candidate")
+            history = ExperimentHistoryView(
+                panel.services,
+                library,
+                lambda: panel.view.report,
+                panel._open_saved_report,
+            )
+            history.export_directory = Path(temporary) / "exports"
+            history.selected_paths = {first.path, second.path}
+            history._refresh_comparison()
+            panel.history_view = history
+            _modal, _design, _results, _history, _close, content = panel.geometry()
+            geometry = history.geometry(content)
+
+            self.assertTrue(content.contains(geometry.list_panel))
+            self.assertTrue(content.contains(geometry.compare_panel))
+            self.assertIsNotNone(history.comparison)
+            life.draw_scene()
+            history._export_comparison(geometry.compare_panel, "png")
+            history._export_comparison(geometry.compare_panel, "pdf")
+
+            self.assertEqual(len(tuple(history.export_directory.glob("*.png"))), 1)
+            self.assertEqual(len(tuple(history.export_directory.glob("*.pdf"))), 1)
+            life.update_window_size(760, 560)
+            _modal, _design, _results, _history, _close, compact_content = (
+                panel.geometry()
+            )
+            compact = history.geometry(compact_content)
+            self.assertTrue(compact_content.contains(compact.list_panel))
+            self.assertTrue(compact_content.contains(compact.compare_panel))
+            life.draw_scene()
 
     def test_summary_tab_draws_for_all_three_dimensions(self) -> None:
         life.analysis_panel.active = True

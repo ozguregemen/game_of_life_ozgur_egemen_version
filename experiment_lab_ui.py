@@ -7,6 +7,7 @@ from typing import Callable, Hashable
 
 import pygame
 
+from experiment_history_ui import ExperimentHistoryView
 from experiment_lab import (
     ExperimentAggregate,
     ExperimentCancelled,
@@ -18,6 +19,7 @@ from experiment_lab import (
     export_experiment_csv,
     export_experiment_json,
 )
+from experiment_report_library import ExperimentReportLibrary
 
 
 @dataclass(frozen=True)
@@ -110,20 +112,41 @@ class ExperimentLabPanel:
         self.runner = runner
         self.active = False
         self.tab = "design"
+        self.library = ExperimentReportLibrary()
         self.view = ExperimentLabView(services, runner)
+        self.history_view = ExperimentHistoryView(
+            services,
+            self.library,
+            lambda: self.view.report,
+            self._open_saved_report,
+        )
+
+    def _open_saved_report(self, report: ExperimentReport) -> None:
+        self.view.report = report
+        self.view.error = ""
+        self.view.cancelled = False
+        self.view.result_scroll = 0
 
     def toggle(self) -> None:
         self.active = not self.active
         if self.active:
             self.services.pause()
             self.view.sync_context()
+            self.history_view.refresh()
 
     def close(self) -> None:
         self.active = False
 
     def geometry(
         self,
-    ) -> tuple[pygame.Rect, pygame.Rect, pygame.Rect, pygame.Rect, pygame.Rect]:
+    ) -> tuple[
+        pygame.Rect,
+        pygame.Rect,
+        pygame.Rect,
+        pygame.Rect,
+        pygame.Rect,
+        pygame.Rect,
+    ]:
         width, height = self.services.window_size()
         content_width = self.services.content_width()
         modal = pygame.Rect(
@@ -133,9 +156,10 @@ class ExperimentLabPanel:
             max(420, min(860, height - 28)),
         )
         modal.center = (content_width // 2, height // 2)
-        tab_width = min(210, (modal.width - 90) // 2)
+        tab_width = min(190, (modal.width - 96) // 3)
         design_tab = pygame.Rect(modal.x + 20, modal.y + 53, tab_width, 31)
         results_tab = pygame.Rect(design_tab.right + 8, design_tab.y, tab_width, 31)
+        history_tab = pygame.Rect(results_tab.right + 8, design_tab.y, tab_width, 31)
         close_button = pygame.Rect(modal.right - 43, modal.y + 13, 29, 27)
         content = pygame.Rect(
             modal.x + 18,
@@ -143,7 +167,7 @@ class ExperimentLabPanel:
             modal.width - 36,
             modal.bottom - design_tab.bottom - 25,
         )
-        return modal, design_tab, results_tab, close_button, content
+        return modal, design_tab, results_tab, history_tab, close_button, content
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not self.active:
@@ -158,7 +182,9 @@ class ExperimentLabPanel:
                 if self.view.request():
                     self.tab = "results"
             return True
-        modal, design_tab, results_tab, close_button, content = self.geometry()
+        modal, design_tab, results_tab, history_tab, close_button, content = (
+            self.geometry()
+        )
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if close_button.collidepoint(event.pos) or not modal.collidepoint(event.pos):
                 self.close()
@@ -166,12 +192,22 @@ class ExperimentLabPanel:
                 self.tab = "design"
             elif results_tab.collidepoint(event.pos):
                 self.tab = "results"
+            elif history_tab.collidepoint(event.pos):
+                self.tab = "history"
+                self.history_view.refresh()
+            elif self.tab == "history":
+                requested_tab = self.history_view.handle_event(event, content)
+                if requested_tab is not None:
+                    self.tab = requested_tab
             elif self.view.handle_event(event, content, self.tab):
                 if self.view.runner.running:
                     self.tab = "results"
             return True
         if event.type == pygame.MOUSEWHEEL:
-            self.view.handle_event(event, content, self.tab)
+            if self.tab == "history":
+                self.history_view.handle_event(event, content)
+            else:
+                self.view.handle_event(event, content, self.tab)
             return True
         return event.type in (
             pygame.MOUSEMOTION,
@@ -182,7 +218,9 @@ class ExperimentLabPanel:
         if not self.active:
             return
         self.view.update()
-        modal, design_tab, results_tab, close_button, content = self.geometry()
+        modal, design_tab, results_tab, history_tab, close_button, content = (
+            self.geometry()
+        )
         screen = self.services.screen()
         theme = self.services.theme()
         shadow = pygame.Surface((modal.width + 12, modal.height + 12), pygame.SRCALPHA)
@@ -203,12 +241,15 @@ class ExperimentLabPanel:
         screen.blit(title, (modal.x + 20, modal.y + 13))
         self._tab(design_tab, "Design Experiment", self.tab == "design")
         self._tab(results_tab, "Results & Export", self.tab == "results")
+        self._tab(history_tab, "History & Compare", self.tab == "history")
         pygame.draw.rect(screen, theme["button"], close_button, border_radius=4)
         pygame.draw.rect(screen, theme["text"], close_button, 1, border_radius=4)
         close_text = self.services.small_font().render("×", True, theme["text"])
         screen.blit(close_text, close_text.get_rect(center=close_button.center))
         if self.tab == "results":
             self.view.draw_results(content)
+        elif self.tab == "history":
+            self.history_view.draw(content)
         else:
             self.view.draw_design(content)
 
