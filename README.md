@@ -179,8 +179,8 @@ core context kullanır. OpenGL 3.3 desteklemeyen bir ekran sürücüsünde 1D ve
 - `session_ui.py`: Oturum kataloğu, 1D profil menüsü ve modal input/render akışı
 - `timeline_history.py`: Checkpoint/delta geçmiş motoru, dallanma ve doğrudan frame/nesil erişimi
 - `timeline_ui.py`: Sürüklenebilir ortak timeline, ileri/geri oynatma ve checkpoint göstergeleri
-- `scientific_analysis.py`: Normalize ölçümler, periyot/stabilizasyon algılama ve 1D karşılaştırma motoru
-- `analysis_ui.py`: Canlı metrik grafikleri, yöntemler, rule karşılaştırma ve deney paneli
+- `scientific_analysis.py`: Normalize ölçümler, morfoloji, ötelenen yapı/periyot algılama ve 1D karşılaştırma motoru
+- `analysis_ui.py`: Canlı metrik, yapı/hareket, yöntem ve rule karşılaştırma paneli
 - `experiment_lab.py`: Boyuttan bağımsız, sınırlı ve tekrar üretilebilir batch deney motoru
 - `experiment_lab_ui.py`: Parametre taraması, görsel sonuç dashboard'u ve export arayüzü
 - `experiment_report_library.py`: Doğrulanmış deney geçmişi, rapor yükleme ve karşılaştırma modeli
@@ -436,7 +436,7 @@ workspace'in ileri dalı atılır; diğer boyut ve 2D mod timeline'ları korunur
 ## Bilimsel analiz paneli
 
 Sağ menüdeki `Scientific Analysis` düğmesi veya `I`, simülasyonu durdurmadan çalışan
-dört sekmeli analiz panelini açar. `Live Metrics`; population, density, normalize
+beş sekmeli analiz panelini açar. `Live Metrics`; population, density, normalize
 Shannon entropy, blok entropisi, komşu uyumu ve bir önceki nesle göre Hamming değişimini
 altı zaman serisi olarak gösterir. Aynı tam durum tekrar görüldüğünde periyot ve döngünün başladığı
 stabilizasyon generation'ı raporlanır; periyot `1` sabit noktayı ifade eder.
@@ -465,9 +465,22 @@ diğer rejim adları arayüzde özellikle *heuristic candidate* olarak belirtili
 dinamik kanıt sayılmaz. CSV ve paylaşılabilir experiment JSON aynı metrikleri, pencere
 özetini, lattice şeklini ve yöntem açıklamalarını taşır.
 
+`Structure & Motion` sekmesi güncel aktif popülasyonun kenarlar arasında wrap etmeyen
+ortogonal connected-component sayısını, en büyük component payını, bounding box ve doluluk oranını, centroid'i,
+radius of gyration değerini, exposed-face/hücre oranını ve covariance tabanlı
+anisotropy indeksini gösterir. Ağır component etiketleme 30.000 aktif hücrenin üstünde
+arayüzü korumak için atlanır; vektörize geometrik ölçümler hesaplanmaya devam eder ve
+sonuç tam durum imzasıyla cache'lenir. Sıkı non-background bounding-box imzası daha
+sonraki nesilde başka konumda tekrar ederse panel shape period, eksen displacement'ı,
+velocity ve skaler hızı raporlar. Böylece glider gibi uzay gemileri, bütün lattice aynı
+olmadığı için klasik periyot algılamasından kaçsa da hareketli recurrence olarak
+ölçülebilir. Bu imza refractory/conductor durumlarını ve moda özgü bağlamı korur;
+stationary oscillator sıfır displacement ile hareketli yapıdan ayrılır.
+
 `Methods` sekmesi formülleri, aktif dimension'ın blok boyutunu, 1D merkez hizalamasını,
-komşu çiftlerinde sınırların neden dışarıda bırakıldığını ve kesin periyot ile sezgisel
-rejim etiketi arasındaki farkı uygulama içinde açıklar.
+komşu çiftlerinde sınırların neden dışarıda bırakıldığını, morfoloji ölçümlerini ve
+kesin tam-durum periyodu ile translation-aware shape recurrence arasındaki farkı
+uygulama içinde açıklar.
 
 Metrik seçiminin akademik dayanakları: Shannon blok entropisinin CA karmaşıklık
 incelemelerinde kullanımı için [Zenil (2013)](https://arxiv.org/abs/1304.2816), hücre

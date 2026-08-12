@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from rules import apply_rules
 from scientific_analysis import (
     AnalysisSeries,
     ScientificAnalysisRegistry,
@@ -13,6 +14,7 @@ from scientific_analysis import (
     normalized_block_entropy,
     normalized_entropy,
     state_change_rate,
+    structural_metrics,
 )
 
 
@@ -105,6 +107,39 @@ class ScientificMetricTests(unittest.TestCase):
 
         self.assertEqual(series.lattice_shape, (3,))
 
+    def test_structural_metrics_measure_components_extent_and_compactness(self) -> None:
+        values = (
+            1, 1, 0, 0, 0,
+            0, 0, 0, 0, 0,
+            0, 0, 0, 1, 1,
+        )
+
+        metrics = structural_metrics(values, (3, 5), (1,))
+
+        self.assertEqual(metrics.component_count, 2)
+        self.assertEqual(metrics.largest_component, 2)
+        self.assertEqual(metrics.bounding_box_shape, (3, 5))
+        self.assertAlmostEqual(metrics.bounding_box_fill, 4 / 15 * 100)
+        self.assertEqual(metrics.centroid, (1.0, 2.0))
+        self.assertAlmostEqual(metrics.exposed_faces_per_cell, 3.0)
+        self.assertGreater(metrics.radius_of_gyration, 0.0)
+
+    def test_structural_metrics_skip_only_component_labeling_above_limit(self) -> None:
+        metrics = structural_metrics((1, 1, 1, 1), (2, 2), (1,), component_limit=3)
+
+        self.assertFalse(metrics.components_computed)
+        self.assertIsNone(metrics.component_count)
+        self.assertEqual(metrics.population, 4)
+        self.assertEqual(metrics.bounding_box_fill, 100.0)
+
+    def test_structural_metrics_empty_state_is_well_defined(self) -> None:
+        metrics = structural_metrics((0,) * 8, (2, 2, 2), (1,))
+
+        self.assertEqual(metrics.component_count, 0)
+        self.assertEqual(metrics.bounding_box_shape, (0, 0, 0))
+        self.assertEqual(metrics.centroid, ())
+        self.assertEqual(metrics.exposed_faces_per_cell, 0.0)
+
 
 class ScientificDetectionTests(unittest.TestCase):
     def test_fixed_point_detects_period_one_and_stabilization_generation(self) -> None:
@@ -184,6 +219,101 @@ class ScientificDetectionTests(unittest.TestCase):
 
         self.assertEqual(registry.get("test").latest.population, 1)
         self.assertEqual(registry.get("other").latest.population, 2)
+
+    def test_glider_detects_translation_aware_period_velocity_and_direction(self) -> None:
+        grid = {
+            (3, 2): 1,
+            (4, 3): 1,
+            (2, 4): 1,
+            (3, 4): 1,
+            (4, 4): 1,
+        }
+        series = AnalysisSeries("glider")
+
+        def frame(generation: int) -> StateObservation:
+            values = tuple(
+                1 if grid.get((column, row), 0) else 0
+                for row in range(8)
+                for column in range(8)
+            )
+            return StateObservation(
+                key="glider",
+                title="Glider",
+                generation=generation,
+                values=values,
+                state_count=2,
+                active_states=(1,),
+                lattice_shape=(8, 8),
+            )
+
+        series.reset(frame(0))
+        for generation in range(1, 5):
+            grid = apply_rules(grid, "conway")
+            series.observe(frame(generation))
+
+        recurrence = series.translation_recurrence
+        self.assertIsNotNone(recurrence)
+        assert recurrence is not None
+        self.assertEqual(recurrence.period, 4)
+        self.assertEqual(recurrence.displacement, (1, 1))
+        self.assertEqual(recurrence.velocity, (0.25, 0.25))
+        self.assertAlmostEqual(recurrence.speed, 2**0.5 / 4)
+        self.assertTrue(recurrence.moving)
+        self.assertIsNone(series.period)
+
+    def test_stationary_oscillator_is_not_misreported_as_motion(self) -> None:
+        series = AnalysisSeries("oscillator")
+        series.reset(observation(0, (0, 1, 0)))
+        series.observe(observation(1, (1, 1, 1)))
+        series.observe(observation(2, (0, 1, 0)))
+
+        recurrence = series.translation_recurrence
+        self.assertIsNotNone(recurrence)
+        assert recurrence is not None
+        self.assertEqual(recurrence.period, 2)
+        self.assertEqual(recurrence.displacement, (0,))
+        self.assertFalse(recurrence.moving)
+
+    def test_recurrence_keeps_non_population_refractory_states(self) -> None:
+        first = StateObservation(
+            key="refractory",
+            title="Generations",
+            generation=0,
+            values=(0, 2, 0),
+            state_count=4,
+            active_states=(1,),
+        )
+        second = StateObservation(
+            **{**first.__dict__, "generation": 1, "values": (0, 3, 0)}
+        )
+        series = AnalysisSeries("refractory")
+        series.reset(first)
+        series.observe(second)
+
+        self.assertIsNone(series.translation_recurrence)
+
+    def test_series_structure_cache_tracks_latest_generation(self) -> None:
+        series = AnalysisSeries("structure")
+        first = StateObservation(
+            key="structure",
+            title="Structure",
+            generation=0,
+            values=(1, 0, 0, 1),
+            state_count=2,
+            active_states=(1,),
+            lattice_shape=(2, 2),
+        )
+        series.reset(first)
+        initial = series.structure()
+        self.assertEqual(initial.component_count, 2)
+        self.assertIs(initial, series.structure())
+
+        series.observe(
+            StateObservation(**{**first.__dict__, "generation": 1, "values": (1, 1, 0, 0)})
+        )
+        latest = series.structure()
+        self.assertEqual(latest.component_count, 1)
+        self.assertIsNot(initial, latest)
 
 
 class ElementaryComparisonTests(unittest.TestCase):

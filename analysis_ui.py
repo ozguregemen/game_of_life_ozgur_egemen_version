@@ -12,6 +12,7 @@ from scientific_analysis import (
     AnalysisSeries,
     ElementaryComparisonRunner,
     ElementaryRuleComparison,
+    StructuralMetrics,
 )
 
 
@@ -82,6 +83,7 @@ class ScientificAnalysisPanel:
         pygame.Rect,
         pygame.Rect,
         pygame.Rect,
+        pygame.Rect,
     ]:
         width, height = self.services.window_size()
         content_width = self.services.content_width()
@@ -92,13 +94,23 @@ class ScientificAnalysisPanel:
             max(360, min(760, height - 40)),
         )
         modal.center = (content_width // 2, height // 2)
-        tab_width = min(170, (modal.width - 120) // 4)
+        tab_gap = 6
+        tab_width = min(160, (modal.width - 36 - tab_gap * 4) // 5)
         live_tab = pygame.Rect(modal.x + 18, modal.y + 47, tab_width, 28)
-        summary_tab = pygame.Rect(live_tab.right + 8, live_tab.y, tab_width, 28)
-        methods_tab = pygame.Rect(summary_tab.right + 8, live_tab.y, tab_width, 28)
-        comparison_tab = pygame.Rect(methods_tab.right + 8, live_tab.y, tab_width, 28)
+        structure_tab = pygame.Rect(live_tab.right + tab_gap, live_tab.y, tab_width, 28)
+        summary_tab = pygame.Rect(structure_tab.right + tab_gap, live_tab.y, tab_width, 28)
+        methods_tab = pygame.Rect(summary_tab.right + tab_gap, live_tab.y, tab_width, 28)
+        comparison_tab = pygame.Rect(methods_tab.right + tab_gap, live_tab.y, tab_width, 28)
         close_button = pygame.Rect(modal.right - 42, modal.y + 12, 28, 25)
-        return modal, live_tab, summary_tab, methods_tab, comparison_tab, close_button
+        return (
+            modal,
+            live_tab,
+            structure_tab,
+            summary_tab,
+            methods_tab,
+            comparison_tab,
+            close_button,
+        )
 
     def handle_event(self, event: pygame.event.Event) -> bool:
         if not self.active:
@@ -112,6 +124,7 @@ class ScientificAnalysisPanel:
             (
                 modal,
                 live_tab,
+                structure_tab,
                 summary_tab,
                 methods_tab,
                 comparison_tab,
@@ -121,6 +134,8 @@ class ScientificAnalysisPanel:
                 self.close()
             elif live_tab.collidepoint(event.pos):
                 self.tab = "live"
+            elif structure_tab.collidepoint(event.pos):
+                self.tab = "structure"
             elif summary_tab.collidepoint(event.pos):
                 self.tab = "summary"
             elif methods_tab.collidepoint(event.pos):
@@ -142,6 +157,7 @@ class ScientificAnalysisPanel:
         (
             modal,
             live_tab,
+            structure_tab,
             summary_tab,
             methods_tab,
             comparison_tab,
@@ -163,6 +179,7 @@ class ScientificAnalysisPanel:
         screen.blit(title, (modal.x + 18, modal.y + 12))
 
         self._draw_tab(live_tab, "Live Metrics", self.tab == "live")
+        self._draw_tab(structure_tab, "Structure & Motion", self.tab == "structure")
         self._draw_tab(summary_tab, "Statistical Summary", self.tab == "summary")
         self._draw_tab(methods_tab, "Methods", self.tab == "methods")
         self._draw_tab(
@@ -183,6 +200,8 @@ class ScientificAnalysisPanel:
         )
         if self.tab == "comparison":
             self._draw_comparison(content)
+        elif self.tab == "structure":
+            self._draw_structure(content)
         elif self.tab == "methods":
             self._draw_methods(content)
         elif self.tab == "summary":
@@ -260,8 +279,19 @@ class ScientificAnalysisPanel:
                 f"{' (stable)' if series.period == 1 else ''}  ·  "
                 f"Stabilization generation: {series.stabilization_generation}"
             )
+        recurrence = series.translation_recurrence
+        if recurrence is not None and recurrence.moving:
+            behavior += (
+                f"  ·  Moving shape p={recurrence.period}, "
+                f"speed={recurrence.speed:.3f} cells/gen"
+            )
+        behavior_font = self.services.tiny_font()
         screen.blit(
-            self.services.tiny_font().render(behavior, True, theme["text"]),
+            behavior_font.render(
+                self._fit_text(behavior_font, behavior, summary_rect.width - 20),
+                True,
+                theme["text"],
+            ),
             (summary_rect.x + 10, summary_rect.y + 29),
         )
         regime = f"Heuristic regime: {series.heuristic_regime()}"
@@ -424,6 +454,275 @@ class ScientificAnalysisPanel:
         )
         last_text = axis.render(str(last_generation), True, theme["text"])
         screen.blit(last_text, (plot.right - last_text.get_width(), plot.bottom + 2))
+
+    def _draw_structure(self, content: pygame.Rect) -> None:
+        """Draw cached morphology and translation-aware recurrence diagnostics."""
+
+        screen = self.services.screen()
+        theme = self.services.theme()
+        series = self.services.live_series()
+        latest = series.latest
+        if latest is None:
+            message = self.services.small_font().render(
+                "No measurements are available yet.", True, theme["text"]
+            )
+            screen.blit(message, message.get_rect(center=content.center))
+            return
+
+        metrics = series.structure()
+        dimension = metrics.dimension
+        accent = (80, 195, 255)
+        header = pygame.Rect(content.x, content.y, content.width, 61)
+        pygame.draw.rect(screen, theme["stats_bar"], header, border_radius=6)
+        heading = (
+            f"{series.title}  -  generation {latest.generation}  -  "
+            f"{dimension}D active-population morphology"
+        )
+        small = self.services.small_font()
+        tiny = self.services.tiny_font()
+        screen.blit(
+            small.render(self._fit_text(small, heading, header.width - 20), True, theme["text"]),
+            (header.x + 10, header.y + 7),
+        )
+        note = (
+            "Orthogonal interior components (no edge wrapping); morphology uses active "
+            "states. Recurrence crops all non-background states and preserves mode context."
+        )
+        screen.blit(
+            tiny.render(self._fit_text(tiny, note, header.width - 20), True, theme["text"]),
+            (header.x + 10, header.y + 35),
+        )
+
+        gap = 7
+        card_y = header.bottom + gap
+        card_height = 75
+        card_width = (content.width - 3 * gap) // 4
+        component_value = (
+            str(metrics.component_count)
+            if metrics.components_computed
+            else "not computed"
+        )
+        component_detail = (
+            f"largest {metrics.largest_component} ({metrics.largest_component_fraction:.1f}%)"
+            if metrics.components_computed
+            else f"active cells exceed {metrics.component_limit:,}"
+        )
+        box_shape = "x".join(str(value) for value in metrics.bounding_box_shape)
+        cards = (
+            (
+                "ORTHOGONAL COMPONENTS",
+                component_value,
+                component_detail,
+                (90, 220, 130),
+            ),
+            (
+                "ACTIVE BOUNDING BOX",
+                box_shape or "empty",
+                f"fill {metrics.bounding_box_fill:.1f}%",
+                (225, 175, 65),
+            ),
+            (
+                "SPATIAL SPREAD",
+                f"Rg {metrics.radius_of_gyration:.2f}",
+                f"anisotropy {metrics.anisotropy:.3f}",
+                (180, 125, 240),
+            ),
+            (
+                "EXPOSED BOUNDARY",
+                f"{metrics.exposed_faces_per_cell:.2f} / cell",
+                f"range 0-{2 * dimension} in {dimension}D",
+                (235, 100, 145),
+            ),
+        )
+        for index, (label, value, detail, color) in enumerate(cards):
+            rect = pygame.Rect(
+                content.x + index * (card_width + gap),
+                card_y,
+                card_width,
+                card_height,
+            )
+            self._draw_structure_card(rect, label, value, detail, color)
+
+        lower_y = card_y + card_height + gap
+        lower_height = max(80, content.bottom - lower_y)
+        profile_width = max(220, round((content.width - gap) * 0.54))
+        profile = pygame.Rect(content.x, lower_y, profile_width, lower_height)
+        motion = pygame.Rect(profile.right + gap, lower_y, content.right - profile.right - gap, lower_height)
+        self._draw_structure_profile(profile, metrics)
+        self._draw_motion_profile(motion, series, metrics.centroid, accent)
+
+    def _draw_structure_card(
+        self,
+        rect: pygame.Rect,
+        label: str,
+        value: str,
+        detail: str,
+        accent: tuple[int, int, int],
+    ) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        tiny = self.services.tiny_font()
+        small = self.services.small_font()
+        pygame.draw.rect(screen, theme["stats_bar"], rect, border_radius=6)
+        pygame.draw.rect(screen, accent, rect, 1, border_radius=6)
+        screen.blit(
+            tiny.render(self._fit_text(tiny, label, rect.width - 14), True, accent),
+            (rect.x + 7, rect.y + 6),
+        )
+        screen.blit(
+            small.render(self._fit_text(small, value, rect.width - 14), True, theme["text"]),
+            (rect.x + 7, rect.y + 27),
+        )
+        screen.blit(
+            tiny.render(self._fit_text(tiny, detail, rect.width - 14), True, theme["button_text"]),
+            (rect.x + 7, rect.bottom - 19),
+        )
+
+    def _draw_structure_profile(
+        self,
+        rect: pygame.Rect,
+        metrics: StructuralMetrics,
+    ) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        tiny = self.services.tiny_font()
+        pygame.draw.rect(screen, theme["stats_bar"], rect, border_radius=6)
+        pygame.draw.rect(screen, theme["grid"], rect, 1, border_radius=6)
+        screen.blit(tiny.render("NORMALIZED STRUCTURE PROFILE", True, theme["text"]), (rect.x + 9, rect.y + 7))
+
+        dimension = metrics.dimension
+        compactness = max(
+            0.0,
+            100.0 * (1.0 - metrics.exposed_faces_per_cell / (2 * dimension)),
+        )
+        profiles = (
+            (
+                "Largest-component share",
+                metrics.largest_component_fraction if metrics.components_computed else None,
+                (90, 220, 130),
+            ),
+            ("Bounding-box fill", metrics.bounding_box_fill, (225, 175, 65)),
+            ("Isotropy", 100.0 * (1.0 - metrics.anisotropy), (180, 125, 240)),
+            ("Boundary compactness", compactness, (235, 100, 145)),
+        )
+        available = max(1, rect.height - 48)
+        row_height = max(25, available // len(profiles))
+        for index, (label, value, color) in enumerate(profiles):
+            y = rect.y + 30 + index * row_height
+            label_width = min(150, max(84, rect.width // 3))
+            screen.blit(
+                tiny.render(self._fit_text(tiny, label, label_width - 4), True, theme["text"]),
+                (rect.x + 9, y + 2),
+            )
+            bar = pygame.Rect(
+                rect.x + label_width,
+                y + 2,
+                max(10, rect.width - label_width - 47),
+                13,
+            )
+            pygame.draw.rect(screen, theme["button"], bar, border_radius=3)
+            if value is not None:
+                fill = bar.copy()
+                fill.width = round(bar.width * max(0.0, min(100.0, value)) / 100.0)
+                if fill.width:
+                    pygame.draw.rect(screen, color, fill, border_radius=3)
+                value_label = f"{value:.1f}%"
+            else:
+                value_label = "n/a"
+            rendered = tiny.render(value_label, True, theme["button_text"])
+            screen.blit(rendered, (rect.right - rendered.get_width() - 8, y + 1))
+        footer = "Higher compactness means fewer exposed faces per active cell."
+        screen.blit(
+            tiny.render(self._fit_text(tiny, footer, rect.width - 18), True, theme["button_text"]),
+            (rect.x + 9, rect.bottom - 17),
+        )
+
+    def _draw_motion_profile(
+        self,
+        rect: pygame.Rect,
+        series: AnalysisSeries,
+        centroid: tuple[float, ...],
+        accent: tuple[int, int, int],
+    ) -> None:
+        screen = self.services.screen()
+        theme = self.services.theme()
+        tiny = self.services.tiny_font()
+        pygame.draw.rect(screen, theme["stats_bar"], rect, border_radius=6)
+        pygame.draw.rect(screen, theme["grid"], rect, 1, border_radius=6)
+        screen.blit(tiny.render("TRANSLATION-AWARE RECURRENCE", True, theme["text"]), (rect.x + 9, rect.y + 7))
+
+        recurrence = series.translation_recurrence
+        axis_order = {1: "x", 2: "row,col", 3: "z,row,col"}[
+            len(series.lattice_shape)
+        ]
+        plot_height = max(45, min(115, rect.height - 88))
+        plot = pygame.Rect(rect.x + 10, rect.y + 28, rect.width - 20, plot_height)
+        center = plot.center
+        pygame.draw.line(screen, theme["grid"], (plot.x, center[1]), (plot.right, center[1]), 1)
+        pygame.draw.line(screen, theme["grid"], (center[0], plot.y), (center[0], plot.bottom), 1)
+        pygame.draw.circle(screen, theme["button_text"], center, 3)
+
+        if recurrence is not None and recurrence.moving:
+            velocity = recurrence.velocity
+            horizontal = velocity[-1]
+            vertical = velocity[-2] if len(velocity) > 1 else 0.0
+            magnitude = max(abs(horizontal), abs(vertical), 1e-9)
+            scale = min(plot.width, plot.height) * 0.35 / magnitude
+            endpoint = (
+                center[0] + round(horizontal * scale),
+                center[1] + round(vertical * scale),
+            )
+            pygame.draw.line(screen, accent, center, endpoint, 3)
+            pygame.draw.circle(screen, accent, endpoint, 5)
+        elif recurrence is not None:
+            pygame.draw.circle(screen, accent, center, 10, 2)
+
+        if recurrence is None:
+            status = "No normalized shape recurrence detected yet."
+            detail = "Run longer or start from a coherent moving seed."
+            velocity_text = ""
+        elif recurrence.moving:
+            status = f"Translating recurrence: period {recurrence.period}"
+            detail = (
+                f"displacement [{axis_order}] "
+                f"{self._format_vector(recurrence.displacement)}"
+            )
+            velocity_text = (
+                f"velocity {self._format_vector(recurrence.velocity, precision=3)}; "
+                f"speed {recurrence.speed:.3f} cells/gen"
+            )
+        else:
+            status = f"In-place shape recurrence: period {recurrence.period}"
+            detail = "Displacement is zero; this is stationary or oscillatory."
+            velocity_text = ""
+
+        lines = [status, detail]
+        if velocity_text:
+            lines.append(velocity_text)
+        if centroid:
+            lines.append(
+                f"centroid [{axis_order}] "
+                f"{self._format_vector(centroid, precision=2)}"
+            )
+        y = plot.bottom + 7
+        for index, line in enumerate(lines):
+            color = accent if index == 0 else theme["button_text"]
+            screen.blit(
+                tiny.render(self._fit_text(tiny, line, rect.width - 18), True, color),
+                (rect.x + 9, y),
+            )
+            y += tiny.get_height() + 3
+            if y + tiny.get_height() > rect.bottom:
+                break
+
+    @staticmethod
+    def _format_vector(values: tuple[int | float, ...], *, precision: int = 0) -> str:
+        formatted = (
+            [str(int(value)) for value in values]
+            if precision == 0
+            else [f"{float(value):.{precision}f}" for value in values]
+        )
+        return "(" + ", ".join(formatted) + ")"
 
     def _draw_summary(self, content: pygame.Rect) -> None:
         screen = self.services.screen()
@@ -644,14 +943,14 @@ class ScientificAnalysisPanel:
                 "Uses axis-aligned interior pairs. Wrap/reflect edge pairs are intentionally excluded for comparability.",
             ),
             (
-                "Population growth and utilization",
-                "growth = 100 x delta population / lattice cells",
-                "State utilization is observed state count divided by the rule's available state count.",
+                "Morphology and components",
+                "Rg = RMS distance from centroid; adjacency = orthogonal",
+                "Bounding-box fill, exposed faces and covariance anisotropy use active states. Component labeling is capped for responsiveness.",
             ),
             (
-                "Cycles and heuristic regime",
-                "period = generation gap between identical full-state hashes",
-                "Exact repeats establish periods. Other regime labels summarize a recent window and are not formal proofs.",
+                "Exact and translated recurrence",
+                "velocity = bounding-box displacement / shape period",
+                "Full-state hashes prove exact periods. Tight-crop hashes can identify translating shapes; context remains part of both hashes.",
             ),
         )
         area = pygame.Rect(

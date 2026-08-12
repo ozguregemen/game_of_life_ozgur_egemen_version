@@ -74,6 +74,42 @@ class AnalysisSample:
     neighbor_agreement: float = 0.0
     growth_rate: float = 0.0
     state_utilization: float = 0.0
+    shape_signature: bytes = field(default=b"", repr=False)
+    shape_anchor: tuple[int, ...] = ()
+    centroid: tuple[float, ...] = ()
+    bounding_box_shape: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class StructuralMetrics:
+    """Morphology of the active population in the latest lattice state.
+
+    Connected components use orthogonal (von Neumann) adjacency so the value
+    remains comparable across one, two, and three dimensions.  Component
+    labeling is intentionally skipped above ``component_limit`` active cells;
+    the remaining vectorized measurements are still returned.
+    """
+
+    dimension: int
+    population: int
+    component_count: int | None
+    largest_component: int | None
+    largest_component_fraction: float
+    bounding_box_min: tuple[int, ...]
+    bounding_box_max: tuple[int, ...]
+    bounding_box_shape: tuple[int, ...]
+    bounding_box_fill: float
+    centroid: tuple[float, ...]
+    radius_of_gyration: float
+    exposed_faces_per_cell: float
+    anisotropy: float
+    component_limit: int
+
+    @property
+    def components_computed(self) -> bool:
+        """Return whether connected-component labeling was within its limit."""
+
+        return self.component_count is not None
 
 
 @dataclass(frozen=True)
@@ -85,6 +121,29 @@ class AnalysisSummary:
     stabilization_generation: int | None
     stable: bool
     heuristic_regime: str
+
+
+@dataclass(frozen=True)
+class TranslationRecurrence:
+    """A repeated shape after allowing a whole-lattice translation."""
+
+    period: int
+    first_generation: int
+    repeat_generation: int
+    displacement: tuple[int, ...]
+    velocity: tuple[float, ...]
+
+    @property
+    def speed(self) -> float:
+        """Return Euclidean lattice cells travelled per generation."""
+
+        return math.sqrt(sum(component * component for component in self.velocity))
+
+    @property
+    def moving(self) -> bool:
+        """Return whether the recurrence translates rather than oscillates in place."""
+
+        return any(self.displacement)
 
 
 @dataclass(frozen=True)
@@ -283,9 +342,200 @@ def state_change_rate(
     return 100.0 * changed / width if width else 0.0
 
 
+def _active_mask(
+    values: Sequence[int],
+    lattice_shape: Sequence[int],
+    active_states: Sequence[int],
+) -> np.ndarray:
+    """Return a shaped boolean mask for states defined as active by a mode."""
+
+    shape = tuple(int(length) for length in lattice_shape)
+    lattice = np.asarray(values, dtype=np.uint16).reshape(shape)
+    if not active_states:
+        return np.zeros(shape, dtype=np.bool_)
+    return np.isin(lattice, np.asarray(active_states, dtype=np.uint16))
+
+
+def _connected_component_sizes(mask: np.ndarray) -> list[int]:
+    """Label orthogonally connected active cells without an optional dependency."""
+
+    remaining = {tuple(int(value) for value in row) for row in np.argwhere(mask)}
+    sizes: list[int] = []
+    shape = mask.shape
+    dimension = mask.ndim
+    while remaining:
+        seed = remaining.pop()
+        stack = [seed]
+        size = 0
+        while stack:
+            cell = stack.pop()
+            size += 1
+            for axis in range(dimension):
+                for direction in (-1, 1):
+                    coordinate = cell[axis] + direction
+                    if not 0 <= coordinate < shape[axis]:
+                        continue
+                    neighbor = list(cell)
+                    neighbor[axis] = coordinate
+                    candidate = tuple(neighbor)
+                    if candidate in remaining:
+                        remaining.remove(candidate)
+                        stack.append(candidate)
+        sizes.append(size)
+    return sizes
+
+
+def structural_metrics(
+    values: Sequence[int],
+    lattice_shape: Sequence[int],
+    active_states: Sequence[int],
+    *,
+    component_limit: int = 30_000,
+) -> StructuralMetrics:
+    """Measure active-population morphology for a 1D, 2D, or 3D lattice.
+
+    Surface is expressed as exposed orthogonal faces per active cell.  It is
+    therefore bounded by 2, 4, and 6 in one, two, and three dimensions.  The
+    anisotropy index is zero for equal spatial variance along all axes and
+    approaches one for increasingly elongated populations.
+    """
+
+    shape = tuple(int(length) for length in lattice_shape)
+    if not 1 <= len(shape) <= 3 or math.prod(shape) != len(values):
+        raise ValueError("lattice_shape must match one to three dimensions")
+    if component_limit < 1:
+        raise ValueError("component_limit must be positive")
+    mask = _active_mask(values, shape, active_states)
+    coordinates = np.argwhere(mask)
+    population = int(coordinates.shape[0])
+    dimension = len(shape)
+    if population == 0:
+        empty_axes = (0,) * dimension
+        return StructuralMetrics(
+            dimension,
+            0,
+            0,
+            0,
+            0.0,
+            empty_axes,
+            empty_axes,
+            empty_axes,
+            0.0,
+            (),
+            0.0,
+            0.0,
+            0.0,
+            component_limit,
+        )
+
+    minimum = coordinates.min(axis=0)
+    maximum = coordinates.max(axis=0)
+    box_shape_array = maximum - minimum + 1
+    box_shape = tuple(int(value) for value in box_shape_array)
+    centroid_array = coordinates.mean(axis=0, dtype=np.float64)
+    centered = coordinates.astype(np.float64) - centroid_array
+    radius_of_gyration = float(
+        np.sqrt(np.mean(np.sum(centered * centered, axis=1)))
+    )
+
+    exposed_faces = 0
+    for axis in range(dimension):
+        first = [slice(None)] * dimension
+        last = [slice(None)] * dimension
+        first[axis] = 0
+        last[axis] = -1
+        exposed_faces += int(np.count_nonzero(mask[tuple(first)]))
+        exposed_faces += int(np.count_nonzero(mask[tuple(last)]))
+        if shape[axis] > 1:
+            lower = [slice(None)] * dimension
+            upper = [slice(None)] * dimension
+            lower[axis] = slice(0, -1)
+            upper[axis] = slice(1, None)
+            exposed_faces += int(
+                np.count_nonzero(mask[tuple(lower)] != mask[tuple(upper)])
+            )
+
+    if population > 1 and dimension > 1:
+        covariance = centered.T @ centered / population
+        eigenvalues = np.linalg.eigvalsh(covariance)
+        variance_sum = float(eigenvalues.sum())
+        anisotropy = (
+            float((eigenvalues[-1] - eigenvalues[0]) / variance_sum)
+            if variance_sum > 0.0
+            else 0.0
+        )
+    else:
+        anisotropy = 0.0
+
+    component_sizes = (
+        _connected_component_sizes(mask) if population <= component_limit else None
+    )
+    largest_component = max(component_sizes, default=0) if component_sizes is not None else None
+    return StructuralMetrics(
+        dimension=dimension,
+        population=population,
+        component_count=len(component_sizes) if component_sizes is not None else None,
+        largest_component=largest_component,
+        largest_component_fraction=(
+            100.0 * largest_component / population
+            if largest_component is not None and population
+            else 0.0
+        ),
+        bounding_box_min=tuple(int(value) for value in minimum),
+        bounding_box_max=tuple(int(value) for value in maximum),
+        bounding_box_shape=box_shape,
+        bounding_box_fill=100.0 * population / math.prod(box_shape),
+        centroid=tuple(float(value) for value in centroid_array),
+        radius_of_gyration=radius_of_gyration,
+        exposed_faces_per_cell=exposed_faces / population,
+        anisotropy=max(0.0, min(1.0, anisotropy)),
+        component_limit=component_limit,
+    )
+
+
+def _shape_signature(
+    observation: StateObservation,
+) -> tuple[bytes, tuple[int, ...], tuple[float, ...], tuple[int, ...]]:
+    """Hash a tight non-background crop so translated full shapes can recur."""
+
+    shape = observation.lattice_shape
+    lattice = np.asarray(observation.values, dtype="<u2").reshape(shape)
+    # Refractory or conductor states may not count toward population, but they
+    # remain part of the automaton state and must participate in recurrence.
+    mask = lattice != 0
+    coordinates = np.argwhere(mask)
+    if coordinates.size:
+        minimum = coordinates.min(axis=0)
+        maximum = coordinates.max(axis=0)
+        slices = tuple(
+            slice(int(low), int(high) + 1)
+            for low, high in zip(minimum, maximum, strict=True)
+        )
+        cropped = np.ascontiguousarray(lattice[slices], dtype="<u2")
+        anchor = tuple(int(value) for value in minimum)
+        centroid = tuple(float(value) for value in coordinates.mean(axis=0))
+        crop_shape = tuple(int(value) for value in cropped.shape)
+    else:
+        cropped = np.empty((0,), dtype="<u2")
+        anchor = (0,) * len(shape)
+        centroid = ()
+        crop_shape = (0,) * len(shape)
+
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(cropped.tobytes())
+    digest.update(repr(crop_shape).encode("utf-8"))
+    digest.update(observation.state_count.to_bytes(4, "big"))
+    digest.update(repr(observation.experiment_context).encode("utf-8"))
+    # Dynamic context is retained deliberately.  For example, Langton's Ant
+    # includes ant position/direction, so a repeated painted crop alone is not
+    # misreported as a translating automaton state.
+    digest.update(repr(observation.signature_context).encode("utf-8"))
+    return digest.digest(), anchor, centroid, crop_shape
+
+
 def _state_signature(observation: StateObservation) -> bytes:
     digest = hashlib.blake2b(digest_size=16)
-    digest.update(bytes(observation.values))
+    digest.update(np.asarray(observation.values, dtype="<u2").tobytes())
     digest.update(repr(observation.experiment_context).encode("utf-8"))
     digest.update(repr(observation.signature_context).encode("utf-8"))
     digest.update(repr(observation.lattice_shape).encode("utf-8"))
@@ -308,9 +558,13 @@ class AnalysisSeries:
         self.samples: list[AnalysisSample] = []
         self.period: int | None = None
         self.stabilization_generation: int | None = None
+        self.translation_recurrence: TranslationRecurrence | None = None
         self._seen: dict[bytes, int] = {}
+        self._shape_seen: dict[bytes, tuple[int, tuple[int, ...]]] = {}
         self._last_values: tuple[int, ...] = ()
+        self._last_active_states: tuple[int, ...] = ()
         self._last_context: Hashable = ()
+        self._structure_cache: tuple[bytes, StructuralMetrics] | None = None
 
     @property
     def latest(self) -> AnalysisSample | None:
@@ -325,6 +579,29 @@ class AnalysisSeries:
             stable=self.period == 1,
             heuristic_regime=self.heuristic_regime(),
         )
+
+    def structure(self, *, component_limit: int = 30_000) -> StructuralMetrics:
+        """Return cached morphology for the most recently observed generation."""
+
+        latest = self.latest
+        if latest is None:
+            raise ValueError("No analysis samples are available")
+        if component_limit < 1:
+            raise ValueError("component_limit must be positive")
+        cache_key = hashlib.blake2b(
+            latest.signature + component_limit.to_bytes(8, "big"),
+            digest_size=16,
+        ).digest()
+        if self._structure_cache is not None and self._structure_cache[0] == cache_key:
+            return self._structure_cache[1]
+        metrics = structural_metrics(
+            self._last_values,
+            self.lattice_shape,
+            self._last_active_states,
+            component_limit=component_limit,
+        )
+        self._structure_cache = (cache_key, metrics)
+        return metrics
 
     def heuristic_regime(self, *, window: int = 32) -> str:
         """Return an explicitly heuristic label for the recent trajectory."""
@@ -385,9 +662,13 @@ class AnalysisSeries:
         self.samples.clear()
         self.period = None
         self.stabilization_generation = None
+        self.translation_recurrence = None
         self._seen.clear()
+        self._shape_seen.clear()
         self._last_values = ()
+        self._last_active_states = observation.active_states
         self._last_context = observation.experiment_context
+        self._structure_cache = None
         return self._append(observation, change_rate=0.0)
 
     def observe(self, observation: StateObservation) -> AnalysisSample:
@@ -422,6 +703,9 @@ class AnalysisSeries:
         change_rate: float,
     ) -> AnalysisSample:
         signature = _state_signature(observation)
+        shape_signature, shape_anchor, centroid, bounding_box_shape = _shape_signature(
+            observation
+        )
         self.lattice_shape = observation.lattice_shape
         self.state_count = observation.state_count
         population = sum(
@@ -460,6 +744,10 @@ class AnalysisSeries:
                 if observation.values
                 else 0.0
             ),
+            shape_signature=shape_signature,
+            shape_anchor=shape_anchor,
+            centroid=centroid,
+            bounding_box_shape=bounding_box_shape,
         )
 
         previous_generation = self._seen.get(signature)
@@ -478,13 +766,55 @@ class AnalysisSeries:
         else:
             self._seen[signature] = observation.generation
 
+        previous_shape = self._shape_seen.get(shape_signature)
+        if previous_shape is not None:
+            previous_shape_generation, previous_anchor = previous_shape
+            shape_period = observation.generation - previous_shape_generation
+            if shape_period > 0:
+                displacement = tuple(
+                    current - previous
+                    for current, previous in zip(
+                        shape_anchor,
+                        previous_anchor,
+                        strict=True,
+                    )
+                )
+                recurrence = TranslationRecurrence(
+                    period=shape_period,
+                    first_generation=previous_shape_generation,
+                    repeat_generation=observation.generation,
+                    displacement=displacement,
+                    velocity=tuple(value / shape_period for value in displacement),
+                )
+                if (
+                    self.translation_recurrence is None
+                    or recurrence.period < self.translation_recurrence.period
+                    or (
+                        recurrence.period == self.translation_recurrence.period
+                        and recurrence.moving
+                        and not self.translation_recurrence.moving
+                    )
+                ):
+                    self.translation_recurrence = recurrence
+        else:
+            self._shape_seen[shape_signature] = (
+                observation.generation,
+                shape_anchor,
+            )
+
         self.samples.append(sample)
         self._last_values = observation.values
+        self._last_active_states = observation.active_states
         self._last_context = observation.experiment_context
+        self._structure_cache = None
         if len(self.samples) > self.max_samples:
             del self.samples[: len(self.samples) - self.max_samples]
             self._seen = {
                 stored.signature: stored.generation for stored in self.samples
+            }
+            self._shape_seen = {
+                stored.shape_signature: (stored.generation, stored.shape_anchor)
+                for stored in self.samples
             }
         return sample
 

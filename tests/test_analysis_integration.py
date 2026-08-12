@@ -115,12 +115,21 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
         life.handle_keydown(
             life.pygame.event.Event(life.pygame.KEYDOWN, key=life.pygame.K_i)
         )
-        modal, live_tab, summary_tab, methods_tab, comparison_tab, close_button = (
+        (
+            modal,
+            live_tab,
+            structure_tab,
+            summary_tab,
+            methods_tab,
+            comparison_tab,
+            close_button,
+        ) = (
             life.analysis_panel.geometry()
         )
 
         self.assertTrue(life.analysis_panel.active)
         self.assertTrue(modal.contains(live_tab))
+        self.assertTrue(modal.contains(structure_tab))
         self.assertTrue(modal.contains(summary_tab))
         self.assertTrue(modal.contains(methods_tab))
         self.assertTrue(modal.contains(comparison_tab))
@@ -130,7 +139,7 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
     def test_comparison_tab_requests_background_rule_experiment(self) -> None:
         self.configure_life_blinker()
         life.analysis_panel.active = True
-        _, _, _, _, comparison_tab, _ = life.analysis_panel.geometry()
+        _, _, _, _, _, comparison_tab, _ = life.analysis_panel.geometry()
 
         with patch.object(life.analysis_panel, "request_comparison") as request:
             consumed = life.analysis_panel.handle_event(
@@ -326,6 +335,18 @@ class ScientificAnalysisIntegrationTests(unittest.TestCase):
             series = life.active_analysis_series()
             self.assertEqual(len(series.lattice_shape), int(dimension[0]))
             self.assertIsNotNone(series.latest)
+
+    def test_structure_tab_draws_cached_morphology_for_all_dimensions(self) -> None:
+        life.analysis_panel.active = True
+        life.analysis_panel.tab = "structure"
+        for dimension in ("1d", "2d", "3d"):
+            life.set_active_dimension(dimension)
+            life.draw_scene()
+
+            series = life.active_analysis_series()
+            metrics = series.structure()
+            self.assertEqual(metrics.dimension, int(dimension[0]))
+            self.assertEqual(metrics.population, series.latest.population)
 
     def test_methods_tab_draws_dimension_specific_protocol(self) -> None:
         life.set_active_dimension("3d")
